@@ -44,12 +44,12 @@ extends SimpleJsonResourceReloadListener {
             RediosRules.setDamageSourceDebugCooldownTicks(40);
             RediosRules.setDamageSourceDebugOnlyPhase2(true);
             RediosRules.setDamageSourceDebugOnlyWhenExpelled(true);
-            RediosRules.setBlackSunDefeatRatio(0.125);
+            RediosRules.setBlackSunDefeatRatio(0.5);
             RediosRules.setColorlessReflectRatio(0.5);
             RediosRules.setColorlessWeaknessDurationTicks(200);
             RediosRules.setColorlessWeaknessAmplifier(0);
             RediosRules.setVoidAllThingsDarknessDurationTicks(40);
-            RediosRules.setVoidAllThingsTeleportCooldownTicks(10);
+            RediosRules.setVoidAllThingsTeleportCooldownTicks(40);
             RediosRules.setUncontrolledSprintExtraHits(1);
             RediosRules.setUncontrolledSprintExtraDamageRatio(0.35);
             RediosRules.setUncontrolledSprintExtraCooldownTicks(4);
@@ -185,13 +185,13 @@ extends SimpleJsonResourceReloadListener {
                 damageDebugOnlyWhenExpelled = true;
             }
         }
-        double blackSunDefeatRatio = 0.125;
+        double blackSunDefeatRatio = 0.5;
         if (root.has("black_sun_defeat_ratio")) {
             try {
                 blackSunDefeatRatio = root.get("black_sun_defeat_ratio").getAsDouble();
             }
             catch (RuntimeException e) {
-                blackSunDefeatRatio = 0.125;
+                blackSunDefeatRatio = 0.5;
             }
         }
         double colorlessReflectRatio = 0.5;
@@ -230,13 +230,13 @@ extends SimpleJsonResourceReloadListener {
                 voidAllThingsDarknessDurationTicks = 40;
             }
         }
-        int voidAllThingsTeleportCooldownTicks = 10;
+        int voidAllThingsTeleportCooldownTicks = 40;
         if (root.has("void_all_things_teleport_cooldown_ticks")) {
             try {
                 voidAllThingsTeleportCooldownTicks = root.get("void_all_things_teleport_cooldown_ticks").getAsInt();
             }
             catch (RuntimeException e) {
-                voidAllThingsTeleportCooldownTicks = 10;
+                voidAllThingsTeleportCooldownTicks = 40;
             }
         }
         int uncontrolledSprintExtraHits = 1;

@@ -91,7 +91,7 @@ Redios（碎镜之影）是一场以“阶段（phase）+ 头衔（titleIndex）
 ### 断光之刻（黑暗判定与逐出闭环）
 - 模式：支持 REFRESH 与 TIMED（由 `redios_rules.json` 控制）
 - 判定：对玩家黑暗效果施加与合格效果列表进行校验（可配置 apply_effect 与 satisfy_effects）
-- 惩罚闭环：违规者会被标记为 expelled 并被推离，Boss 不再锁定且免疫来自其及其附属实体的伤害
+- 惩罚：默认仅视觉惩罚（`twilight_moment_punishment: "visual"`，不逐出）；配置为 `"expel"` 时，违规者会被标记为 expelled 并被推离，Boss 不再锁定且免疫来自其及其附属实体的伤害
 
 ### 暗色天星（环境强拆与回填）
 - 会对一定范围内的方块进行强拆，并记录特殊方块（含方块实体）的 NBT
@@ -116,6 +116,9 @@ Redios（碎镜之影）是一场以“阶段（phase）+ 头衔（titleIndex）
 ## 安装
 - 前置：NeoForge 1.21.1
 - 前置：GeckoLib（本工程已声明依赖，整合包需要把 GeckoLib 模组放进 mods）
+- 前置：SlashBlade（拔刀剑·重铸，`slashblade`，硬依赖）
+- 前置：拔刀剑核心（`sbr_core`，mrqx 拔刀剑核心，硬依赖）
+- 前置：灭却之日（`extinction_day_mod_1784441698`，Boss 拔刀剑攻击与断魂 SE 依赖，硬依赖）
 - 模组文件：把 `build/libs/silent_sun-1.0.0.jar` 放入 `mods/`
 
 ## 主要文件
