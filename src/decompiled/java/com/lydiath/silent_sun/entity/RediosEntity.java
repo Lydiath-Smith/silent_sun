@@ -891,7 +891,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
 
     private boolean tickStarfallSalvoDetonation(ServerLevel serverLevel) {
         boolean timeout;
-        boolean bl = timeout = --this.starfallSalvoSettleTimeoutTicks <= 0;
+        timeout = --this.starfallSalvoSettleTimeoutTicks <= 0;
         if (!this.starfallSalvoReadyToDetonate) {
             boolean allSettled = true;
             if (!timeout) {
@@ -969,7 +969,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             } else {
                 this.bossEvent.setOverlay(BossEvent.BossBarOverlay.NOTCHED_6);
             }
-            this.bossEvent.setProgress(Mth.clamp((float)progress, (float)0.0f, (float)1.0f));
+            this.bossEvent.setProgress(Mth.clamp(progress, 0.0f, 1.0f));
             this.bossEvent.setName(this.getTransitionBossBarName());
             return;
         }
@@ -982,7 +982,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     }
 
     private Component getTransitionBossBarName() {
-        int tenths = Mth.clamp((int)((this.transitionTicks * 10 + 19) / 20), (int)0, (int)9999);
+        int tenths = Mth.clamp((int)((this.transitionTicks * 10 + 19) / 20), 0, 9999);
         int sec = tenths / 10;
         int dec = tenths % 10;
         return this.getBossBarName().copy().append(Component.literal(" ")).append(Component.translatable("bossbar.silent_sun.redios.transition").withStyle(ChatFormatting.DARK_PURPLE)).append(Component.literal(" ")).append(Component.translatable("bossbar.silent_sun.redios.transition_time", new Object[]{sec, dec}).withStyle(ChatFormatting.LIGHT_PURPLE));
@@ -1044,8 +1044,8 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             }
         }
         double ratio = oldHealth / oldMax;
-        double scaled = newMax * (ratio = Mth.clamp((double)ratio, (double)0.0, (double)1.0));
-        float clamped = (float)Mth.clamp((double)scaled, (double)1.0, (double)newMax);
+        double scaled = newMax * (ratio = Mth.clamp(ratio, 0.0, 1.0));
+        float clamped = (float)Mth.clamp(scaled, 1.0, newMax);
         if (clamped != this.getHealth()) {
             this.setHealth(clamped);
         }
@@ -1203,8 +1203,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
                 Vec3 toNorm = toBoss.lengthSqr() < 1.0E-6 ? new Vec3(0.0, 0.0, 1.0) : toBoss.normalize();
                 double dot = look.dot(toNorm);
                 visible = dot >= dotThreshold;
-                boolean bl = visible;
-            }
+                            }
             if (visible) {
                 this.bossNotInViewTicks.remove(id2);
                 continue;
@@ -1385,7 +1384,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             this.setDeltaMovement(dm.x, 0.0, dm.z);
             return;
         }
-        double yVel = Mth.clamp((double)(dy * 0.08), (double)(-speed), (double)speed);
+        double yVel = Mth.clamp((double)(dy * 0.08), -speed, speed);
         Vec3 dm = this.getDeltaMovement();
         this.setDeltaMovement(dm.x, yVel, dm.z);
     }
@@ -1700,10 +1699,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             return living;
         }
         String[] names = new String[]{"getAttacker", "getOwner", "getCaster", "getShooter", "getThrower", "getSummoner", "getTrueOwner", "getSource"};
-        String[] stringArray = names;
-        int n = names.length;
-        for (int n2 = 0; n2 < n; ++n2) {
-            String name = stringArray[n2];
+        for (String name : names) {
             Entity candidate = this.tryReadEntityFromInvokeResult(this.tryInvokeNoArgMethod(source, name));
             if (!(candidate instanceof LivingEntity)) continue;
             LivingEntity living = (LivingEntity)candidate;
@@ -1726,10 +1722,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             return owner;
         }
         String[] names = new String[]{"getOwner", "getCaster", "getShooter", "getThrower", "getSummoner", "getTrueOwner", "getPlayerOwner", "getSource"};
-        String[] stringArray = names;
-        int n = names.length;
-        for (int n2 = 0; n2 < n; ++n2) {
-            String name = stringArray[n2];
+        for (String name : names) {
             Entity candidate = this.tryReadEntityFromInvokeResult(this.tryInvokeNoArgMethod(entity, name));
             if (candidate == null) continue;
             return candidate;
@@ -1862,19 +1855,13 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             return null;
         }
         String[] methodNames = new String[]{"getOwnerUUID", "getOwner", "getCasterUUID", "getCaster", "getShooterUUID", "getShooter", "getThrowerUUID", "getThrower", "getSummonerUUID", "getSummoner", "getTrueOwnerUUID", "getTrueOwner", "getPlayerOwnerUUID", "getPlayerOwner", "getAttackerUUID", "getAttacker", "getSourceUUID", "getSource"};
-        String[] stringArray = methodNames;
-        int n = methodNames.length;
-        for (int n2 = 0; n2 < n; ++n2) {
-            String name = stringArray[n2];
+        for (String name : methodNames) {
             UUID u = this.tryReadUuidFromInvokeResult(this.tryInvokeNoArgMethod(source, name));
             if (u == null) continue;
             return u;
         }
         String[] fieldNames = new String[]{"ownerUUID", "ownerUuid", "owner", "casterUUID", "casterUuid", "caster", "shooterUUID", "shooterUuid", "shooter", "throwerUUID", "throwerUuid", "thrower", "summonerUUID", "summonerUuid", "summoner", "attackerUUID", "attackerUuid", "attacker", "sourceUUID", "sourceUuid", "source"};
-        String[] stringArray2 = fieldNames;
-        int n3 = fieldNames.length;
-        for (n = 0; n < n3; ++n) {
-            String name = stringArray2[n];
+        for (String name : fieldNames) {
             UUID u = this.tryReadUuidFromInvokeResult(this.tryReadField(source, name));
             if (u == null) continue;
             return u;
@@ -1903,10 +1890,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             }
         }
         String[] names = new String[]{"getOwnerUUID", "getOwner", "getCasterUUID", "getCaster", "getShooterUUID", "getShooter", "getThrowerUUID", "getThrower", "getSummonerUUID", "getSummoner", "getTrueOwnerUUID", "getTrueOwner", "getPlayerOwnerUUID", "getPlayerOwner"};
-        String[] stringArray = names;
-        int n = names.length;
-        for (int n2 = 0; n2 < n; ++n2) {
-            String name = stringArray[n2];
+        for (String name : names) {
             UUID u = this.tryReadUuidFromInvokeResult(this.tryInvokeNoArgMethod(entity, name));
             if (u == null) continue;
             return u;
@@ -2352,7 +2336,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             return;
         }
         super.die(damageSource);
-        boolean bl = includeDefeatBook = this.phase == 2;
+        includeDefeatBook = this.phase == 2;
         if (includeDefeatBook && this.isFinalKillerPlayer(damageSource)) {
             this.applySummonCooldown(serverLevel, (long)(SilentSunConfig.COOLDOWN_DAYS.get()).intValue() * 24000L);
         }
@@ -3182,7 +3166,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
 
     private void tickChaosRuinAura(ServerLevel serverLevel) {
         boolean showVisuals;
-        boolean bl = showVisuals = this.chaosRuinActive || this.chaosRuinAbsoluteAttacks;
+        showVisuals = this.chaosRuinActive || this.chaosRuinAbsoluteAttacks;
         if (!showVisuals) {
             return;
         }
@@ -3297,7 +3281,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             }
         }
         boolean serverLag = this.tickSpikeCount >= 2 || this.highMemoryTicks >= 40;
-        boolean bl = allLowFps = this.tickSpikeCount < 2 && this.highMemoryTicks < 40 && RediosRules.lagProtectionEnabled() && this.areAllParticipantsLowFps(serverLevel);
+        allLowFps = this.tickSpikeCount < 2 && this.highMemoryTicks < 40 && RediosRules.lagProtectionEnabled() && this.areAllParticipantsLowFps(serverLevel);
         if (!this.failsafeActive && (serverLag || allLowFps)) {
             this.failsafeActive = true;
             this.failsafeCountdownTicks = 100;
@@ -3855,7 +3839,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         float lockPoint = low + 1.0f;
         float min = this.titleIndex == titles.size() - 1 ? low + epsilon : lockPoint;
         float clampHigh = SilentSunConfig.ALLOW_TITLE_LOCK_HEAL_REGRESSION.get() != false ? maxHealth : high - epsilon;
-        float clamped = Mth.clamp((float)this.getHealth(), (float)min, (float)clampHigh);
+        float clamped = Mth.clamp(this.getHealth(), min, clampHigh);
         if (clamped != this.getHealth()) {
             this.setHealth(clamped);
         }
@@ -4305,7 +4289,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         }
         int active = this.getActiveParticipantCount();
         int retained = active + this.twilightExpelled.size();
-        if (retained > (threshold = (int)Math.floor((double)initial * (ratio = Mth.clamp((double)RediosRules.blackSunDefeatRatio(), (double)0.0, (double)1.0))))) {
+        if (retained > (threshold = (int)Math.floor((double)initial * (ratio = Mth.clamp((double)RediosRules.blackSunDefeatRatio(), 0.0, 1.0))))) {
             return;
         }
         this.blackSunTriggered = true;
@@ -4639,7 +4623,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             float segment = maxHealth / (float)titles.size();
             restored = maxHealth - (float)titleIdx * segment;
         } else {
-            restored = record.health > 0.0f ? Mth.clamp((float)record.health, (float)1.0f, (float)maxHealth) : maxHealth;
+            restored = record.health > 0.0f ? Mth.clamp(record.health, 1.0f, maxHealth) : maxHealth;
         }
         boss.forceSetHealth(restored);
         boss.anticheat.markLegalHealthChange(boss.getHealth());
@@ -4881,7 +4865,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             return;
         }
         boolean firmFaith = this.isFirmFaithActive();
-        boolean bl = active = this.phase == 1 ? firmFaith : this.enrageStackingUnlocked;
+        active = this.phase == 1 ? firmFaith : this.enrageStackingUnlocked;
         if (!active) {
             this.enrageStackCooldownTicks = 0;
             return;
@@ -5344,17 +5328,16 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
 
     private Component getBossBarName() {
         List<Component> titles = this.phase == 1 ? PHASE1_TITLES : PHASE2_TITLES;
-        Component title = titles.get(Mth.clamp((int)this.titleIndex, (int)0, (int)(titles.size() - 1)));
+        Component title = titles.get(Mth.clamp((int)this.titleIndex, 0, titles.size() - 1));
         MutableComponent base = this.getType().getDescription().copy().append(Component.literal(" \u00b7 ")).append(title);
         if (this.bossState.isVoteOrTransition()) {
             return base;
         }
         boolean countdown = this.phase == 1 && (this.titleIndex == 7 || this.titleIndex == 8) || this.phase == 2 && this.titleIndex == 5;
-        boolean bl = countdown;
-        if (!countdown || this.titleLockTicks <= 0) {
+                if (!countdown || this.titleLockTicks <= 0) {
             return base;
         }
-        int tenths = Mth.clamp((int)((this.titleLockTicks * 10 + 19) / 20), (int)0, (int)9999);
+        int tenths = Mth.clamp((int)((this.titleLockTicks * 10 + 19) / 20), 0, 9999);
         int sec = tenths / 10;
         int dec = tenths % 10;
         return base.copy().append(Component.literal(" ")).append(Component.translatable("bossbar.silent_sun.redios.transition_time", new Object[]{sec, dec}).withStyle(ChatFormatting.GOLD));
@@ -5395,8 +5378,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         this.wrongInterferenceActive = newPhase == 2 && newTitleIndex == 2;
         this.chaosRuinActive = newPhase == 2 && newTitleIndex == 3;
         this.ashDawnActive = newPhase == 2 && newTitleIndex == 4;
-        boolean bl = this.ashDawnActive;
-        if (this.ashDawnActive) {
+                if (this.ashDawnActive) {
             this.ashDawnUnlocked = true;
         }
         TitleDef[] titleDefArray = defs = newPhase == 1 ? PHASE1_TITLE_DEFS : PHASE2_TITLE_DEFS;
@@ -5514,7 +5496,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         }
         MutableComponent msg = null;
         if (newPhase == 2) {
-            msg = Component.translatable((String)("quote.silent_sun.redios.phase2." + Mth.clamp((int)newTitleIndex, (int)0, (int)(PHASE2_TITLES.size() - 1))));
+            msg = Component.translatable(("quote.silent_sun.redios.phase2." + Mth.clamp((int)newTitleIndex, (int)0, (int)(PHASE2_TITLES.size() - 1))));
         }
         if (msg != null) {
             for (ServerPlayer serverPlayer : this.bossEvent.getPlayers()) {
@@ -5626,8 +5608,8 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             return 0;
         }
         float segment = maxHealth / (float)titleCount;
-        float missing = maxHealth - Mth.clamp((float)currentHealth, (float)0.0f, (float)maxHealth);
-        return Mth.clamp((int)((int)(missing / segment)), (int)0, (int)(titleCount - 1));
+        float missing = maxHealth - Mth.clamp(currentHealth, 0.0f, maxHealth);
+        return Mth.clamp((int)((int)(missing / segment)), 0, titleCount - 1);
     }
 
     public void registerControllers(AnimatableManager.ControllerRegistrar controllers) {
@@ -6012,7 +5994,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
                 }
                 double nx = (hLen = Math.sqrt((dx = dir.x) * dx + (dz = dir.z) * dz)) > 1.0E-6 ? dx / hLen : 0.0;
                 double nz = hLen > 1.0E-6 ? dz / hLen : 0.0;
-                double yVel = Mth.clamp((double)(dir.y * 0.15), (double)-3.0, (double)3.0);
+                double yVel = Mth.clamp((double)(dir.y * 0.15), -3.0, 3.0);
                 if (yVel >= 0.0 && yVel < 0.25) {
                     yVel = 0.25;
                 }
