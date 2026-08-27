@@ -197,8 +197,8 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     private static final int STAGE_BLOCK_BOMB_COOLDOWN_TICKS = 35;
     private static final float STAGE_BLOCK_BOMB_EXPLOSION_POWER = 2.5f;
     private static final List<Holder<MobEffect>> DUSTLESS_GOOD_BUFF_POOL = List.of(MobEffects.DAMAGE_BOOST, MobEffects.MOVEMENT_SPEED, MobEffects.DIG_SPEED, MobEffects.JUMP, MobEffects.REGENERATION, MobEffects.ABSORPTION, MobEffects.FIRE_RESISTANCE, MobEffects.WATER_BREATHING, MobEffects.NIGHT_VISION, MobEffects.HEALTH_BOOST);
-    static final List<Component> PHASE1_TITLES = List.of(Component.translatable((String)"title.silent_sun.redios.phase1.0"), Component.translatable((String)"title.silent_sun.redios.phase1.1"), Component.translatable((String)"title.silent_sun.redios.phase1.2"), Component.translatable((String)"title.silent_sun.redios.phase1.3"), Component.translatable((String)"title.silent_sun.redios.phase1.4"), Component.translatable((String)"title.silent_sun.redios.phase1.5"), Component.translatable((String)"title.silent_sun.redios.phase1.6"), Component.translatable((String)"title.silent_sun.redios.phase1.7"), Component.translatable((String)"title.silent_sun.redios.phase1.8"), Component.translatable((String)"title.silent_sun.redios.phase1.9"));
-    private static final List<Component> PHASE2_TITLES = List.of(Component.translatable((String)"title.silent_sun.redios.phase2.0"), Component.translatable((String)"title.silent_sun.redios.phase2.1"), Component.translatable((String)"title.silent_sun.redios.phase2.2"), Component.translatable((String)"title.silent_sun.redios.phase2.3"), Component.translatable((String)"title.silent_sun.redios.phase2.4"), Component.translatable((String)"title.silent_sun.redios.phase2.5"), Component.translatable((String)"title.silent_sun.redios.phase2.6"), Component.translatable((String)"title.silent_sun.redios.phase2.7"), Component.translatable((String)"title.silent_sun.redios.phase2.8"), Component.translatable((String)"title.silent_sun.redios.phase2.9"));
+    static final List<Component> PHASE1_TITLES = List.of(Component.translatable("title.silent_sun.redios.phase1.0"), Component.translatable("title.silent_sun.redios.phase1.1"), Component.translatable("title.silent_sun.redios.phase1.2"), Component.translatable("title.silent_sun.redios.phase1.3"), Component.translatable("title.silent_sun.redios.phase1.4"), Component.translatable("title.silent_sun.redios.phase1.5"), Component.translatable("title.silent_sun.redios.phase1.6"), Component.translatable("title.silent_sun.redios.phase1.7"), Component.translatable("title.silent_sun.redios.phase1.8"), Component.translatable("title.silent_sun.redios.phase1.9"));
+    private static final List<Component> PHASE2_TITLES = List.of(Component.translatable("title.silent_sun.redios.phase2.0"), Component.translatable("title.silent_sun.redios.phase2.1"), Component.translatable("title.silent_sun.redios.phase2.2"), Component.translatable("title.silent_sun.redios.phase2.3"), Component.translatable("title.silent_sun.redios.phase2.4"), Component.translatable("title.silent_sun.redios.phase2.5"), Component.translatable("title.silent_sun.redios.phase2.6"), Component.translatable("title.silent_sun.redios.phase2.7"), Component.translatable("title.silent_sun.redios.phase2.8"), Component.translatable("title.silent_sun.redios.phase2.9"));
     static final TitleDef[] PHASE1_TITLE_DEFS = new TitleDef[]{TitleDef.p1(0, 15, new BossFlag[0]), TitleDef.p1(1, 15, new BossFlag[0]), TitleDef.p1(2, 15, BossFlag.WEAKNESS_CURSE, BossFlag.ENRAGE_STACKING), TitleDef.p1(3, 15, new BossFlag[0]), TitleDef.p1(4, 15, new BossFlag[0]), TitleDef.p1(5, 15, BossFlag.SOUL_SEVER_HARVEST), TitleDef.p1(6, 15, new BossFlag[0]), TitleDef.p1(7, 15, new BossFlag[0]), TitleDef.p1(8, 15, new BossFlag[0]), TitleDef.p1(9, 15, BossFlag.GUARD_BLOCK)};
     static final TitleDef[] PHASE2_TITLE_DEFS = new TitleDef[]{TitleDef.p2(0, 30, BossFlag.SEA_SKY_SOUL_SEVER), TitleDef.p2(1, 30, BossFlag.UNCONTROLLED_SPRINT), TitleDef.p2(2, 30, new BossFlag[0]), TitleDef.p2(3, 30, new BossFlag[0]), TitleDef.p2(4, 30, BossFlag.ASH_DAWN), TitleDef.p2(5, 30, new BossFlag[0]), TitleDef.p2(6, 30, new BossFlag[0]), TitleDef.p2(7, 30, BossFlag.BLACK_SUN), TitleDef.p2(8, 30, BossFlag.COLORLESS, BossFlag.ENRAGE_STACKING), TitleDef.p2(9, 30, new BossFlag[0])};
     private static final EntityDataAccessor<Integer> CLIENT_PHASE = SynchedEntityData.defineId(RediosEntity.class, (EntityDataSerializer)EntityDataSerializers.INT);
@@ -213,7 +213,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     private static final int INTRO_STAR_COUNT = 6;
     private static final RawAnimation TRANSITION_ANIM = RawAnimation.begin().thenPlay("transition");
     private final AnimatableInstanceCache cache = GeckoLibUtil.createInstanceCache((GeoAnimatable)this);
-    private final ServerBossEvent bossEvent = new ServerBossEvent((Component)Component.empty(), BossEvent.BossBarColor.PURPLE, BossEvent.BossBarOverlay.PROGRESS);
+    private final ServerBossEvent bossEvent = new ServerBossEvent(Component.empty(), BossEvent.BossBarColor.PURPLE, BossEvent.BossBarOverlay.PROGRESS);
     int phase = 1;
     int titleIndex = 0;
     private int titleLockTicks = 0;
@@ -364,7 +364,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     private int removalPunishCooldownTicks = 0;
     private static final SoundEvent[] DARKNESS_AMBIENT_SOUNDS = new SoundEvent[]{SoundEvents.WARDEN_HEARTBEAT, SoundEvents.WARDEN_LISTENING, SoundEvents.WARDEN_AMBIENT, SoundEvents.WARDEN_ANGRY};
     private int darknessSoundCooldown = 0;
-    private static final ResourceLocation MAX_HEALTH_MODIFIER_ID = ResourceLocation.fromNamespaceAndPath((String)"silent_sun", (String)"redios_max_health_override");
+    private static final ResourceLocation MAX_HEALTH_MODIFIER_ID = ResourceLocation.fromNamespaceAndPath("silent_sun", "redios_max_health_override");
     private static final double ATTRIBUTE_MAX_HEALTH_CAP = 1024.0;
     private static boolean maxHealthUncapped = false;
     private static boolean warnedMaxHealthClamped = false;
@@ -515,14 +515,14 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             return;
         }
         if (this.anticheat.tickCreativeRelated(serverLevel)) {
-            MutableComponent leaveMsg = Component.translatable((String)"message.silent_sun.redios.creative_leave").withStyle(ChatFormatting.GOLD);
+            MutableComponent leaveMsg = Component.translatable("message.silent_sun.redios.creative_leave").withStyle(ChatFormatting.GOLD);
             for (UUID id2 : new HashSet<UUID>(this.anticheat.creativeStrikers)) {
                 ServerPlayer sp;
                 ServerPlayer cp = this.getServerPlayer(id2);
                 if (cp == null || (sp = cp).isCreative() || !sp.isAlive()) continue;
                 this.anticheat.creativeStrikers.remove(id2);
             }
-            this.bossLeaveFriendly(serverLevel, (Component)leaveMsg);
+            this.bossLeaveFriendly(serverLevel, leaveMsg);
             return;
         }
         if (this.colorlessChallengeTicks > 0) {
@@ -599,8 +599,8 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             this.deathTime = 0;
             this.forceSetHealth(Math.max(1.0f, this.getHealth()));
             if (this.tickCount % 200 == 0) {
-                MutableComponent funny = Component.translatable((String)"message.silent_sun.redios.anticheat.death_animation_interrupted").withStyle(ChatFormatting.DARK_RED);
-                this.broadcastToParticipants(this.rediosSigned((Component)funny));
+                MutableComponent funny = Component.translatable("message.silent_sun.redios.anticheat.death_animation_interrupted").withStyle(ChatFormatting.DARK_RED);
+                this.broadcastToParticipants(this.rediosSigned(funny));
             }
         }
         if (this.bossState == BossState.PHASE1_VOTE) {
@@ -687,7 +687,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             this.tickStarfallSalvo(serverLevel);
         }
         if (this.tickCount % 4 == 0) {
-            double armor = this.bossState.isPhase2() ? (Double)SilentSunConfig.PHASE2_ARMOR_VALUE.get() : (Double)SilentSunConfig.PHASE1_ARMOR_VALUE.get();
+            double armor = this.bossState.isPhase2() ? SilentSunConfig.PHASE2_ARMOR_VALUE.get() : SilentSunConfig.PHASE1_ARMOR_VALUE.get();
             if (this.isWeaponWeakpointWindowActive()) {
                 armor *= 1.0 - RediosRules.weaponWeakpointArmorPierce();
             }
@@ -741,7 +741,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             double hoverY = this.getY() + 2.0;
             double spawnY = this.getY() + 30.0;
             int delay = this.random.nextInt(20);
-            StarfallSalvoEntity star = (StarfallSalvoEntity)((EntityType)ModEntities.STARFALL_SALVO.get()).create((Level)serverLevel);
+            StarfallSalvoEntity star = ModEntities.STARFALL_SALVO.get().create(serverLevel);
             if (star == null) continue;
             star.initSalvo(this.getUUID(), hoverY, delay);
             star.markDisplayExempt();
@@ -795,16 +795,16 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     private void spawnStarfallSalvo(ServerLevel serverLevel) {
         double concentratedRadius = 5.0;
         double dispersedRadius = 20.0;
-        int minCount = (Integer)SilentSunConfig.STARFALL_SALVO_MIN_COUNT.get();
-        int maxCount = (Integer)SilentSunConfig.STARFALL_SALVO_MAX_COUNT.get();
-        int maxDelay = (Integer)SilentSunConfig.STARFALL_SALVO_MAX_DELAY_TICKS.get();
+        int minCount = SilentSunConfig.STARFALL_SALVO_MIN_COUNT.get();
+        int maxCount = SilentSunConfig.STARFALL_SALVO_MAX_COUNT.get();
+        int maxDelay = SilentSunConfig.STARFALL_SALVO_MAX_DELAY_TICKS.get();
         int count = minCount >= maxCount ? minCount : minCount + this.random.nextInt(maxCount - minCount + 1);
         this.starfallSalvoStars.clear();
         this.starfallSalvoPending = true;
         this.starfallSalvoSettleTimeoutTicks = 160 + maxDelay;
         this.starfallSalvoReadyToDetonate = false;
         this.starfallSalvoDetonateDelayTicks = 0;
-        this.starfallSalvoCooldownTicks = (Integer)SilentSunConfig.STARFALL_SALVO_INTERVAL_TICKS.get();
+        this.starfallSalvoCooldownTicks = SilentSunConfig.STARFALL_SALVO_INTERVAL_TICKS.get();
         List<LivingEntity> targets = this.collectStarfallTargets(serverLevel);
         if (targets.isEmpty()) {
             this.spawnStarfallStars(serverLevel, this.getX(), this.getY(), this.getZ(), count, concentratedRadius, maxDelay);
@@ -880,7 +880,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             double hoverY = centerY + 2.0;
             double spawnY = centerY + 30.0;
             int delay = maxDelay > 0 ? this.random.nextInt(maxDelay + 1) : 0;
-            StarfallSalvoEntity star = (StarfallSalvoEntity)((EntityType)ModEntities.STARFALL_SALVO.get()).create((Level)serverLevel);
+            StarfallSalvoEntity star = ModEntities.STARFALL_SALVO.get().create(serverLevel);
             if (star == null) continue;
             star.initSalvo(this.getUUID(), hoverY, delay);
             star.setPos(x, spawnY, z);
@@ -920,14 +920,14 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     }
 
     private void detonateStarfallSalvo(ServerLevel serverLevel) {
-        StarfallCurtainEntity curtain = (StarfallCurtainEntity)((EntityType)ModEntities.STARFALL_CURTAIN.get()).create((Level)serverLevel);
+        StarfallCurtainEntity curtain = ModEntities.STARFALL_CURTAIN.get().create(serverLevel);
         if (curtain != null) {
             curtain.initCurtain(30);
             curtain.setOwnerUuid(this.getUUID());
             curtain.setPos(this.getX(), this.getY() + 1.0, this.getZ());
             serverLevel.addFreshEntity((Entity)curtain);
         }
-        float power = (float)((Double)SilentSunConfig.STARFALL_SALVO_EXPLOSION_POWER.get()).doubleValue();
+        float power = (float)(SilentSunConfig.STARFALL_SALVO_EXPLOSION_POWER.get()).doubleValue();
         HashSet<LivingEntity> hitVictims = new HashSet<>();
         for (UUID uuid : this.starfallSalvoStars) {
             Entity star = serverLevel.getEntity(uuid);
@@ -985,11 +985,11 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         int tenths = Mth.clamp((int)((this.transitionTicks * 10 + 19) / 20), (int)0, (int)9999);
         int sec = tenths / 10;
         int dec = tenths % 10;
-        return this.getBossBarName().copy().append((Component)Component.literal((String)" ")).append((Component)Component.translatable((String)"bossbar.silent_sun.redios.transition").withStyle(ChatFormatting.DARK_PURPLE)).append((Component)Component.literal((String)" ")).append((Component)Component.translatable((String)"bossbar.silent_sun.redios.transition_time", (Object[])new Object[]{sec, dec}).withStyle(ChatFormatting.LIGHT_PURPLE));
+        return this.getBossBarName().copy().append(Component.literal(" ")).append(Component.translatable("bossbar.silent_sun.redios.transition").withStyle(ChatFormatting.DARK_PURPLE)).append(Component.literal(" ")).append(Component.translatable("bossbar.silent_sun.redios.transition_time", new Object[]{sec, dec}).withStyle(ChatFormatting.LIGHT_PURPLE));
     }
 
     Component rediosSigned(Component msg) {
-        return Component.translatable((String)"message.silent_sun.redios.signature", (Object[])new Object[]{this.getDisplayName()}).append(msg);
+        return Component.translatable("message.silent_sun.redios.signature", new Object[]{this.getDisplayName()}).append(msg);
     }
 
     private void tickDarknessAmbientSounds(ServerLevel serverLevel) {
@@ -1019,7 +1019,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         AttributeInstance kbInst;
         AttributeInstance attackInst;
         RediosEntity.ensureMaxHealthUncapped();
-        double desired = ((Integer)SilentSunConfig.PHASE_MAX_HEALTH.get()).intValue();
+        double desired = (SilentSunConfig.PHASE_MAX_HEALTH.get()).intValue();
         if (!Double.isFinite(desired) || desired <= 0.0) {
             return;
         }
@@ -1038,9 +1038,9 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         if (newMax < desired - 1.0 && !warnedMaxHealthClamped) {
             warnedMaxHealthClamped = true;
             SilentSunMod.LOGGER.warn("Redios MAX_HEALTH clamped to {} by vanilla attribute cap (1024); install \u5c5e\u6027\u4fee\u590d (attributefix) to reach configured phaseMaxHealth={}.", (Object)newMax, (Object)desired);
-            MutableComponent clampMsg = Component.translatable((String)"message.silent_sun.redios.maxhealth_clamped", (Object[])new Object[]{(int)desired}).withStyle(ChatFormatting.RED);
+            MutableComponent clampMsg = Component.translatable("message.silent_sun.redios.maxhealth_clamped", new Object[]{(int)desired}).withStyle(ChatFormatting.RED);
             for (ServerPlayer p : serverLevel.players()) {
-                p.displayClientMessage(this.rediosSigned((Component)clampMsg), false);
+                p.displayClientMessage(this.rediosSigned(clampMsg), false);
             }
         }
         double ratio = oldHealth / oldMax;
@@ -1050,10 +1050,10 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             this.setHealth(clamped);
         }
         if ((attackInst = this.getAttribute(Attributes.ATTACK_DAMAGE)) != null) {
-            attackInst.setBaseValue(((Double)SilentSunConfig.BASE_ATTACK_DAMAGE.get()).doubleValue());
+            attackInst.setBaseValue((SilentSunConfig.BASE_ATTACK_DAMAGE.get()).doubleValue());
         }
         if ((kbInst = this.getAttribute(Attributes.KNOCKBACK_RESISTANCE)) != null) {
-            kbInst.setBaseValue(((Double)SilentSunConfig.KNOCKBACK_RESISTANCE.get()).doubleValue());
+            kbInst.setBaseValue((SilentSunConfig.KNOCKBACK_RESISTANCE.get()).doubleValue());
         }
         this.anticheat.lastObservedMaxHealth = this.anticheat.expectedMaxHealth = (double)this.getMaxHealth();
     }
@@ -1109,7 +1109,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             int t = this.locateBossFarTicks.getOrDefault(id2, 0) + 1;
             if (t >= interval) {
                 t = 0;
-                player.sendSystemMessage(this.rediosSigned((Component)Component.translatable((String)"message.silent_sun.redios.locate_boss", (Object[])new Object[]{pos.getX(), pos.getY(), pos.getZ()}).withStyle(ChatFormatting.GRAY)));
+                player.sendSystemMessage(this.rediosSigned(Component.translatable("message.silent_sun.redios.locate_boss", new Object[]{pos.getX(), pos.getY(), pos.getZ()}).withStyle(ChatFormatting.GRAY)));
             }
             this.locateBossFarTicks.put(id2, t);
         }
@@ -1221,7 +1221,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
                     if (now - last >= 600) {
                         this.lastMissingViewNotifyTick.put(id2, now);
                         BlockPos pos = this.blockPosition();
-                        player.sendSystemMessage(this.rediosSigned((Component)Component.translatable((String)"message.silent_sun.redios.locate_boss", (Object[])new Object[]{pos.getX(), pos.getY(), pos.getZ()}).withStyle(ChatFormatting.GRAY)));
+                        player.sendSystemMessage(this.rediosSigned(Component.translatable("message.silent_sun.redios.locate_boss", new Object[]{pos.getX(), pos.getY(), pos.getZ()}).withStyle(ChatFormatting.GRAY)));
                         this.trySendWaypoint(serverLevel, player, pos);
                     }
                 }
@@ -1262,8 +1262,8 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         String cmd = "/jm waypoint temp create \"" + name + "\" " + dim + " " + pos.getX() + " " + pos.getY() + " " + pos.getZ() + " aqua " + player.getGameProfile().getName() + " true";
         serverLevel.getServer().getCommands().performPrefixedCommand(serverLevel.getServer().createCommandSourceStack().withPermission(4).withSuppressedOutput(), cmd);
         String xaero = "/setwaypoint " + pos.getX() + " " + pos.getY() + " " + pos.getZ();
-        MutableComponent xaeroMsg = Component.literal((String)"[Xaero] ").withStyle(ChatFormatting.GOLD).append((Component)Component.literal((String)xaero).withStyle(style -> style.withColor(ChatFormatting.YELLOW).withClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, xaero))));
-        player.sendSystemMessage(this.rediosSigned((Component)xaeroMsg));
+        MutableComponent xaeroMsg = Component.literal("[Xaero] ").withStyle(ChatFormatting.GOLD).append(Component.literal((String)xaero).withStyle(style -> style.withColor(ChatFormatting.YELLOW).withClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, xaero))));
+        player.sendSystemMessage(this.rediosSigned(xaeroMsg));
     }
 
     private void tickBattleMusic(ServerLevel serverLevel) {
@@ -1339,7 +1339,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             return;
         }
         if (!this.heightFlightMode) {
-            int diff = Math.max(0, Math.max(RediosRules.heightFlightDiffBlocks(), (Integer)SilentSunConfig.HEIGHT_FLIGHT_DIFF_BLOCKS.get()));
+            int diff = Math.max(0, Math.max(RediosRules.heightFlightDiffBlocks(), SilentSunConfig.HEIGHT_FLIGHT_DIFF_BLOCKS.get()));
             if (diff <= 0) {
                 return;
             }
@@ -1413,7 +1413,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     }
 
     private void tickAiWatchdog(ServerLevel serverLevel) {
-        int interval = Math.max(1, (Integer)SilentSunConfig.AI_WATCHDOG_CHECK_INTERVAL_TICKS.get());
+        int interval = Math.max(1, SilentSunConfig.AI_WATCHDOG_CHECK_INTERVAL_TICKS.get());
         if (this.tickCount % interval != 0) {
             return;
         }
@@ -1426,7 +1426,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             this.aiWatchdogNoTargetTicks = 0;
             return;
         }
-        int threshold = Math.max(1, (Integer)SilentSunConfig.AI_WATCHDOG_NO_TARGET_TICKS.get());
+        int threshold = Math.max(1, SilentSunConfig.AI_WATCHDOG_NO_TARGET_TICKS.get());
         this.aiWatchdogNoTargetTicks += interval;
         if (this.aiWatchdogNoTargetTicks < threshold) {
             return;
@@ -1614,13 +1614,13 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     }
 
     private void logDamageZero(DamageSource source, float originalAmount, float finalAmount, String reason) {
-        if (!((Boolean)SilentSunConfig.DAMAGE_ZERO_LOG_ENABLED.get()).booleanValue()) {
+        if (!(SilentSunConfig.DAMAGE_ZERO_LOG_ENABLED.get()).booleanValue()) {
             return;
         }
         if (source == null) {
             return;
         }
-        int cooldown = Math.max(0, (Integer)SilentSunConfig.DAMAGE_ZERO_LOG_COOLDOWN_TICKS.get());
+        int cooldown = Math.max(0, SilentSunConfig.DAMAGE_ZERO_LOG_COOLDOWN_TICKS.get());
         int now = this.tickCount;
         String msgId = source.getMsgId();
         String key = reason + "|" + msgId + "|" + source.getClass().getName();
@@ -1923,9 +1923,9 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     }
 
     float applyDamageCap(float amount) {
-        float threshold = ((Double)SilentSunConfig.DYNAMIC_REDUCTION_THRESHOLD.get()).floatValue();
-        float ratio = ((Double)SilentSunConfig.DYNAMIC_REDUCTION_RATIO.get()).floatValue();
-        float hardCap = ((Double)SilentSunConfig.DAMAGE_HARD_CAP.get()).floatValue();
+        float threshold = (SilentSunConfig.DYNAMIC_REDUCTION_THRESHOLD.get()).floatValue();
+        float ratio = (SilentSunConfig.DYNAMIC_REDUCTION_RATIO.get()).floatValue();
+        float hardCap = (SilentSunConfig.DAMAGE_HARD_CAP.get()).floatValue();
         if (amount > threshold) {
             float excess = amount - threshold;
             amount = threshold + excess * ratio;
@@ -1993,7 +1993,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             boolean pending = this.bossState == BossState.PHASE1_PENDING || this.bossState == BossState.PHASE2_PENDING;
             if (!pending) {
                 if (this.titleLockTicks > 0) {
-                    if (((Boolean)SilentSunConfig.ALLOW_TITLE_LOCK_HEAL_REGRESSION.get()).booleanValue()) {
+                    if ((SilentSunConfig.ALLOW_TITLE_LOCK_HEAL_REGRESSION.get()).booleanValue()) {
                         this.checkHealTitleRegression();
                     } else {
                         this.clampHealthToCurrentTitle();
@@ -2026,8 +2026,8 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             return;
         }
         double regenAmount = this.bossState.isPhase2()
-            ? ((Double)SilentSunConfig.PHASE2_HEALTH_REGEN.get()).doubleValue()
-            : ((Double)SilentSunConfig.PHASE1_HEALTH_REGEN.get()).doubleValue();
+            ? (SilentSunConfig.PHASE2_HEALTH_REGEN.get()).doubleValue()
+            : (SilentSunConfig.PHASE1_HEALTH_REGEN.get()).doubleValue();
         if (regenAmount > 0.0) {
             this.setHeal((float)regenAmount);
         }
@@ -2037,7 +2037,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         boolean phase2 = this.bossState == BossState.PHASE2_PENDING;
         List<Component> titles = phase2 ? PHASE2_TITLES : PHASE1_TITLES;
         int currentIndex = RediosEntity.computeTitleIndex(this.getMaxHealth(), this.getHealth(), titles.size());
-        if (((Boolean)SilentSunConfig.ALLOW_PENDING_LOCK_HEAL_REGRESSION.get()).booleanValue() && currentIndex < titles.size() - 1) {
+        if ((SilentSunConfig.ALLOW_PENDING_LOCK_HEAL_REGRESSION.get()).booleanValue() && currentIndex < titles.size() - 1) {
             // 锁血结束回血越段（配置允许时）：退出 PENDING，回退 COMBAT 重打上一头衔（同步头衔 + 重新锁血 + 重授 flag）
             this.transitionTo(phase2 ? BossState.PHASE2_COMBAT : BossState.PHASE1_COMBAT);
             int oldPhase = this.phase;
@@ -2108,7 +2108,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
 
     void bossLeaveNoLoot() {
         ServerLevel serverLevel = (ServerLevel)this.level();
-        this.leaveBattle(serverLevel, (Component)Component.translatable((String)"message.silent_sun.redios.no_loot_farewell").withStyle(ChatFormatting.GOLD), false);
+        this.leaveBattle(serverLevel, Component.translatable("message.silent_sun.redios.no_loot_farewell").withStyle(ChatFormatting.GOLD), false);
     }
 
     void bossLeaveFriendly(ServerLevel serverLevel, Component farewellMsg) {
@@ -2119,7 +2119,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         this.setTarget(null);
         this.setNoAi(true);
         this.grantAdvancementToParticipants(serverLevel, "phase2_countdown");
-        this.bossLeaveFriendly(serverLevel, (Component)Component.translatable((String)"message.silent_sun.redios.challenge_success").withStyle(ChatFormatting.GOLD));
+        this.bossLeaveFriendly(serverLevel, Component.translatable("message.silent_sun.redios.challenge_success").withStyle(ChatFormatting.GOLD));
     }
 
     private void leaveBattle(ServerLevel serverLevel, Component farewellMsg, boolean setCooldown) {
@@ -2129,7 +2129,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         this.settlementDone = true;
         this.anticheat.antiCheatNoLoot = true;
         if (setCooldown && BossTargeting.playerOnlyMode()) {
-            this.applySummonCooldown(serverLevel, (long)((Integer)SilentSunConfig.COOLDOWN_DAYS.get()).intValue() * 24000L);
+            this.applySummonCooldown(serverLevel, (long)(SilentSunConfig.COOLDOWN_DAYS.get()).intValue() * 24000L);
         }
         serverLevel.playSound(null, this.blockPosition(), SoundEvents.WARDEN_SONIC_CHARGE, SoundSource.HOSTILE, 1.0f, 1.0f);
         serverLevel.playSound(null, this.blockPosition(), SoundEvents.WARDEN_DEATH, SoundSource.HOSTILE, 1.0f, 1.0f);
@@ -2323,7 +2323,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         }
         if (this.isVoidAllThingsActive()) {
             if (this.isFinalKillerPlayer(damageSource)) {
-                this.applySummonCooldown(serverLevel, (long)((Integer)SilentSunConfig.COOLDOWN_DAYS.get()).intValue() * 24000L);
+                this.applySummonCooldown(serverLevel, (long)(SilentSunConfig.COOLDOWN_DAYS.get()).intValue() * 24000L);
             }
             serverLevel.playSound(null, this.blockPosition(), SoundEvents.WARDEN_SONIC_CHARGE, SoundSource.HOSTILE, 1.0f, 1.0f);
             serverLevel.playSound(null, this.blockPosition(), SoundEvents.WARDEN_DEATH, SoundSource.HOSTILE, 1.0f, 1.0f);
@@ -2334,10 +2334,10 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             BlockPos placePos = this.findNearbyRewardPlacement(serverLevel);
             boolean placed = false;
             if (placePos != null) {
-                placed = ShulkerBoxUtil.placeShulkerBox(serverLevel, placePos, Blocks.WHITE_SHULKER_BOX.defaultBlockState(), loot, (Component)Component.translatable((String)"container.silent_sun.redios_loot"));
+                placed = ShulkerBoxUtil.placeShulkerBox(serverLevel, placePos, Blocks.WHITE_SHULKER_BOX.defaultBlockState(), loot, Component.translatable("container.silent_sun.redios_loot"));
             }
             if (!placed) {
-                ItemStack box = ShulkerBoxUtil.createShulkerBox(Items.WHITE_SHULKER_BOX, loot, (Component)Component.translatable((String)"container.silent_sun.redios_loot"));
+                ItemStack box = ShulkerBoxUtil.createShulkerBox(Items.WHITE_SHULKER_BOX, loot, Component.translatable("container.silent_sun.redios_loot"));
                 this.spawnAtLocation(box);
                 this.notifyRewardCoordinates(serverLevel, this.blockPosition());
             } else {
@@ -2354,7 +2354,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         super.die(damageSource);
         boolean bl = includeDefeatBook = this.phase == 2;
         if (includeDefeatBook && this.isFinalKillerPlayer(damageSource)) {
-            this.applySummonCooldown(serverLevel, (long)((Integer)SilentSunConfig.COOLDOWN_DAYS.get()).intValue() * 24000L);
+            this.applySummonCooldown(serverLevel, (long)(SilentSunConfig.COOLDOWN_DAYS.get()).intValue() * 24000L);
         }
         this.dropPhase1Reward(serverLevel, includeDefeatBook);
         this.disableBossOutline(serverLevel);
@@ -2459,7 +2459,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
                                 return this.doHurtMultiPartTarget(livingTarget, multiCandidates);
                             }
                         }
-                        if (livingTarget instanceof Player && ((p2 = (Player)livingTarget).isSpectator() || p2.isCreative() && !((Boolean)SilentSunConfig.BOSS_DAMAGE_CREATIVE.get()).booleanValue())) {
+                        if (livingTarget instanceof Player && ((p2 = (Player)livingTarget).isSpectator() || p2.isCreative() && !(SilentSunConfig.BOSS_DAMAGE_CREATIVE.get()).booleanValue())) {
                             return false;
                         }
                         if (livingTarget instanceof Player && this.expelledPlayers.contains((p = (Player)livingTarget).getUUID())) {
@@ -2481,10 +2481,10 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
                             sp.level().broadcastEntityEvent((Entity)sp, (byte)3);
                             sl = (ServerLevel)sp.level();
                             sl.playSound(null, sp.blockPosition(), SoundEvents.PLAYER_DEATH, SoundSource.PLAYERS, 1.0f, 1.0f);
-                            warn = Component.translatable((String)"message.silent_sun.redios.hardcore_spare").withStyle(ChatFormatting.DARK_RED);
-                            sp.sendSystemMessage(this.rediosSigned((Component)warn));
+                            warn = Component.translatable("message.silent_sun.redios.hardcore_spare").withStyle(ChatFormatting.DARK_RED);
+                            sp.sendSystemMessage(this.rediosSigned(warn));
                         }
-                        AbsoluteDamageUtil.damage(livingTarget, src, damage, (Boolean)SilentSunConfig.BOSS_DAMAGE_CREATIVE.get());
+                        AbsoluteDamageUtil.damage(livingTarget, src, damage, SilentSunConfig.BOSS_DAMAGE_CREATIVE.get());
                         this.settleSoulSeverPostDamage(livingTarget);
                         break block28;
                     }
@@ -2498,10 +2498,10 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
                     result = livingTarget.hurt(src, damage);
                     break block30;
                 }
-                if (livingTarget instanceof Player && (Double)SilentSunConfig.BOSS_ARMOR_PIERCE.get() > 0.0) {
+                if (livingTarget instanceof Player && SilentSunConfig.BOSS_ARMOR_PIERCE.get() > 0.0) {
                     playerTarget = (Player)livingTarget;
                     totalDamage = (float)this.getAttributeValue(Attributes.ATTACK_DAMAGE);
-                    pierceRatio = ((Double)SilentSunConfig.BOSS_ARMOR_PIERCE.get()).floatValue();
+                    pierceRatio = (SilentSunConfig.BOSS_ARMOR_PIERCE.get()).floatValue();
                     bypass = totalDamage * pierceRatio;
                     normal = totalDamage - bypass;
                     hit = false;
@@ -2509,7 +2509,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
                         v0 = hit = playerTarget.hurt(ModDamageTypes.rediosAttack(this.level(), this), normal) != false || hit != false;
                     }
                     if (bypass > 0.0f) {
-                        hit = AbsoluteDamageUtil.damage((LivingEntity)playerTarget, ModDamageTypes.rediosAttack(this.level(), this), bypass, (Boolean)SilentSunConfig.BOSS_DAMAGE_CREATIVE.get()) != false || hit != false;
+                        hit = AbsoluteDamageUtil.damage((LivingEntity)playerTarget, ModDamageTypes.rediosAttack(this.level(), this), bypass, SilentSunConfig.BOSS_DAMAGE_CREATIVE.get()) != false || hit != false;
                     }
                     result = hit;
                 } else {
@@ -2522,8 +2522,8 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
                 sp.level().broadcastEntityEvent((Entity)sp, (byte)3);
                 sl = (ServerLevel)sp.level();
                 sl.playSound(null, sp.blockPosition(), SoundEvents.PLAYER_DEATH, SoundSource.PLAYERS, 1.0f, 1.0f);
-                warn = Component.translatable((String)"message.silent_sun.redios.hardcore_spare").withStyle(ChatFormatting.DARK_RED);
-                sp.sendSystemMessage(this.rediosSigned((Component)warn));
+                warn = Component.translatable("message.silent_sun.redios.hardcore_spare").withStyle(ChatFormatting.DARK_RED);
+                sp.sendSystemMessage(this.rediosSigned(warn));
             }
             if (!result && this.uncontrolledSprintUnlocked && this.isUncontrolledSprintActive()) {
                 if (this.distanceToSqr((Entity)livingTarget) > 9.0) {
@@ -2536,10 +2536,10 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
                     sp2.level().broadcastEntityEvent((Entity)sp2, (byte)3);
                     sl = (ServerLevel)sp2.level();
                     sl.playSound(null, sp2.blockPosition(), SoundEvents.PLAYER_DEATH, SoundSource.PLAYERS, 1.0f, 1.0f);
-                    warn = Component.translatable((String)"message.silent_sun.redios.hardcore_spare").withStyle(ChatFormatting.DARK_RED);
-                    sp2.sendSystemMessage(this.rediosSigned((Component)warn));
+                    warn = Component.translatable("message.silent_sun.redios.hardcore_spare").withStyle(ChatFormatting.DARK_RED);
+                    sp2.sendSystemMessage(this.rediosSigned(warn));
                 }
-                AbsoluteDamageUtil.damage(livingTarget, ModDamageTypes.rediosAttack(this.level(), this), damage, (Boolean)SilentSunConfig.BOSS_DAMAGE_CREATIVE.get());
+                AbsoluteDamageUtil.damage(livingTarget, ModDamageTypes.rediosAttack(this.level(), this), damage, SilentSunConfig.BOSS_DAMAGE_CREATIVE.get());
                 this.settleSoulSeverPostDamage(livingTarget);
                 result = true;
             }
@@ -2715,8 +2715,8 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     }
 
     void applySoulSeverToTarget(LivingEntity livingTarget) {
-        int durationTicks = (Integer)SilentSunConfig.SOUL_SEVER_DURATION_SECONDS.get() * 20;
-        int maxAmplifier = (Integer)SilentSunConfig.SOUL_SEVER_MAX_AMPLIFIER.get();
+        int durationTicks = SilentSunConfig.SOUL_SEVER_DURATION_SECONDS.get() * 20;
+        int maxAmplifier = SilentSunConfig.SOUL_SEVER_MAX_AMPLIFIER.get();
         int newAmplifier = 0;
         MobEffectInstance current = livingTarget.getEffect(ModEffects.SOUL_SEVER);
         if (current != null) {
@@ -2828,7 +2828,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     }
 
     private void clearEffectsForRootlessPure() {
-        MobEffectInstance enrage = this.getEffect((Holder)ModEffects.ENRAGE);
+        MobEffectInstance enrage = this.getEffect(ModEffects.ENRAGE);
         this.removeAllEffects();
         if (enrage != null) {
             super.addEffect(enrage, (Entity)this);
@@ -2883,7 +2883,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         this.forEachMobOpponent(target -> {
             target.setHealth(target.getMaxHealth());
             for (MobEffectInstance effect : new ArrayList<>(target.getActiveEffects())) {
-                if (((MobEffect)effect.getEffect().value()).isBeneficial()) continue;
+                if (effect.getEffect().value().isBeneficial()) continue;
                 target.removeEffect(effect.getEffect());
             }
         });
@@ -2895,7 +2895,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         player.getFoodData().setSaturation(20.0f);
         player.getFoodData().setExhaustion(0.0f);
         for (MobEffectInstance effect : new ArrayList<>(player.getActiveEffects())) {
-            if (((MobEffect)effect.getEffect().value()).isBeneficial()) continue;
+            if (effect.getEffect().value().isBeneficial()) continue;
             player.removeEffect(effect.getEffect());
         }
         for (ItemStack stack : player.getInventory().items) {
@@ -2920,7 +2920,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             return;
         }
         this.wallAttackLastNotifyTick.put(player.getUUID(), now);
-        player.sendSystemMessage(this.rediosSigned((Component)Component.translatable((String)"message.silent_sun.redios.wall_attack").withStyle(ChatFormatting.DARK_PURPLE)));
+        player.sendSystemMessage(this.rediosSigned(Component.translatable("message.silent_sun.redios.wall_attack").withStyle(ChatFormatting.DARK_PURPLE)));
     }
 
     public boolean isRootlessPureActiveNow() {
@@ -2966,7 +2966,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         if (this.wishRepairTicker % 5 != 0) {
             return;
         }
-        double percentPerSecond = (Double)SilentSunConfig.WISH_REPAIR_PERCENT_PER_SECOND.get();
+        double percentPerSecond = SilentSunConfig.WISH_REPAIR_PERCENT_PER_SECOND.get();
         if (percentPerSecond <= 0.0) {
             return;
         }
@@ -3125,7 +3125,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         List<LivingEntity> entities = serverLevel.getEntitiesOfClass(LivingEntity.class, box, e -> e.isAlive() && e.distanceToSqr((Entity)this) <= r * r);
         for (LivingEntity living : entities) {
             if (living == this || !BossTargeting.playerOnlyMode() && this.isFriendlyEntity(living)) continue;
-            AbsoluteDamageUtil.damage(living, this.damageSources().fellOutOfWorld(), 1.0f, (Boolean)SilentSunConfig.BOSS_DAMAGE_CREATIVE.get());
+            AbsoluteDamageUtil.damage(living, this.damageSources().fellOutOfWorld(), 1.0f, SilentSunConfig.BOSS_DAMAGE_CREATIVE.get());
             this.settleSoulSeverPostDamage(living);
             this.markSoulSeverIfUnlocked(living);
         }
@@ -3305,8 +3305,8 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             this.setTarget(null);
             this.getNavigation().stop();
             this.setNoAi(true);
-            MutableComponent msg = Component.translatable((String)"message.silent_sun.redios.failsafe").withStyle(ChatFormatting.GRAY);
-            this.broadcastToParticipants(this.rediosSigned((Component)msg));
+            MutableComponent msg = Component.translatable("message.silent_sun.redios.failsafe").withStyle(ChatFormatting.GRAY);
+            this.broadcastToParticipants(this.rediosSigned(msg));
         }
         if (this.failsafeActive) {
             this.bossEvent.setVisible(false);
@@ -3325,21 +3325,21 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
 
     public boolean addEffect(MobEffectInstance effect, Entity source) {
         MobEffectInstance current;
-        if (effect != null && effect.getEffect().value() == ModEffects.ENRAGE.get() && (current = this.getEffect((Holder)ModEffects.ENRAGE)) != null && current.getAmplifier() >= 9) {
+        if (effect != null && effect.getEffect().value() == ModEffects.ENRAGE.get() && (current = this.getEffect(ModEffects.ENRAGE)) != null && current.getAmplifier() >= 9) {
             if (this.colorlessUnlocked) {
                 this.triggerWeaknessCurse();
             }
             MobEffectInstance clamped = new MobEffectInstance(ModEffects.ENRAGE, Math.max(current.getDuration(), effect.getDuration()), 9, effect.isAmbient(), effect.isVisible());
             return super.addEffect(clamped, source);
         }
-        if (this.isDebuffImmune() && effect != null && !((MobEffect)effect.getEffect().value()).isBeneficial()) {
+        if (this.isDebuffImmune() && effect != null && !effect.getEffect().value().isBeneficial()) {
             return false;
         }
         return super.addEffect(effect, source);
     }
 
     public boolean removeEffect(Holder<MobEffect> effect) {
-        if ((this.ashDawnUnlocked || this.colorlessUnlocked) && effect != null && ((MobEffect)effect.value()).isBeneficial()) {
+        if ((this.ashDawnUnlocked || this.colorlessUnlocked) && effect != null && (effect.value()).isBeneficial()) {
             return false;
         }
         return super.removeEffect(effect);
@@ -3477,7 +3477,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         this.voidTeleportCooldown = tag.getInt("SilentSunVoidTeleportCooldown");
         this.heightFlightMode = tag.getBoolean("SilentSunHeightFlightMode");
         this.anticheat.readAdditionalSaveData(tag);
-        this.starfallSalvoCooldownTicks = tag.contains("SilentSunStarfallCooldown") ? tag.getInt("SilentSunStarfallCooldown") : ((Integer)SilentSunConfig.STARFALL_SALVO_INTERVAL_TICKS.get()).intValue();
+        this.starfallSalvoCooldownTicks = tag.contains("SilentSunStarfallCooldown") ? tag.getInt("SilentSunStarfallCooldown") : (SilentSunConfig.STARFALL_SALVO_INTERVAL_TICKS.get()).intValue();
         this.battleParticipants.clear();
         ListTag battleList = tag.getList("SilentSunBattleParticipants", 10);
         for (int bi = 0; bi < battleList.size(); ++bi) {
@@ -3604,7 +3604,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     }
 
     private long getSoulSeverValue() {
-        return (long)((Integer)SilentSunConfig.SOUL_SEVER_BASE_X.get()).intValue() + this.soulSeverY;
+        return (long)(SilentSunConfig.SOUL_SEVER_BASE_X.get()).intValue() + this.soulSeverY;
     }
 
     public void addSoulSeverY(long delta) {
@@ -3617,13 +3617,13 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         }
         long oldY = this.soulSeverY;
         this.soulSeverY = next;
-        long threshold = ((Integer)SilentSunConfig.SOUL_SEVER_Y_WARNING_THRESHOLD.get()).intValue();
+        long threshold = (SilentSunConfig.SOUL_SEVER_Y_WARNING_THRESHOLD.get()).intValue();
         if (oldY <= threshold && next > threshold && this.level() instanceof ServerLevel) {
-            MutableComponent warning = Component.translatable((String)"message.silent_sun.redios.soul_sever_overflow").withStyle(ChatFormatting.DARK_RED);
+            MutableComponent warning = Component.translatable("message.silent_sun.redios.soul_sever_overflow").withStyle(ChatFormatting.DARK_RED);
             for (UUID id : new HashSet<UUID>(this.battleParticipants)) {
                 ServerPlayer player = this.getServerPlayer(id);
                 if (player == null || this.expelledPlayers.contains(id) || !player.isAlive()) continue;
-                player.sendSystemMessage(this.rediosSigned((Component)warning));
+                player.sendSystemMessage(this.rediosSigned(warning));
             }
         }
     }
@@ -3738,7 +3738,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     private void startTransition() {
         int ticks;
         this.transitionTo(BossState.PHASE1_TRANSITION);
-        this.transitionTicks = ticks = (Integer)SilentSunConfig.PHASE_TRANSITION_SECONDS.get() * 20;
+        this.transitionTicks = ticks = SilentSunConfig.PHASE_TRANSITION_SECONDS.get() * 20;
         this.transitionTotalTicks = ticks;
         this.bossEvent.setVisible(true);
         this.triggerAnim("main", "transition");
@@ -3791,13 +3791,13 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         this.addEffect(new MobEffectInstance(MobEffects.REGENERATION, 40, 4, true, false), (Entity)this);
         this.level().playSound(null, this.blockPosition(), SoundEvents.ENDER_DRAGON_DEATH, SoundSource.HOSTILE, 1.0f, 1.0f);
         this.awaitingNoResurrectionPhase2 = false;
-        MutableComponent msg = Component.translatable((String)"message.silent_sun.redios.no_resurrection_start").withStyle(new ChatFormatting[]{ChatFormatting.DARK_PURPLE, ChatFormatting.BOLD});
+        MutableComponent msg = Component.translatable("message.silent_sun.redios.no_resurrection_start").withStyle(new ChatFormatting[]{ChatFormatting.DARK_PURPLE, ChatFormatting.BOLD});
         if (!BossTargeting.playerOnlyMode()) {
             for (ServerPlayer sp : ((ServerLevel)this.level()).players()) {
-                sp.sendSystemMessage(this.rediosSigned((Component)msg));
+                sp.sendSystemMessage(this.rediosSigned(msg));
             }
         } else {
-            this.broadcastToParticipants(this.rediosSigned((Component)msg));
+            this.broadcastToParticipants(this.rediosSigned(msg));
         }
     }
 
@@ -3854,7 +3854,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         float epsilon = 0.001f;
         float lockPoint = low + 1.0f;
         float min = this.titleIndex == titles.size() - 1 ? low + epsilon : lockPoint;
-        float clampHigh = (Boolean)SilentSunConfig.ALLOW_TITLE_LOCK_HEAL_REGRESSION.get() != false ? maxHealth : high - epsilon;
+        float clampHigh = SilentSunConfig.ALLOW_TITLE_LOCK_HEAL_REGRESSION.get() != false ? maxHealth : high - epsilon;
         float clamped = Mth.clamp((float)this.getHealth(), (float)min, (float)clampHigh);
         if (clamped != this.getHealth()) {
             this.setHealth(clamped);
@@ -3914,14 +3914,14 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         }
         this.twilightFailureLastNotifyTick.put(player.getUUID(), now);
         if (!RediosRules.twilightMomentDebugMessages()) {
-            player.sendSystemMessage(this.rediosSigned((Component)Component.translatable((String)"message.silent_sun.redios.twilight_moment_expel").withStyle(ChatFormatting.BLUE)));
+            player.sendSystemMessage(this.rediosSigned(Component.translatable("message.silent_sun.redios.twilight_moment_expel").withStyle(ChatFormatting.BLUE)));
             return;
         }
         String mode = RediosRules.twilightMomentMode().name().toLowerCase();
         String apply = String.valueOf(RediosRules.twilightMomentApplyEffectId());
         String satisfy = RediosRules.twilightMomentSatisfyEffectIds().stream().map(String::valueOf).reduce((a, b) -> a + "," + b).orElse("");
-        String reason = Component.translatable((String)(onApply ? "message.silent_sun.redios.twilight_moment_debug_reason.apply_failed" : "message.silent_sun.redios.twilight_moment_debug_reason.effect_missing")).getString();
-        String resolvedApply = String.valueOf(BuiltInRegistries.MOB_EFFECT.getKey((MobEffect)this.resolveTwilightMomentApplyEffect().value()));
+        String reason = Component.translatable((onApply ? "message.silent_sun.redios.twilight_moment_debug_reason.apply_failed" : "message.silent_sun.redios.twilight_moment_debug_reason.effect_missing")).getString();
+        String resolvedApply = String.valueOf(BuiltInRegistries.MOB_EFFECT.getKey(this.resolveTwilightMomentApplyEffect().value()));
         List<String> active = new ArrayList();
         for (Holder holder : player.getActiveEffectsMap().keySet()) {
             ResourceLocation key = BuiltInRegistries.MOB_EFFECT.getKey((MobEffect)holder.value());
@@ -3933,10 +3933,10 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             active = active.subList(0, 12);
         }
         String activeStr = String.join((CharSequence)",", active);
-        player.sendSystemMessage(this.rediosSigned((Component)Component.translatable((String)"message.silent_sun.redios.twilight_moment_expel").withStyle(ChatFormatting.BLUE)));
-        player.sendSystemMessage(this.rediosSigned((Component)Component.literal((String)("mode=" + mode + " reason=" + reason)).withStyle(ChatFormatting.GRAY)));
-        player.sendSystemMessage(this.rediosSigned((Component)Component.literal((String)("apply=" + apply + " satisfy=[" + satisfy + "]")).withStyle(ChatFormatting.GRAY)));
-        player.sendSystemMessage(this.rediosSigned((Component)Component.literal((String)("resolved=" + resolvedApply + " active=[" + activeStr + "]")).withStyle(ChatFormatting.GRAY)));
+        player.sendSystemMessage(this.rediosSigned(Component.translatable("message.silent_sun.redios.twilight_moment_expel").withStyle(ChatFormatting.BLUE)));
+        player.sendSystemMessage(this.rediosSigned(Component.literal((String)("mode=" + mode + " reason=" + reason)).withStyle(ChatFormatting.GRAY)));
+        player.sendSystemMessage(this.rediosSigned(Component.literal((String)("apply=" + apply + " satisfy=[" + satisfy + "]")).withStyle(ChatFormatting.GRAY)));
+        player.sendSystemMessage(this.rediosSigned(Component.literal((String)("resolved=" + resolvedApply + " active=[" + activeStr + "]")).withStyle(ChatFormatting.GRAY)));
     }
 
     private void applyTwilightMomentOnEnter() {
@@ -4096,7 +4096,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             return;
         }
         ServerLevel serverLevel = (ServerLevel)level;
-        this.settleBattle(serverLevel, (long)((Double)SilentSunConfig.COOLDOWN_HALF_DAYS.get() * 24000.0), true, false);
+        this.settleBattle(serverLevel, (long)(SilentSunConfig.COOLDOWN_HALF_DAYS.get() * 24000.0), true, false);
     }
 
     private void endBattleHalfDayDefeatCooldown() {
@@ -4106,7 +4106,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             return;
         }
         ServerLevel serverLevel = (ServerLevel)level;
-        this.settleBattle(serverLevel, (long)((Double)SilentSunConfig.COOLDOWN_HALF_DAYS.get() * 24000.0), this.phase == 2, true);
+        this.settleBattle(serverLevel, (long)(SilentSunConfig.COOLDOWN_HALF_DAYS.get() * 24000.0), this.phase == 2, true);
     }
 
     private boolean isDarkStarActive() {
@@ -4259,7 +4259,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         boolean firstRepair = !this.darkStarBedrockRepaired;
         this.darkStarBedrockRepaired = true;
         if (firstRepair) {
-            this.broadcastToParticipants(this.rediosSigned((Component)Component.translatable((String)"message.silent_sun.redios.dark_star_bedrock_repaired")));
+            this.broadcastToParticipants(this.rediosSigned(Component.translatable("message.silent_sun.redios.dark_star_bedrock_repaired")));
         }
     }
 
@@ -4312,8 +4312,8 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         for (UUID id : new HashSet<UUID>(this.battleParticipants)) {
             ServerPlayer player = this.getServerPlayer(id);
             if (player == null) continue;
-            MutableComponent msg = Component.translatable((String)"message.silent_sun.redios.black_sun_farewell", (Object[])new Object[]{player.getName().getString()}).withStyle(ChatFormatting.BLUE);
-            player.sendSystemMessage(this.rediosSigned((Component)msg));
+            MutableComponent msg = Component.translatable("message.silent_sun.redios.black_sun_farewell", new Object[]{player.getName().getString()}).withStyle(ChatFormatting.BLUE);
+            player.sendSystemMessage(this.rediosSigned(msg));
             if (this.expelledPlayers.contains(id) || player.isSpectator() || player.isCreative() || !player.isAlive() || player.level() != this.level()) continue;
             PacketDistributor.sendToPlayer((ServerPlayer)player, (CustomPacketPayload)new BlackSunDefeatPayload(), (CustomPacketPayload[])new CustomPacketPayload[0]);
         }
@@ -4328,7 +4328,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         }
         ServerLevel serverLevel = (ServerLevel)level;
         boolean dropReward = this.phase == 2;
-        this.settleBattle(serverLevel, (long)((Integer)SilentSunConfig.COOLDOWN_DAYS.get()).intValue() * 24000L, dropReward, true);
+        this.settleBattle(serverLevel, (long)(SilentSunConfig.COOLDOWN_DAYS.get()).intValue() * 24000L, dropReward, true);
     }
 
     private void dropPhase1Reward(ServerLevel serverLevel, boolean includeDefeatBook) {
@@ -4346,10 +4346,10 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         BlockPos placePos = this.findNearbyRewardPlacement(serverLevel);
         boolean placed = false;
         if (placePos != null) {
-            placed = ShulkerBoxUtil.placeShulkerBox(serverLevel, placePos, Blocks.BROWN_SHULKER_BOX.defaultBlockState(), loot, (Component)Component.translatable((String)"container.silent_sun.phase1_reward"));
+            placed = ShulkerBoxUtil.placeShulkerBox(serverLevel, placePos, Blocks.BROWN_SHULKER_BOX.defaultBlockState(), loot, Component.translatable("container.silent_sun.phase1_reward"));
         }
         if (!placed) {
-            ItemStack box = ShulkerBoxUtil.createShulkerBox(Items.BROWN_SHULKER_BOX, loot, (Component)Component.translatable((String)"container.silent_sun.phase1_reward"));
+            ItemStack box = ShulkerBoxUtil.createShulkerBox(Items.BROWN_SHULKER_BOX, loot, Component.translatable("container.silent_sun.phase1_reward"));
             this.spawnAtLocation(box);
             placePos = this.blockPosition();
         }
@@ -4360,16 +4360,16 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         ServerPlayer player;
         String dim = serverLevel.dimension().location().toString();
         BlockPos bossPos = this.blockPosition();
-        MutableComponent msg = Component.translatable((String)"message.silent_sun.reward_coordinates.box").append((Component)Component.literal((String)(dim + " " + rewardPos.getX() + " " + rewardPos.getY() + " " + rewardPos.getZ())).withStyle(ChatFormatting.GOLD)).append((Component)Component.translatable((String)"message.silent_sun.reward_coordinates.boss")).append((Component)Component.literal((String)(dim + " " + bossPos.getX() + " " + bossPos.getY() + " " + bossPos.getZ())).withStyle(ChatFormatting.LIGHT_PURPLE));
+        MutableComponent msg = Component.translatable("message.silent_sun.reward_coordinates.box").append(Component.literal((String)(dim + " " + rewardPos.getX() + " " + rewardPos.getY() + " " + rewardPos.getZ())).withStyle(ChatFormatting.GOLD)).append(Component.translatable("message.silent_sun.reward_coordinates.boss")).append(Component.literal((String)(dim + " " + bossPos.getX() + " " + bossPos.getY() + " " + bossPos.getZ())).withStyle(ChatFormatting.LIGHT_PURPLE));
         for (UUID id : new HashSet<UUID>(this.battleParticipants)) {
             player = this.getServerPlayer(id);
             if (player == null) continue;
-            player.sendSystemMessage(this.rediosSigned((Component)msg));
+            player.sendSystemMessage(this.rediosSigned(msg));
         }
         for (UUID id : new HashSet<UUID>(this.expelledPlayers)) {
             player = this.getServerPlayer(id);
             if (player == null) continue;
-            player.sendSystemMessage(this.rediosSigned((Component)msg));
+            player.sendSystemMessage(this.rediosSigned(msg));
         }
     }
 
@@ -4458,8 +4458,8 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             this.allowSelfTeleport = false;
         }
         if (punishFired) {
-            MutableComponent msg = Component.translatable((String)"message.silent_sun.redios.anti_exile").withStyle(ChatFormatting.GOLD);
-            this.broadcastToParticipants(this.rediosSigned((Component)msg));
+            MutableComponent msg = Component.translatable("message.silent_sun.redios.anti_exile").withStyle(ChatFormatting.GOLD);
+            this.broadcastToParticipants(this.rediosSigned(msg));
         }
     }
 
@@ -4478,8 +4478,8 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             this.dropPhase1Reward(serverLevel, includeDefeatBook);
         }
         if (includeDefeatBook) {
-            MutableComponent msg = Component.translatable((String)"message.silent_sun.redios.defeat_book_farewell").withStyle(ChatFormatting.DARK_PURPLE);
-            this.broadcastToParticipants(this.rediosSigned((Component)msg));
+            MutableComponent msg = Component.translatable("message.silent_sun.redios.defeat_book_farewell").withStyle(ChatFormatting.DARK_PURPLE);
+            this.broadcastToParticipants(this.rediosSigned(msg));
         }
         if (cooldownTicks > 0L && BossTargeting.playerOnlyMode()) {
             this.applySummonCooldown(serverLevel, cooldownTicks);
@@ -4561,7 +4561,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         if (player == null) {
             return;
         }
-        AdvancementHolder advancement = serverLevel.getServer().getAdvancements().get(ResourceLocation.fromNamespaceAndPath((String)"silent_sun", (String)name));
+        AdvancementHolder advancement = serverLevel.getServer().getAdvancements().get(ResourceLocation.fromNamespaceAndPath("silent_sun", (String)name));
         if (advancement != null) {
             player.getAdvancements().award(advancement, "silent_sun:" + name);
         }
@@ -4600,7 +4600,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         if (isAnotherRediosPresent(level, null)) {
             return false;
         }
-        if ((boss = (RediosEntity)((EntityType)ModEntities.REDIOS.get()).create((Level)level)) == null) {
+        if ((boss = ModEntities.REDIOS.get().create(level)) == null) {
             return false;
         }
         boss.setUUID(record.bossId);
@@ -4646,7 +4646,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         boss.rebuiltAsSettled = true;
         level.addFreshEntity((Entity)boss);
         boss.leaveReason = LeaveReason.ANOMALY;
-        boss.broadcastToParticipants(boss.rediosSigned((Component)Component.translatable((String)"message.silent_sun.redios.rebuilt_after_purge").withStyle(ChatFormatting.RED)));
+        boss.broadcastToParticipants(boss.rediosSigned(Component.translatable("message.silent_sun.redios.rebuilt_after_purge").withStyle(ChatFormatting.RED)));
         SilentSunMod.LOGGER.warn("Redios rebuilt from battle record at {} (externally removed, phase={}, leaveReason={})", new Object[]{record.pos, record.phase, boss.leaveReason});
         boss.leaveReason = LeaveReason.NONE;
         return true;
@@ -4662,7 +4662,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             return;
         }
         boolean includeDefeatBook = this.phase == 2;
-        long cooldown = this.phase == 2 ? (long)((Integer)SilentSunConfig.COOLDOWN_DAYS.get()).intValue() * 24000L : 0L;
+        long cooldown = this.phase == 2 ? (long)(SilentSunConfig.COOLDOWN_DAYS.get()).intValue() * 24000L : 0L;
         this.settleBattle(serverLevel, cooldown, this.hasClearedPhase1ForLoot(), includeDefeatBook);
     }
 
@@ -4820,7 +4820,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
 
     private ItemStack createDefeatBookAndQuill() {
         ItemStack book = new ItemStack((ItemLike)Items.WRITTEN_BOOK);
-        List<Filterable<Component>> pages = List.of(Filterable.passThrough(Component.translatable((String)"book.silent_sun.redios.defeat.page0")));
+        List<Filterable<Component>> pages = List.of(Filterable.passThrough(Component.translatable("book.silent_sun.redios.defeat.page0")));
         WrittenBookContent content = new WrittenBookContent(Filterable.passThrough(RediosRules.rediosDefeatBookTitle()), RediosRules.rediosBookAuthor(), 0, pages, true);
         book.set(DataComponents.WRITTEN_BOOK_CONTENT, content);
         return book;
@@ -4839,14 +4839,14 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     }
 
     private void ensureEnrageForTwilightMoment() {
-        if (this.getEffect((Holder)ModEffects.ENRAGE) != null) {
+        if (this.getEffect(ModEffects.ENRAGE) != null) {
             return;
         }
         this.grantEnrageLevels(10);
     }
 
     private void tickEnrage() {
-        MobEffectInstance effect = this.getEffect((Holder)ModEffects.ENRAGE);
+        MobEffectInstance effect = this.getEffect(ModEffects.ENRAGE);
         if (effect == null) {
             this.enrageStackCooldownTicks = 0;
             return;
@@ -4892,7 +4892,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         }
         this.enrageStackCooldownTicks = 60;
         this.grantEnrageLevels(1);
-        if (firmFaith && this.isEnrageMax() && (current = this.getEffect((Holder)ModEffects.ENRAGE)) != null && current.getDuration() < 1000000000) {
+        if (firmFaith && this.isEnrageMax() && (current = this.getEffect(ModEffects.ENRAGE)) != null && current.getDuration() < 1000000000) {
             this.addEffect(new MobEffectInstance(ModEffects.ENRAGE, 1000000000, current.getAmplifier(), true, true), (Entity)this);
         }
     }
@@ -4901,7 +4901,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         if (levels <= 0) {
             return;
         }
-        MobEffectInstance current = this.getEffect((Holder)ModEffects.ENRAGE);
+        MobEffectInstance current = this.getEffect(ModEffects.ENRAGE);
         int currentAmp = current == null ? -1 : current.getAmplifier();
         int desiredAmp = Math.min(9, currentAmp + levels);
         if (current == null) {
@@ -4917,9 +4917,9 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             return;
         }
         this.weaknessCurseActive = true;
-        MutableComponent msg = Component.translatable((String)"message.silent_sun.redios.colorless_curse").withStyle(ChatFormatting.DARK_PURPLE);
+        MutableComponent msg = Component.translatable("message.silent_sun.redios.colorless_curse").withStyle(ChatFormatting.DARK_PURPLE);
         for (ServerPlayer player : this.bossEvent.getPlayers()) {
-            player.sendSystemMessage(this.rediosSigned((Component)msg));
+            player.sendSystemMessage(this.rediosSigned(msg));
         }
         this.tickWeaknessCurse();
     }
@@ -5136,7 +5136,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             if (!serverLevel.getChunkSource().hasChunk(cp.x, cp.z)) continue;
             this.battleParticipants.remove(id);
             this.weapons.removeGuardStats(id);
-            player.sendSystemMessage(this.rediosSigned((Component)Component.translatable((String)"message.silent_sun.redios.expelled").withStyle(ChatFormatting.DARK_RED)));
+            player.sendSystemMessage(this.rediosSigned(Component.translatable("message.silent_sun.redios.expelled").withStyle(ChatFormatting.DARK_RED)));
             this.cleanupPlayerAfterBattle(player);
         }
     }
@@ -5157,7 +5157,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
 
     private ItemStack createVictoryBook() {
         ItemStack book = new ItemStack((ItemLike)Items.WRITTEN_BOOK);
-        List<Filterable<Component>> pages = List.of(Filterable.passThrough(Component.translatable((String)"book.silent_sun.redios.victory.page0")));
+        List<Filterable<Component>> pages = List.of(Filterable.passThrough(Component.translatable("book.silent_sun.redios.victory.page0")));
         WrittenBookContent content = new WrittenBookContent(Filterable.passThrough(RediosRules.rediosVictoryBookTitle()), RediosRules.rediosBookAuthor(), 0, pages, true);
         book.set(DataComponents.WRITTEN_BOOK_CONTENT, content);
         return book;
@@ -5345,7 +5345,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     private Component getBossBarName() {
         List<Component> titles = this.phase == 1 ? PHASE1_TITLES : PHASE2_TITLES;
         Component title = titles.get(Mth.clamp((int)this.titleIndex, (int)0, (int)(titles.size() - 1)));
-        MutableComponent base = this.getType().getDescription().copy().append((Component)Component.literal((String)" \u00b7 ")).append(title);
+        MutableComponent base = this.getType().getDescription().copy().append(Component.literal(" \u00b7 ")).append(title);
         if (this.bossState.isVoteOrTransition()) {
             return base;
         }
@@ -5357,14 +5357,14 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         int tenths = Mth.clamp((int)((this.titleLockTicks * 10 + 19) / 20), (int)0, (int)9999);
         int sec = tenths / 10;
         int dec = tenths % 10;
-        return base.copy().append((Component)Component.literal((String)" ")).append((Component)Component.translatable((String)"bossbar.silent_sun.redios.transition_time", (Object[])new Object[]{sec, dec}).withStyle(ChatFormatting.GOLD));
+        return base.copy().append(Component.literal(" ")).append(Component.translatable("bossbar.silent_sun.redios.transition_time", new Object[]{sec, dec}).withStyle(ChatFormatting.GOLD));
     }
 
     private int getMinTitleSeconds() {
         if (this.phase == 1) {
-            return (Integer)SilentSunConfig.PHASE1_TITLE_MIN_SECONDS.get();
+            return SilentSunConfig.PHASE1_TITLE_MIN_SECONDS.get();
         }
-        return Math.max(30, (Integer)SilentSunConfig.PHASE2_TITLE_MIN_SECONDS.get());
+        return Math.max(30, SilentSunConfig.PHASE2_TITLE_MIN_SECONDS.get());
     }
 
     private int titleLockDurationTicks() {
@@ -5372,7 +5372,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     }
 
     private int colorlessChallengeDurationTicks() {
-        int configured = Math.max(0, (Integer)SilentSunConfig.COLORLESS_CHALLENGE_SECONDS.get()) * 20;
+        int configured = Math.max(0, SilentSunConfig.COLORLESS_CHALLENGE_SECONDS.get()) * 20;
         int minimum = this.getMinTitleSeconds() * 2 * 20;
         return Math.max(configured, minimum);
     }
@@ -5468,11 +5468,11 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         if (newPhase == 1 && newTitleIndex == 5) {
             this.mirrorFaceLockedSoulSever = this.getSoulSeverValue();
             if (this.level() instanceof ServerLevel) {
-                MutableComponent notice = Component.translatable((String)"message.silent_sun.redios.mirror_face_soul_sever_total_prefix").append((Component)Component.literal((String)Long.toString(this.mirrorFaceLockedSoulSever)).withStyle(ChatFormatting.GOLD));
+                MutableComponent notice = Component.translatable("message.silent_sun.redios.mirror_face_soul_sever_total_prefix").append(Component.literal((String)Long.toString(this.mirrorFaceLockedSoulSever)).withStyle(ChatFormatting.GOLD));
                 for (UUID uUID : new HashSet<UUID>(this.battleParticipants)) {
                     ServerPlayer player2 = this.getServerPlayer(uUID);
                     if (player2 == null || this.expelledPlayers.contains(uUID) || player2.isSpectator() || player2.isCreative() || !player2.isAlive()) continue;
-                    player2.sendSystemMessage(this.rediosSigned((Component)notice));
+                    player2.sendSystemMessage(this.rediosSigned(notice));
                     CommonEvents.markMirrorFaceAttackBoost(player2, this.getUUID(), this.mirrorFaceLockedSoulSever);
                 }
             }
@@ -5518,7 +5518,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         }
         if (msg != null) {
             for (ServerPlayer serverPlayer : this.bossEvent.getPlayers()) {
-                serverPlayer.sendSystemMessage(this.rediosSigned((Component)msg));
+                serverPlayer.sendSystemMessage(this.rediosSigned(msg));
             }
         }
         if (newPhase == 2 && newTitleIndex == 5) {
@@ -5617,7 +5617,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         }
         if (attacker instanceof ServerPlayer) {
             ServerPlayer serverPlayer = (ServerPlayer)attacker;
-            serverPlayer.displayClientMessage(this.rediosSigned((Component)Component.translatable((String)"message.silent_sun.redios.weakpoint_hit").withStyle(ChatFormatting.RED)), true);
+            serverPlayer.displayClientMessage(this.rediosSigned(Component.translatable("message.silent_sun.redios.weakpoint_hit").withStyle(ChatFormatting.RED)), true);
         }
     }
 
@@ -5651,7 +5651,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             return;
         }
         this.phase2Choices.put(id, continueFight);
-        player.sendSystemMessage(this.rediosSigned((Component)Component.translatable((String)"message.silent_sun.redios.phase2_choice.selected").append((Component)Component.translatable((String)(continueFight ? "message.silent_sun.redios.phase2_choice.option_yes" : "message.silent_sun.redios.phase2_choice.option_no")).withStyle(continueFight ? ChatFormatting.GREEN : ChatFormatting.RED))));
+        player.sendSystemMessage(this.rediosSigned(Component.translatable("message.silent_sun.redios.phase2_choice.selected").append(Component.translatable((String)(continueFight ? "message.silent_sun.redios.phase2_choice.option_yes" : "message.silent_sun.redios.phase2_choice.option_no")).withStyle(continueFight ? ChatFormatting.GREEN : ChatFormatting.RED))));
         if (this.phase2Choices.values().stream().allMatch(v -> v != null)) {
             this.finishPhase2Choice();
         }
@@ -5665,9 +5665,9 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         if (!RediosRules.phase2VoteRequired()) {
             if (this.level() instanceof ServerLevel) {
                 ServerLevel serverLevel = (ServerLevel)this.level();
-                MutableComponent msg = Component.translatable((String)"message.silent_sun.redios.phase2_choice.start").withStyle(ChatFormatting.DARK_RED);
+                MutableComponent msg = Component.translatable("message.silent_sun.redios.phase2_choice.start").withStyle(ChatFormatting.DARK_RED);
                 for (ServerPlayer player : this.bossEvent.getPlayers()) {
-                    player.displayClientMessage(this.rediosSigned((Component)msg), true);
+                    player.displayClientMessage(this.rediosSigned(msg), true);
                 }
             }
             this.startTransition();
@@ -5699,18 +5699,18 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         this.setTarget(null);
         this.getNavigation().stop();
         this.setNoAi(true);
-        MutableComponent prompt = Component.translatable((String)"message.silent_sun.redios.phase2_choice.prompt").withStyle(ChatFormatting.LIGHT_PURPLE);
-        MutableComponent yes = Component.translatable((String)"message.silent_sun.redios.phase2_choice.button_yes").withStyle(style -> style.withColor(ChatFormatting.GREEN).withClickEvent(new ClickEvent(ClickEvent.Action.SUGGEST_COMMAND, "yes")));
-        MutableComponent no = Component.translatable((String)"message.silent_sun.redios.phase2_choice.button_no").withStyle(style -> style.withColor(ChatFormatting.RED).withClickEvent(new ClickEvent(ClickEvent.Action.SUGGEST_COMMAND, "no")));
-        MutableComponent tokenYes = Component.literal((String)"yes").withStyle(style -> style.withColor(ChatFormatting.GREEN).withClickEvent(new ClickEvent(ClickEvent.Action.SUGGEST_COMMAND, "yes")));
-        MutableComponent tokenNo = Component.literal((String)"no").withStyle(style -> style.withColor(ChatFormatting.RED).withClickEvent(new ClickEvent(ClickEvent.Action.SUGGEST_COMMAND, "no")));
-        MutableComponent hint = Component.translatable((String)"message.silent_sun.redios.phase2_choice.hint", (Object[])new Object[]{yes, no, tokenYes, tokenNo});
+        MutableComponent prompt = Component.translatable("message.silent_sun.redios.phase2_choice.prompt").withStyle(ChatFormatting.LIGHT_PURPLE);
+        MutableComponent yes = Component.translatable("message.silent_sun.redios.phase2_choice.button_yes").withStyle(style -> style.withColor(ChatFormatting.GREEN).withClickEvent(new ClickEvent(ClickEvent.Action.SUGGEST_COMMAND, "yes")));
+        MutableComponent no = Component.translatable("message.silent_sun.redios.phase2_choice.button_no").withStyle(style -> style.withColor(ChatFormatting.RED).withClickEvent(new ClickEvent(ClickEvent.Action.SUGGEST_COMMAND, "no")));
+        MutableComponent tokenYes = Component.literal("yes").withStyle(style -> style.withColor(ChatFormatting.GREEN).withClickEvent(new ClickEvent(ClickEvent.Action.SUGGEST_COMMAND, "yes")));
+        MutableComponent tokenNo = Component.literal("no").withStyle(style -> style.withColor(ChatFormatting.RED).withClickEvent(new ClickEvent(ClickEvent.Action.SUGGEST_COMMAND, "no")));
+        MutableComponent hint = Component.translatable("message.silent_sun.redios.phase2_choice.hint", new Object[]{yes, no, tokenYes, tokenNo});
         for (UUID id : this.phase2Choices.keySet()) {
             ServerPlayer player = this.getServerPlayer(id);
             if (player == null) continue;
             CommonEvents.markPhase2ChoicePending(player, this.getUUID());
-            player.sendSystemMessage(this.rediosSigned((Component)prompt));
-            player.sendSystemMessage(this.rediosSigned((Component)hint));
+            player.sendSystemMessage(this.rediosSigned(prompt));
+            player.sendSystemMessage(this.rediosSigned(hint));
         }
     }
 
@@ -5740,7 +5740,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             for (UUID id : this.phase2Choices.keySet()) {
                 player = this.getServerPlayer(id);
                 if (player == null) continue;
-                player.displayClientMessage(this.rediosSigned((Component)Component.translatable((String)"message.silent_sun.redios.phase2_choice.start").withStyle(ChatFormatting.DARK_RED)), true);
+                player.displayClientMessage(this.rediosSigned(Component.translatable("message.silent_sun.redios.phase2_choice.start").withStyle(ChatFormatting.DARK_RED)), true);
             }
             this.startTransition();
             return;
