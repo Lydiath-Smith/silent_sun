@@ -2139,8 +2139,11 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     }
 
     private boolean isLegitDeathFlow() {
+        // P2 濒死锁血是「防击杀窗口」：仅当锁血到期（pendingLockReleased=true，onPendingLockExpired
+        // 已解除锁血）后才算合法死亡流，允许玩家补刀自然击杀；锁血未到期时直调 setHealth(≤0)/
+        // kill() 等绕过伤害管线的击杀一律视为篡改拦截（与 P1 PENDING 的 inHurtProcessing 判定对称）。
         if (this.bossState == BossState.PHASE2_PENDING) {
-            return true;
+            return this.pendingLockReleased;
         }
         if (this.inHurtProcessing) {
             return true;
