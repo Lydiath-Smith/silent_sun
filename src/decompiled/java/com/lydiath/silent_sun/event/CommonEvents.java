@@ -135,9 +135,9 @@ public final class CommonEvents {
 
     @SubscribeEvent
     public static void onAddReloadListeners(AddReloadListenerEvent event) {
-        event.addListener((PreparableReloadListener)new RediosRulesReloadListener());
-        event.addListener((PreparableReloadListener)new RediosLocalConfigReloadListener());
-        event.addListener((PreparableReloadListener)new BookTextReloadListener());
+        event.addListener(new RediosRulesReloadListener());
+        event.addListener(new RediosLocalConfigReloadListener());
+        event.addListener(new BookTextReloadListener());
     }
 
     @SubscribeEvent
@@ -148,13 +148,13 @@ public final class CommonEvents {
     private static int runRediosReloadConfigs(CommandContext<CommandSourceStack> ctx) {
         boolean okLoot = RediosLootConfig.reload();
         boolean okOverrides = RediosRewardOverrideConfig.reload();
-        ((CommandSourceStack)ctx.getSource()).sendSuccess(() -> Component.translatable((String)(okLoot && okOverrides ? "command.silent_sun.redios.reload_configs.success" : "command.silent_sun.redios.reload_configs.fail")), true);
+        (ctx.getSource()).sendSuccess(() -> Component.translatable((String)(okLoot && okOverrides ? "command.silent_sun.redios.reload_configs.success" : "command.silent_sun.redios.reload_configs.fail")), true);
         String lootPath = String.valueOf(RediosLootConfig.getConfigPath());
         String overridesPath = String.valueOf(RediosRewardOverrideConfig.getConfigPath());
         String lootError = String.valueOf(RediosLootConfig.lastError());
         String overridesError = String.valueOf(RediosRewardOverrideConfig.lastError());
-        ((CommandSourceStack)ctx.getSource()).sendSuccess(() -> Component.translatable("command.silent_sun.redios.reload_configs.loot_detail", (Object[])new Object[]{lootPath, okLoot, RediosLootConfig.entryCount(), lootError}), true);
-        ((CommandSourceStack)ctx.getSource()).sendSuccess(() -> Component.translatable("command.silent_sun.redios.reload_configs.overrides_detail", (Object[])new Object[]{overridesPath, okOverrides, RediosRewardOverrideConfig.overrideCount(), overridesError}), true);
+        (ctx.getSource()).sendSuccess(() -> Component.translatable("command.silent_sun.redios.reload_configs.loot_detail", (Object[])new Object[]{lootPath, okLoot, RediosLootConfig.entryCount(), lootError}), true);
+        (ctx.getSource()).sendSuccess(() -> Component.translatable("command.silent_sun.redios.reload_configs.overrides_detail", (Object[])new Object[]{overridesPath, okOverrides, RediosRewardOverrideConfig.overrideCount(), overridesError}), true);
         return okLoot && okOverrides ? 1 : 0;
     }
 
@@ -168,11 +168,11 @@ public final class CommonEvents {
 
     private static int runReloadAll(CommandContext<CommandSourceStack> ctx) {
         try {
-            ((CommandSourceStack)ctx.getSource()).getServer().getCommands().performPrefixedCommand((CommandSourceStack)ctx.getSource(), "reload");
+            (ctx.getSource()).getServer().getCommands().performPrefixedCommand(ctx.getSource(), "reload");
             return 1;
         }
         catch (Exception e) {
-            ((CommandSourceStack)ctx.getSource()).sendFailure((Component)Component.translatable("command.silent_sun.reload_all.dispatch_failed"));
+            (ctx.getSource()).sendFailure(Component.translatable("command.silent_sun.reload_all.dispatch_failed"));
             return 0;
         }
     }

@@ -395,19 +395,19 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     }
 
     public int getClientPhase() {
-        return (Integer)this.entityData.get(CLIENT_PHASE);
+        return this.entityData.get(CLIENT_PHASE);
     }
 
     public int getClientTitleIndex() {
-        return (Integer)this.entityData.get(CLIENT_TITLE_INDEX);
+        return this.entityData.get(CLIENT_TITLE_INDEX);
     }
 
     public int getClientTransitionTicks() {
-        return (Integer)this.entityData.get(CLIENT_TRANSITION_TICKS);
+        return this.entityData.get(CLIENT_TRANSITION_TICKS);
     }
 
     public BossState getClientBossState() {
-        int ord = (Integer)this.entityData.get(CLIENT_BOSS_STATE);
+        int ord = this.entityData.get(CLIENT_BOSS_STATE);
         BossState[] values = BossState.values();
         return ord >= 0 && ord < values.length ? values[ord] : BossState.PHASE1_COMBAT;
     }
@@ -417,15 +417,15 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     }
 
     public boolean isClientTwilightActive() {
-        return (Integer)this.entityData.get(CLIENT_TWILIGHT_ACTIVE) != 0;
+        return this.entityData.get(CLIENT_TWILIGHT_ACTIVE) != 0;
     }
 
     public boolean isClientIntroActive() {
-        return (Integer)this.entityData.get(CLIENT_INTRO_ACTIVE) != 0;
+        return this.entityData.get(CLIENT_INTRO_ACTIVE) != 0;
     }
 
     public int getClientTitleLockTicks() {
-        return (Integer)this.entityData.get(CLIENT_TITLE_LOCK_TICKS);
+        return this.entityData.get(CLIENT_TITLE_LOCK_TICKS);
     }
 
     private void syncClientRenderData() {
