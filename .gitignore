@@ -42,6 +42,8 @@ repo/
 ### Silent Sun 工程（本地工作区，不入库）###
 # 第三方模组 jar / 崩溃报告 / 素材原图等本地工作区，避免仓库膨胀
 libs/
+# Electron/Chromium crashpad 日志（桌面壳产生，与工程无关）
+debug.log
 
 ### Silent Sun 资源真源例外（bin/main）###
 # bin/main 的 assets/、data/、pack.mcmeta 是手写资源真源（build.gradle srcDir('bin/main') 打进 jar），

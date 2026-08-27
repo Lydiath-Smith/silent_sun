@@ -99,7 +99,8 @@ neoForge {
             // gameDirectory = project.file('run-data')
 
             // Specify the modid for data generation, where to output the resulting resource, and where to look for existing resources.
-            programArguments.addAll '--mod', "silent_sun", '--all', '--output', file('src/generated/resources/').getAbsolutePath(), '--existing', file('src/main/resources/').getAbsolutePath()
+            // --existing 覆盖资源真源 bin/main（assets/data 手写资源所在）与 src/main/resources。
+            programArguments.addAll '--mod', "silent_sun", '--all', '--output', file('src/generated/resources/').getAbsolutePath(), '--existing', file('src/main/resources/').getAbsolutePath(), '--existing', file('bin/main/').getAbsolutePath()
         }
 
         // applies to all the run configs above
@@ -164,6 +165,13 @@ dependencies {
     // http://www.gradle.org/docs/current/userguide/dependency_management.html
 
     implementation "software.bernie.geckolib:geckolib-neoforge-${minecraft_version}:${geckolib_version}"
+
+    // 硬依赖（mods.toml 声明 required）以本地 jar 挂开发运行时：
+    // runData / runClient / runServer 的 mod 加载器会校验依赖，缺失则启动失败。
+    // 不发布到依赖方（localRuntime 不随 publish），仅本地开发运行时生效。
+    localRuntime files("libs/extinction_day_mod_1784441698-1.9.62.jar")
+    localRuntime files("libs/mrqxs_Slashblade_Core-1.21.1-1.4.3.jar")
+    localRuntime files("libs/SlashBladeResharpedRefix-2.0.3-0.2.3-1.21.1.jar")
 
     cfr "org.benf:cfr:0.152"
 }
