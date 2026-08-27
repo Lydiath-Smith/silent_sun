@@ -746,7 +746,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             star.initSalvo(this.getUUID(), hoverY, delay);
             star.markDisplayExempt();
             star.setPos(x, spawnY, z);
-            serverLevel.addFreshEntity((Entity)star);
+            serverLevel.addFreshEntity(star);
             this.introStarfallStars.add(star.getUUID());
         }
     }
@@ -767,7 +767,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         for (UUID uuid : this.introStarfallStars) {
             Entity star = serverLevel.getEntity(uuid);
             if (star == null || star.isRemoved()) continue;
-            serverLevel.explode((Entity)this, star.getX(), star.getY(), star.getZ(), power, Level.ExplosionInteraction.NONE);
+            serverLevel.explode(this, star.getX(), star.getY(), star.getZ(), power, Level.ExplosionInteraction.NONE);
             if (star instanceof StarfallSalvoEntity salvo) salvo.markLegitRemoval();
             star.discard();
         }
@@ -884,7 +884,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             if (star == null) continue;
             star.initSalvo(this.getUUID(), hoverY, delay);
             star.setPos(x, spawnY, z);
-            serverLevel.addFreshEntity((Entity)star);
+            serverLevel.addFreshEntity(star);
             this.starfallSalvoStars.add(star.getUUID());
         }
     }
@@ -925,7 +925,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             curtain.initCurtain(30);
             curtain.setOwnerUuid(this.getUUID());
             curtain.setPos(this.getX(), this.getY() + 1.0, this.getZ());
-            serverLevel.addFreshEntity((Entity)curtain);
+            serverLevel.addFreshEntity(curtain);
         }
         float power = (float)(SilentSunConfig.STARFALL_SALVO_EXPLOSION_POWER.get()).doubleValue();
         HashSet<LivingEntity> hitVictims = new HashSet<>();
@@ -935,7 +935,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             double sx = star.getX();
             double sy = star.getY();
             double sz = star.getZ();
-            serverLevel.explode((Entity)this, sx, sy, sz, power, Level.ExplosionInteraction.MOB);
+            serverLevel.explode(this, sx, sy, sz, power, Level.ExplosionInteraction.MOB);
             AABB blast = new AABB(sx - (double)power, sy - (double)power, sz - (double)power, sx + (double)power, sy + (double)power, sz + (double)power);
             hitVictims.addAll(serverLevel.getEntitiesOfClass(LivingEntity.class, blast, e -> e != this && BossTargeting.isValidAttackTarget(this, e)));
             if (star instanceof StarfallSalvoEntity salvo) {
@@ -1102,7 +1102,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
                 this.locateBossFarTicks.remove(id2);
                 continue;
             }
-            if (player.distanceToSqr((Entity)this) <= distSqr) {
+            if (player.distanceToSqr(this) <= distSqr) {
                 this.locateBossFarTicks.remove(id2);
                 continue;
             }
@@ -1158,18 +1158,18 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         MobEffectInstance enrage = this.getEffect((Holder<MobEffect>)ModEffects.ENRAGE);
         this.removeAllEffects();
         if (enrage != null) {
-            super.addEffect(enrage, (Entity)this);
+            super.addEffect(enrage, this);
         }
     }
 
     void reapplySelfBuffs() {
         if (this.phase == 2) {
-            this.addEffect(new MobEffectInstance(MobEffects.DAMAGE_BOOST, 40, 4, true, false), (Entity)this);
-            this.addEffect(new MobEffectInstance(MobEffects.MOVEMENT_SPEED, 40, 1, true, false), (Entity)this);
-            this.addEffect(new MobEffectInstance(MobEffects.REGENERATION, 40, 4, true, false), (Entity)this);
+            this.addEffect(new MobEffectInstance(MobEffects.DAMAGE_BOOST, 40, 4, true, false), this);
+            this.addEffect(new MobEffectInstance(MobEffects.MOVEMENT_SPEED, 40, 1, true, false), this);
+            this.addEffect(new MobEffectInstance(MobEffects.REGENERATION, 40, 4, true, false), this);
         }
         if (this.phase == 1) {
-            this.addEffect(new MobEffectInstance(MobEffects.DAMAGE_RESISTANCE, 40, 2, true, false), (Entity)this);
+            this.addEffect(new MobEffectInstance(MobEffects.DAMAGE_RESISTANCE, 40, 2, true, false), this);
         }
     }
 
@@ -1196,7 +1196,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
                 this.lastMissingViewNotifyTick.remove(id2);
                 continue;
             }
-            boolean visible = player.hasLineOfSight((Entity)this);
+            boolean visible = player.hasLineOfSight(this);
             if (visible) {
                 Vec3 look = player.getLookAngle();
                 Vec3 toBoss = this.position().subtract(player.position());
@@ -1294,7 +1294,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
                 this.battleMusicPlaying.remove(id);
                 continue;
             }
-            if (this.distanceToSqr((Entity)player) > 16384.0) {
+            if (this.distanceToSqr(player) > 16384.0) {
                 this.stopBattleMusicFor(player);
                 this.battleMusicPlaying.remove(id);
                 continue;
@@ -1396,7 +1396,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         for (UUID id : new HashSet<UUID>(this.battleParticipants)) {
             double d;
             ServerPlayer player;
-            if (this.expelledPlayers.contains(id) || (player = this.getServerPlayer(id)) == null || player.isSpectator() || player.isCreative() || !player.isAlive() || player.level() != this.level() || !((d = player.distanceToSqr((Entity)this)) < bestDist)) continue;
+            if (this.expelledPlayers.contains(id) || (player = this.getServerPlayer(id)) == null || player.isSpectator() || player.isCreative() || !player.isAlive() || player.level() != this.level() || !((d = player.distanceToSqr(this)) < bestDist)) continue;
             bestDist = d;
             best = player;
         }
@@ -1404,7 +1404,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             for (UUID id : new HashSet<UUID>(this.mobParticipants)) {
                 double d;
                 LivingEntity target = this.getMobParticipant(id);
-                if (target == null || !target.isAlive() || !((d = target.distanceToSqr((Entity)this)) < bestDist)) continue;
+                if (target == null || !target.isAlive() || !((d = target.distanceToSqr(this)) < bestDist)) continue;
                 bestDist = d;
                 best = target;
             }
@@ -1450,7 +1450,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         if (!this.seaSkySoulSeverUnlocked) {
             return;
         }
-        this.addEffect(new MobEffectInstance(MobEffects.DAMAGE_BOOST, 40, 4, true, false), (Entity)this);
+        this.addEffect(new MobEffectInstance(MobEffects.DAMAGE_BOOST, 40, 4, true, false), this);
         this.applyOpponentEffect(() -> new MobEffectInstance(MobEffects.DAMAGE_BOOST, 40, 4, true, true));
     }
 
@@ -1512,7 +1512,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         if (!this.uncontrolledSprintUnlocked) {
             return;
         }
-        this.addEffect(new MobEffectInstance(MobEffects.MOVEMENT_SPEED, 40, 1, true, false), (Entity)this);
+        this.addEffect(new MobEffectInstance(MobEffects.MOVEMENT_SPEED, 40, 1, true, false), this);
         this.applyOpponentEffect(() -> new MobEffectInstance(MobEffects.MOVEMENT_SPEED, 40, 1, true, false));
     }
 
@@ -2431,7 +2431,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
                             this.registerMobParticipant(livingTarget);
                         }
                         reach = this.getCurrentAttackReach();
-                        if (this.distanceToSqr((Entity)livingTarget) > reach * reach + 9.0) {
+                        if (this.distanceToSqr(livingTarget) > reach * reach + 9.0) {
                             return false;
                         }
                         if (this.wrongInterferenceActive && this.random.nextFloat() > 0.5f) {
@@ -2478,7 +2478,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
                         if (livingTarget instanceof ServerPlayer && (sp = (ServerPlayer)livingTarget).level().getLevelData().isHardcore() && damage >= sp.getHealth()) {
                             damage = Math.max(0.0f, sp.getHealth() - 1.0f);
                             this.hardcoreProtectedPlayers.add(sp.getUUID());
-                            sp.level().broadcastEntityEvent((Entity)sp, (byte)3);
+                            sp.level().broadcastEntityEvent(sp, (byte)3);
                             sl = (ServerLevel)sp.level();
                             sl.playSound(null, sp.blockPosition(), SoundEvents.PLAYER_DEATH, SoundSource.PLAYERS, 1.0f, 1.0f);
                             warn = Component.translatable("message.silent_sun.redios.hardcore_spare").withStyle(ChatFormatting.DARK_RED);
@@ -2519,21 +2519,21 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             if (result && livingTarget.getHealth() <= 0.0f && livingTarget instanceof ServerPlayer && (sp = (ServerPlayer)livingTarget).level().getLevelData().isHardcore()) {
                 sp.setHealth(1.0f);
                 this.hardcoreProtectedPlayers.add(sp.getUUID());
-                sp.level().broadcastEntityEvent((Entity)sp, (byte)3);
+                sp.level().broadcastEntityEvent(sp, (byte)3);
                 sl = (ServerLevel)sp.level();
                 sl.playSound(null, sp.blockPosition(), SoundEvents.PLAYER_DEATH, SoundSource.PLAYERS, 1.0f, 1.0f);
                 warn = Component.translatable("message.silent_sun.redios.hardcore_spare").withStyle(ChatFormatting.DARK_RED);
                 sp.sendSystemMessage(this.rediosSigned(warn));
             }
             if (!result && this.uncontrolledSprintUnlocked && this.isUncontrolledSprintActive()) {
-                if (this.distanceToSqr((Entity)livingTarget) > 9.0) {
+                if (this.distanceToSqr(livingTarget) > 9.0) {
                     return false;
                 }
                 damage = (float)this.getAttributeValue(Attributes.ATTACK_DAMAGE);
                 if (livingTarget instanceof ServerPlayer && (sp2 = (ServerPlayer)livingTarget).level().getLevelData().isHardcore() && damage >= sp2.getHealth()) {
                     damage = Math.max(0.0f, sp2.getHealth() - 1.0f);
                     this.hardcoreProtectedPlayers.add(sp2.getUUID());
-                    sp2.level().broadcastEntityEvent((Entity)sp2, (byte)3);
+                    sp2.level().broadcastEntityEvent(sp2, (byte)3);
                     sl = (ServerLevel)sp2.level();
                     sl.playSound(null, sp2.blockPosition(), SoundEvents.PLAYER_DEATH, SoundSource.PLAYERS, 1.0f, 1.0f);
                     warn = Component.translatable("message.silent_sun.redios.hardcore_spare").withStyle(ChatFormatting.DARK_RED);
@@ -2831,7 +2831,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         MobEffectInstance enrage = this.getEffect(ModEffects.ENRAGE);
         this.removeAllEffects();
         if (enrage != null) {
-            super.addEffect(enrage, (Entity)this);
+            super.addEffect(enrage, this);
         }
     }
 
@@ -2999,7 +2999,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             player.addEffect(new MobEffectInstance(MobEffects.DAMAGE_BOOST, 40, level - 1, true, false));
         }
         this.forEachMobOpponent(target -> {
-            int friendly = serverLevel.getEntitiesOfClass(LivingEntity.class, target.getBoundingBox().inflate(20.0), e -> e.isAlive() && !(e instanceof Player) && !(e instanceof Monster) && target.distanceToSqr((Entity)e) <= 400.0).size();
+            int friendly = serverLevel.getEntitiesOfClass(LivingEntity.class, target.getBoundingBox().inflate(20.0), e -> e.isAlive() && !(e instanceof Player) && !(e instanceof Monster) && target.distanceToSqr(e) <= 400.0).size();
             int level = Math.min(10, friendly);
             if (level > 0) {
                 target.addEffect(new MobEffectInstance(MobEffects.DAMAGE_BOOST, 40, level - 1, true, false));
@@ -3008,11 +3008,11 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     }
 
     private int countNearbyFriendly(ServerPlayer player, ServerLevel serverLevel) {
-        List entities = serverLevel.getEntitiesOfClass(LivingEntity.class, player.getBoundingBox().inflate(20.0), e -> e.isAlive() && !(e instanceof Player) && !(e instanceof Monster) && player.distanceToSqr((Entity)e) <= 400.0);
+        List entities = serverLevel.getEntitiesOfClass(LivingEntity.class, player.getBoundingBox().inflate(20.0), e -> e.isAlive() && !(e instanceof Player) && !(e instanceof Monster) && player.distanceToSqr(e) <= 400.0);
         int count = entities.size();
         for (UUID id : this.battleParticipants) {
             ServerPlayer other;
-            if (id.equals(player.getUUID()) || this.expelledPlayers.contains(id) || (other = this.getServerPlayer(id)) == null || !other.isAlive() || !(player.distanceToSqr((Entity)other) <= 400.0)) continue;
+            if (id.equals(player.getUUID()) || this.expelledPlayers.contains(id) || (other = this.getServerPlayer(id)) == null || !other.isAlive() || !(player.distanceToSqr(other) <= 400.0)) continue;
             ++count;
         }
         return count;
@@ -3084,7 +3084,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     }
 
     private void tickPhase1Resistance() {
-        this.addEffect(new MobEffectInstance(MobEffects.DAMAGE_RESISTANCE, 40, 2, true, false), (Entity)this);
+        this.addEffect(new MobEffectInstance(MobEffects.DAMAGE_RESISTANCE, 40, 2, true, false), this);
     }
 
     private void tickResistanceBoost() {
@@ -3093,7 +3093,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         if (current != null) {
             desired = Math.max(desired, current.getAmplifier());
         }
-        this.addEffect(new MobEffectInstance(MobEffects.DAMAGE_RESISTANCE, 40, desired, true, false), (Entity)this);
+        this.addEffect(new MobEffectInstance(MobEffects.DAMAGE_RESISTANCE, 40, desired, true, false), this);
     }
 
     boolean isSorrowToilActive() {
@@ -3122,7 +3122,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         }
         double r = 5.0;
         AABB box = this.getBoundingBox().inflate(r);
-        List<LivingEntity> entities = serverLevel.getEntitiesOfClass(LivingEntity.class, box, e -> e.isAlive() && e.distanceToSqr((Entity)this) <= r * r);
+        List<LivingEntity> entities = serverLevel.getEntitiesOfClass(LivingEntity.class, box, e -> e.isAlive() && e.distanceToSqr(this) <= r * r);
         for (LivingEntity living : entities) {
             if (living == this || !BossTargeting.playerOnlyMode() && this.isFriendlyEntity(living)) continue;
             AbsoluteDamageUtil.damage(living, this.damageSources().fellOutOfWorld(), 1.0f, SilentSunConfig.BOSS_DAMAGE_CREATIVE.get());
@@ -3212,7 +3212,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         }
         if (this.tickCount % 20 == 0) {
             AABB box = this.getBoundingBox().inflate(radius);
-            List<LivingEntity> entities = serverLevel.getEntitiesOfClass(LivingEntity.class, box, e -> e.isAlive() && e != this && e.distanceToSqr((Entity)this) <= radius * radius);
+            List<LivingEntity> entities = serverLevel.getEntitiesOfClass(LivingEntity.class, box, e -> e.isAlive() && e != this && e.distanceToSqr(this) <= radius * radius);
             for (LivingEntity living : entities) {
                 if (BossTargeting.playerOnlyMode() ? !(living instanceof ServerPlayer) : this.isFriendlyEntity(living)) continue;
                 float auraDamage = 3.0f;
@@ -3648,7 +3648,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         if (holder == null) {
             return null;
         }
-        return new DamageSource(holder, (Entity)this, (Entity)this);
+        return new DamageSource(holder, this, this);
     }
 
     private Holder<DamageType> resolveAttackDamageHolder() {
@@ -3751,7 +3751,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
 
     private void spawnTransitionImpact(ServerLevel serverLevel) {
         double y = this.getY() + 2.0;
-        serverLevel.explode((Entity)this, this.getX(), y, this.getZ(), 0.0f, Level.ExplosionInteraction.NONE);
+        serverLevel.explode(this, this.getX(), y, this.getZ(), 0.0f, Level.ExplosionInteraction.NONE);
         serverLevel.sendParticles((ParticleOptions)ParticleTypes.EXPLOSION_EMITTER, this.getX(), y, this.getZ(), 1, 0.0, 0.0, 0.0, 0.0);
         for (int i = 0; i < 16; ++i) {
             double angle = Math.PI * 2 * (double)i / 16.0;
@@ -3786,9 +3786,9 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         this.dodgeChance = Math.max(this.dodgeChance, (double)0.15f);
         this.enrageStackingUnlocked = true;
         this.healBoostTicks = 600;
-        this.addEffect(new MobEffectInstance(MobEffects.DAMAGE_BOOST, 40, 4, true, false), (Entity)this);
-        this.addEffect(new MobEffectInstance(MobEffects.MOVEMENT_SPEED, 40, 1, true, false), (Entity)this);
-        this.addEffect(new MobEffectInstance(MobEffects.REGENERATION, 40, 4, true, false), (Entity)this);
+        this.addEffect(new MobEffectInstance(MobEffects.DAMAGE_BOOST, 40, 4, true, false), this);
+        this.addEffect(new MobEffectInstance(MobEffects.MOVEMENT_SPEED, 40, 1, true, false), this);
+        this.addEffect(new MobEffectInstance(MobEffects.REGENERATION, 40, 4, true, false), this);
         this.level().playSound(null, this.blockPosition(), SoundEvents.ENDER_DRAGON_DEATH, SoundSource.HOSTILE, 1.0f, 1.0f);
         this.awaitingNoResurrectionPhase2 = false;
         MutableComponent msg = Component.translatable("message.silent_sun.redios.no_resurrection_start").withStyle(new ChatFormatting[]{ChatFormatting.DARK_PURPLE, ChatFormatting.BOLD});
@@ -4044,7 +4044,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         catch (Exception exception) {
             // empty catch block
         }
-        if (player.level() == this.level() && player.distanceToSqr((Entity)this) <= RediosRules.pushAwayDistance() * RediosRules.pushAwayDistance()) {
+        if (player.level() == this.level() && player.distanceToSqr(this) <= RediosRules.pushAwayDistance() * RediosRules.pushAwayDistance()) {
             this.repelExpelledPlayers();
         }
         if (this.isTwilightMomentActive() && this.battleParticipants.isEmpty()) {
@@ -4056,7 +4056,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         if (!this.ashDawnUnlocked) {
             return;
         }
-        this.addEffect(new MobEffectInstance(MobEffects.REGENERATION, 40, 4, true, false), (Entity)this);
+        this.addEffect(new MobEffectInstance(MobEffects.REGENERATION, 40, 4, true, false), this);
         if (this.tickCount % 3 == 0) {
             this.setHeal(1.0f);
         }
@@ -4080,9 +4080,9 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
 
     private void applyColorlessPermanentBuffs() {
         this.healBoostTicks = 600;
-        this.addEffect(new MobEffectInstance(MobEffects.DAMAGE_BOOST, 40, 4, true, false), (Entity)this);
-        this.addEffect(new MobEffectInstance(MobEffects.MOVEMENT_SPEED, 40, 1, true, false), (Entity)this);
-        this.addEffect(new MobEffectInstance(MobEffects.REGENERATION, 40, 4, true, false), (Entity)this);
+        this.addEffect(new MobEffectInstance(MobEffects.DAMAGE_BOOST, 40, 4, true, false), this);
+        this.addEffect(new MobEffectInstance(MobEffects.MOVEMENT_SPEED, 40, 1, true, false), this);
+        this.addEffect(new MobEffectInstance(MobEffects.REGENERATION, 40, 4, true, false), this);
         this.ashDawnUnlocked = true;
         this.dodgeChance = Math.max(this.dodgeChance, 0.15);
         this.chaosRuinAbsoluteAttacks = true;
@@ -4414,12 +4414,12 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             if (dx * dx + (dy = this.getY() - (double)this.battleAnchorPos.getY()) * dy + (dz = this.getZ() - ((double)this.battleAnchorPos.getZ() + 0.5)) * dz > 65536.0) {
                 boolean anyNear = false;
                 LivingEntity target = this.getTarget();
-                if (target != null && target.isAlive() && target.level() == serverLevel && target.distanceToSqr((Entity)this) <= 16384.0) {
+                if (target != null && target.isAlive() && target.level() == serverLevel && target.distanceToSqr(this) <= 16384.0) {
                     anyNear = true;
                 }
                 for (UUID id : this.battleParticipants) {
                     ServerPlayer p = this.getServerPlayer(id);
-                    if (p == null || !p.isAlive() || p.level() != serverLevel || !(p.distanceToSqr((Entity)this) <= 16384.0)) continue;
+                    if (p == null || !p.isAlive() || p.level() != serverLevel || !(p.distanceToSqr(this) <= 16384.0)) continue;
                     anyNear = true;
                     break;
                 }
@@ -4427,7 +4427,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
                     for (UUID id : this.mobParticipants) {
                         LivingEntity mob;
                         Entity e = serverLevel.getEntity(id);
-                        if (!(e instanceof LivingEntity) || !(mob = (LivingEntity)e).isAlive() || !(mob.distanceToSqr((Entity)this) <= 16384.0)) continue;
+                        if (!(e instanceof LivingEntity) || !(mob = (LivingEntity)e).isAlive() || !(mob.distanceToSqr(this) <= 16384.0)) continue;
                         anyNear = true;
                         break;
                     }
@@ -4644,7 +4644,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         boss.forceSetHealth(restored);
         boss.anticheat.markLegalHealthChange(boss.getHealth());
         boss.rebuiltAsSettled = true;
-        level.addFreshEntity((Entity)boss);
+        level.addFreshEntity(boss);
         boss.leaveReason = LeaveReason.ANOMALY;
         boss.broadcastToParticipants(boss.rediosSigned(Component.translatable("message.silent_sun.redios.rebuilt_after_purge").withStyle(ChatFormatting.RED)));
         SilentSunMod.LOGGER.warn("Redios rebuilt from battle record at {} (externally removed, phase={}, leaveReason={})", new Object[]{record.pos, record.phase, boss.leaveReason});
@@ -4676,7 +4676,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         if (this.bossState.isVoteOrTransition()) {
             return;
         }
-        if (serverLevel.getNearestPlayer((Entity)this, 128.0) != null) {
+        if (serverLevel.getNearestPlayer(this, 128.0) != null) {
             return;
         }
         if (serverLevel.getLevelData().isHardcore()) {
@@ -4747,7 +4747,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
                 continue;
             }
             ++active;
-            if (player.distanceToSqr((Entity)this) <= 64.0 * 64.0) {
+            if (player.distanceToSqr(this) <= 64.0 * 64.0) {
                 anyClose = true;
                 break;
             }
@@ -4788,7 +4788,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         boolean anyTicking = false;
         for (UUID id : this.battleParticipants) {
             ServerPlayer player = this.getServerPlayer(id);
-            if (player == null || this.expelledPlayers.contains(id) || player.isSpectator() || !player.isAlive() || player.level() != this.level() || !serverLevel.isPositionEntityTicking(player.blockPosition()) || player.isCreative() && !(player.distanceToSqr((Entity)this) <= 16384.0)) continue;
+            if (player == null || this.expelledPlayers.contains(id) || player.isSpectator() || !player.isAlive() || player.level() != this.level() || !serverLevel.isPositionEntityTicking(player.blockPosition()) || player.isCreative() && !(player.distanceToSqr(this) <= 16384.0)) continue;
             anyTicking = true;
             break;
         }
@@ -4852,7 +4852,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             return;
         }
         if (effect.getAmplifier() > 9) {
-            this.addEffect(new MobEffectInstance(ModEffects.ENRAGE, effect.getDuration(), 9, effect.isAmbient(), effect.isVisible()), (Entity)this);
+            this.addEffect(new MobEffectInstance(ModEffects.ENRAGE, effect.getDuration(), 9, effect.isAmbient(), effect.isVisible()), this);
         }
         this.tickEnrageAntiStun();
     }
@@ -4893,7 +4893,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         this.enrageStackCooldownTicks = 60;
         this.grantEnrageLevels(1);
         if (firmFaith && this.isEnrageMax() && (current = this.getEffect(ModEffects.ENRAGE)) != null && current.getDuration() < 1000000000) {
-            this.addEffect(new MobEffectInstance(ModEffects.ENRAGE, 1000000000, current.getAmplifier(), true, true), (Entity)this);
+            this.addEffect(new MobEffectInstance(ModEffects.ENRAGE, 1000000000, current.getAmplifier(), true, true), this);
         }
     }
 
@@ -4908,7 +4908,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             desiredAmp = Math.min(9, levels - 1);
         }
         int duration = current == null ? 1000000000 : Math.max(current.getDuration(), 1000000000);
-        this.addEffect(new MobEffectInstance(ModEffects.ENRAGE, duration, desiredAmp, true, true), (Entity)this);
+        this.addEffect(new MobEffectInstance(ModEffects.ENRAGE, duration, desiredAmp, true, true), this);
         EnrageEffect.applyFragileIfEnraged((LivingEntity)this, desiredAmp);
     }
 
@@ -5021,7 +5021,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         }
         ArrayList<ServerPlayer> noCover = new ArrayList<ServerPlayer>();
         for (ServerPlayer p : candidates) {
-            if (!this.getSensing().hasLineOfSight((Entity)p)) continue;
+            if (!this.getSensing().hasLineOfSight(p)) continue;
             noCover.add(p);
         }
         ArrayList<ServerPlayer> arrayList = noCover.isEmpty() ? candidates : noCover;
@@ -5061,7 +5061,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
                     // else：多次重选仍避不开（球体过大），接受贴地落点。
                 }
             }
-            if (!serverLevel.noCollision((Entity)this, this.getBoundingBox().move(dest.subtract(this.position())))) continue;
+            if (!serverLevel.noCollision(this, this.getBoundingBox().move(dest.subtract(this.position())))) continue;
             this.allowSelfTeleport = true;
             try {
                 this.teleportTo(dest.x, dest.y, dest.z);
@@ -5131,7 +5131,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     private void checkVoidBattleRange(ServerLevel serverLevel) {
         for (UUID id : new HashSet<UUID>(this.battleParticipants)) {
             ServerPlayer player = this.getServerPlayer(id);
-            if (player == null || this.expelledPlayers.contains(id) || player.isSpectator() || player.isCreative() || !player.isAlive() || player.level() != this.level() || this.distanceToSqr((Entity)player) <= 262144.0) continue;
+            if (player == null || this.expelledPlayers.contains(id) || player.isSpectator() || player.isCreative() || !player.isAlive() || player.level() != this.level() || this.distanceToSqr(player) <= 262144.0) continue;
             ChunkPos cp = player.chunkPosition();
             if (!serverLevel.getChunkSource().hasChunk(cp.x, cp.z)) continue;
             this.battleParticipants.remove(id);
@@ -5536,9 +5536,9 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         }
         if (newPhase == 2 && newTitleIndex == 9) {
             this.healBoostTicks = 600;
-            this.addEffect(new MobEffectInstance(MobEffects.DAMAGE_BOOST, 40, 4, true, false), (Entity)this);
-            this.addEffect(new MobEffectInstance(MobEffects.MOVEMENT_SPEED, 40, 1, true, false), (Entity)this);
-            this.addEffect(new MobEffectInstance(MobEffects.REGENERATION, 40, 4, true, false), (Entity)this);
+            this.addEffect(new MobEffectInstance(MobEffects.DAMAGE_BOOST, 40, 4, true, false), this);
+            this.addEffect(new MobEffectInstance(MobEffects.MOVEMENT_SPEED, 40, 1, true, false), this);
+            this.addEffect(new MobEffectInstance(MobEffects.REGENERATION, 40, 4, true, false), this);
             this.ashDawnUnlocked = true;
             this.dodgeChance = Math.max(this.dodgeChance, 0.15);
             this.chaosRuinAbsoluteAttacks = true;
@@ -5939,7 +5939,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
                 dz = 0.0;
                 len = 1.0;
             }
-            if (this.isPushDirectionBlocked(serverLevel, (Entity)player, nx = dx / len, nz = dz / len)) {
+            if (this.isPushDirectionBlocked(serverLevel, player, nx = dx / len, nz = dz / len)) {
                 player.push(0.0, 0.6, 0.0);
                 continue;
             }
@@ -5988,7 +5988,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             if (target == null || !target.isAlive()) {
                 return false;
             }
-            double d = this.redios.distanceTo((Entity)target);
+            double d = this.redios.distanceTo(target);
             double reach = this.redios.getCurrentAttackReach();
             return d >= 4.0 && d <= reach * 4.0;
         }
@@ -6005,7 +6005,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
                 double dz;
                 double dx;
                 double hLen;
-                this.redios.getLookControl().setLookAt((Entity)target, 30.0f, 30.0f);
+                this.redios.getLookControl().setLookAt(target, 30.0f, 30.0f);
                 Vec3 dir = target.position().subtract(this.redios.position());
                 if (dir.lengthSqr() < 1.0E-6) {
                     dir = new Vec3(1.0, 0.0, 0.0);
@@ -6032,10 +6032,10 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
                 return;
             }
             --this.dashTicks;
-            this.redios.getLookControl().setLookAt((Entity)target, 30.0f, 30.0f);
-            if (this.redios.distanceToSqr((Entity)target) <= 9.0) {
+            this.redios.getLookControl().setLookAt(target, 30.0f, 30.0f);
+            if (this.redios.distanceToSqr(target) <= 9.0) {
                 this.redios.swing(InteractionHand.MAIN_HAND);
-                this.redios.doHurtTarget((Entity)target);
+                this.redios.doHurtTarget(target);
                 this.dashTicks = 0;
             }
         }
@@ -6065,7 +6065,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             if (this.redios.isBladeModeActive()) {
                 return false;
             }
-            return !this.redios.isWallAttackEnabled() || this.redios.getSensing().hasLineOfSight((Entity)target);
+            return !this.redios.isWallAttackEnabled() || this.redios.getSensing().hasLineOfSight(target);
         }
 
         public boolean canContinueToUse() {
@@ -6087,28 +6087,28 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             if (target == null) {
                 return;
             }
-            this.redios.getLookControl().setLookAt((Entity)target, 30.0f, 30.0f);
+            this.redios.getLookControl().setLookAt(target, 30.0f, 30.0f);
             if (this.pathRecalcTicks-- <= 0) {
                 this.pathRecalcTicks = 6;
                 reach = this.redios.getCurrentAttackReach();
                 reachSqr = reach * reach;
-                if (this.redios.distanceToSqr((Entity)target) > reachSqr) {
+                if (this.redios.distanceToSqr(target) > reachSqr) {
                     double moveSpeed = this.redios.heightFlightMode ? this.speed * 1.35 : this.speed;
-                    this.redios.getNavigation().moveTo((Entity)target, moveSpeed);
+                    this.redios.getNavigation().moveTo(target, moveSpeed);
                 }
             }
             if (this.attackCooldownTicks > 0) {
                 --this.attackCooldownTicks;
             }
-            if (this.redios.isWallAttackEnabled() && !this.redios.getSensing().hasLineOfSight((Entity)target)) {
+            if (this.redios.isWallAttackEnabled() && !this.redios.getSensing().hasLineOfSight(target)) {
                 return;
             }
             reach = this.redios.getCurrentAttackReach();
             reachSqr = reach * reach;
-            if (this.redios.distanceToSqr((Entity)target) <= reachSqr && this.attackCooldownTicks <= 0) {
+            if (this.redios.distanceToSqr(target) <= reachSqr && this.attackCooldownTicks <= 0) {
                 this.attackCooldownTicks = this.redios.getAttackCooldownTicks();
                 this.redios.swing(InteractionHand.MAIN_HAND);
-                this.redios.doHurtTarget((Entity)target);
+                this.redios.doHurtTarget(target);
             }
         }
     }
@@ -6137,11 +6137,11 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             if (this.redios.bossState.isVoteOrTransition()) {
                 return false;
             }
-            if (this.redios.getSensing().hasLineOfSight((Entity)target)) {
+            if (this.redios.getSensing().hasLineOfSight(target)) {
                 return false;
             }
             double reach = this.redios.getCurrentAttackReach();
-            if (this.redios.distanceToSqr((Entity)target) > reach * reach) {
+            if (this.redios.distanceToSqr(target) > reach * reach) {
                 return false;
             }
             // 厚墙（厚度≥阈值）交给投掷突破，穿墙近战只处理薄墙
@@ -6157,14 +6157,14 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             if (target == null) {
                 return;
             }
-            this.redios.getLookControl().setLookAt((Entity)target, 30.0f, 30.0f);
+            this.redios.getLookControl().setLookAt(target, 30.0f, 30.0f);
             if (this.attackCooldownTicks > 0) {
                 --this.attackCooldownTicks;
                 return;
             }
             this.attackCooldownTicks = this.redios.getAttackCooldownTicks();
             this.redios.swing(InteractionHand.MAIN_HAND);
-            this.redios.doHurtTarget((Entity)target);
+            this.redios.doHurtTarget(target);
             if (target instanceof ServerPlayer) {
                 ServerPlayer player = (ServerPlayer)target;
                 this.redios.notifyWallAttack(player);
