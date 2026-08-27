@@ -1,0 +1,20 @@
+modId=soul_sever
+modName=Soul Sever (断魂)
+modVersion=1.0.0
+modGroup=com.lydiath.soulsever
+modDescription=断魂效果独立模组 — 受击后追加绝对伤害的通用效果系统。提取自《灭却之日》Boss 战机制。
+
+[[mods]]
+modId="${modId}"
+version="${modVersion}"
+displayName="${modName}"
+description="${modDescription}"
+authors=["Lydiath-Smith"]
+logoFile=""
+
+[[dependencies.soul_sever]]
+modId="neoforge"
+type="required"
+versionRange="[21.1,)"
+ordering="NONE"
+side="BOTH"

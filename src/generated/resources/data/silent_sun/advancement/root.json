@@ -1,0 +1,22 @@
+{
+  "display": {
+    "title": {
+      "translate": "advancement.silent_sun.root.title"
+    },
+    "description": {
+      "translate": "advancement.silent_sun.root.desc"
+    },
+    "icon": {
+      "id": "silent_sun:redios_sigil"
+    },
+    "background": "minecraft:textures/block/obsidian.png",
+    "frame": "task",
+    "show_toast": false,
+    "announce_to_chat": false
+  },
+  "criteria": {
+    "trigger": {
+      "trigger": "minecraft:impossible"
+    }
+  }
+}

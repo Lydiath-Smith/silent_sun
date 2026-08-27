@@ -1,0 +1,20 @@
+{
+  "display": {
+    "title": {
+      "translate": "advancement.silent_sun.phase2_countdown.title"
+    },
+    "description": {
+      "translate": "advancement.silent_sun.phase2_countdown.desc"
+    },
+    "icon": {
+      "id": "minecraft:clock"
+    },
+    "frame": "goal"
+  },
+  "parent": "silent_sun:root",
+  "criteria": {
+    "trigger": {
+      "trigger": "minecraft:impossible"
+    }
+  }
+}

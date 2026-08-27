@@ -1,0 +1,20 @@
+{
+  "display": {
+    "title": {
+      "translate": "advancement.silent_sun.phase1_clear.title"
+    },
+    "description": {
+      "translate": "advancement.silent_sun.phase1_clear.desc"
+    },
+    "icon": {
+      "id": "silent_sun:redios_disc_phase1"
+    },
+    "frame": "goal"
+  },
+  "parent": "silent_sun:root",
+  "criteria": {
+    "trigger": {
+      "trigger": "minecraft:impossible"
+    }
+  }
+}

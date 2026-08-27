@@ -1,0 +1,48 @@
+{
+  "loader": "neoforge:obj",
+  "model": "silent_sun:models/item/miedao_duan.obj",
+  "flip-v": true,
+  "textures": {
+    "blade_damaged": "silent_sun:item/miedao_duan",
+    "blade_fragment": "silent_sun:item/miedao_duan",
+    "effect": "silent_sun:item/miedao_duan",
+    "sheath": "silent_sun:item/miedao_duan",
+    "blade": "silent_sun:item/miedao_duan",
+    "item_damaged": "silent_sun:item/miedao_duan",
+    "item_blade": "silent_sun:item/miedao_duan",
+    "particle": "silent_sun:item/miedao_duan"
+  },
+  "display": {
+    "thirdperson_righthand": {
+      "rotation": [0, 90, -35],
+      "translation": [0, 0.0115, -0.0322],
+      "scale": [0.0078125, 0.0078125, 0.0078125]
+    },
+    "thirdperson_lefthand": {
+      "rotation": [0, -90, 35],
+      "translation": [0, 0.0115, -0.0322],
+      "scale": [0.0078125, 0.0078125, 0.0078125]
+    },
+    "firstperson_righthand": {
+      "rotation": [0, -90, 25],
+      "translation": [0.0104, 0.0294, 0.0104],
+      "scale": [0.00625, 0.00625, 0.00625]
+    },
+    "firstperson_lefthand": {
+      "rotation": [0, 90, -25],
+      "translation": [0.0104, 0.0294, 0.0104],
+      "scale": [0.00625, 0.00625, 0.00625]
+    },
+    "ground": {
+      "translation": [0, 0.0184, 0],
+      "scale": [0.0046, 0.0046, 0.0046]
+    },
+    "gui": {
+      "rotation": [0, 0, 30],
+      "scale": [0.0057, 0.0057, 0.0057]
+    },
+    "fixed": {
+      "scale": [0.0092, 0.0092, 0.0092]
+    }
+  }
+}

@@ -1,0 +1,639 @@
+package com.lydiath.silent_sun.entity;
+
+import com.lydiath.silent_sun.config.SilentSunConfig;
+import com.lydiath.silent_sun.entity.pipeline.DamageContext;
+import com.lydiath.silent_sun.entity.pipeline.DamagePipelineStage;
+import com.lydiath.silent_sun.entity.pipeline.DamageResult;
+import com.lydiath.silent_sun.rules.RediosRules;
+import com.lydiath.silent_sun.util.AbsoluteDamageUtil;
+
+import net.minecraft.ChatFormatting;
+import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.MutableComponent;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.sounds.SoundEvents;
+import net.minecraft.sounds.SoundSource;
+import net.minecraft.world.damagesource.DamageSource;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.Mob;
+import net.minecraft.world.entity.NeutralMob;
+import net.minecraft.world.entity.OwnableEntity;
+import net.minecraft.world.entity.ai.attributes.Attributes;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.ItemStack;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.UUID;
+
+/**
+ * Damage pipeline for RediosEntity.
+ * <p>
+ * Replaces the monolithic {@code hurt()} method with 18 ordered stages,
+ * each responsible for one concern.  Stages run in declaration order.
+ * The pipeline short-circuits on the first {@link DamageResult#cancel()}.
+ * <p>
+ * Lives in the {@code entity} package to access RediosEntity package-private
+ * fields and helpers without exposing them as public API.
+ */
+public final class DamagePipeline {
+
+    private DamagePipeline() {}
+
+    // ────────────── Pipeline ──────────────
+
+    private static final DamagePipelineStage[] STAGES = {
+        DamagePipeline::stageDirectKillGuard,
+        DamagePipeline::stagePhaseConfig,
+        DamagePipeline::stageCreativeModeGuard,
+        DamagePipeline::stageExpelledPlayerGuard,
+        DamagePipeline::stagePhase1AbsoluteDefense,
+        DamagePipeline::stageNoResurrectionGuard,
+        DamagePipeline::stagePhase1VoteGuard,
+        DamagePipeline::stageAttackerResolution,
+        DamagePipeline::stageAdaptiveGuardBlock,
+        DamagePipeline::stageDamageCap,
+        DamagePipeline::stageSorrowToil,
+        DamagePipeline::stageHealImmunity,
+        DamagePipeline::stageUnityColorless,
+        DamagePipeline::stageUncontrolledSprintDodge,
+        DamagePipeline::stageDodge,
+        DamagePipeline::stageVoidAllThingsDodge,
+        DamagePipeline::stageChaosRuin,
+        DamagePipeline::stageReflect,
+        DamagePipeline::stageDeathCheat,
+        DamagePipeline::stagePhase1Lock,
+        DamagePipeline::stagePhase2Pending,
+    };
+
+    /**
+     * Run all pipeline stages.  Returns the final context.
+     * <p>
+     * Callers should check {@link DamageContext#cancelled} and, if false,
+     * pass {@code ctx.amount} to {@code super.hurt()}.
+     */
+    public static DamageContext run(RediosEntity boss, DamageSource source, float amount) {
+        DamageContext ctx = new DamageContext(boss, source, amount);
+        for (DamagePipelineStage stage : STAGES) {
+            if (stage.process(ctx).cancelled()) {
+                ctx.cancelled = true;
+                return ctx;
+            }
+        }
+        return ctx;
+    }
+
+    // ────────────── Stage 0: Direct command kill guard ──────────────
+
+    /**
+     * 直接指令性击杀无效化。
+     * <p>
+     * /kill、/damage ... generic_kill、命令/模组"强制清除生物"等无任何实体来源的
+     * 指令性伤害一律取消。这类伤害与战斗流程无关，放行会导致：
+     * ① P2 战斗中被 stagePhase2Pending 判濒死 → 白嫖胜利与掉落；
+     * ② 冻结期（投票/转阶段）被 stageDeathCheat 每 tick 触发 → 音效与广播反复刷屏。
+     * <p>
+     * 竭力之悲自损（setHealth 直扣）不经管线，不受影响；有实体来源的攻击全部放行；
+     * 无实体源的 magic 仅可能来自命令（项目内 magic 伤害只经 AbsoluteDamageUtil 攻击
+     * 他人，且对 RediosEntity 硬编码免疫）。虚空伤害（outOfWorld）不在此拦截，
+     * 保留竭力之悲激活时的虚空吸收（stageSorrowToil）与 tickHeightFlight 防坠落。
+     */
+    private static DamageResult stageDirectKillGuard(DamageContext ctx) {
+        RediosEntity boss = ctx.boss;
+        if (boss.level().isClientSide || ctx.source == null) {
+            return DamageResult.proceed();
+        }
+        if (ctx.source.getDirectEntity() == null && ctx.source.getEntity() == null) {
+            String msgId = ctx.source.getMsgId();
+            if ("generic_kill".equals(msgId) || "kill".equals(msgId) || "magic".equals(msgId)) {
+                return DamageResult.cancel();
+            }
+        }
+        return DamageResult.proceed();
+    }
+
+    // ────────────── Stage 1: PhaseArmor + config + debug ──────────────
+
+    private static DamageResult stagePhaseConfig(DamageContext ctx) {
+        RediosEntity boss = ctx.boss;
+        if (boss.level().isClientSide) {
+            return DamageResult.proceed();
+        }
+
+        if (boss.bossState.isPhase1()) {
+            double armor = SilentSunConfig.PHASE1_ARMOR_VALUE.get();
+            ctx.amount *= (1.0f - SilentSunConfig.PHASE1_DAMAGE_REDUCTION.get().floatValue());
+            if (boss.isWeaponWeakpointWindowActive()) {
+                // 振刀弱点窗口：对 Boss 造成额外伤害并削减其护甲，
+                // 使玩家在该窗口内的输出明显高于普通攻击（即使面对高护甲）。
+                armor *= (1.0 - RediosRules.weaponWeakpointArmorPierce());
+                ctx.amount *= (float) RediosRules.weaponWeakpointDamageMultiplier();
+            }
+            boss.getAttribute(Attributes.ARMOR).setBaseValue(armor);
+        }
+        if (boss.bossState.isPhase2()) {
+            double armor = SilentSunConfig.PHASE2_ARMOR_VALUE.get();
+            ctx.amount *= (1.0f - SilentSunConfig.PHASE2_DAMAGE_REDUCTION.get().floatValue());
+            if (boss.isWeaponWeakpointWindowActive()) {
+                armor *= (1.0 - RediosRules.weaponWeakpointArmorPierce());
+                ctx.amount *= (float) RediosRules.weaponWeakpointDamageMultiplier();
+            }
+            boss.getAttribute(Attributes.ARMOR).setBaseValue(armor);
+        }
+
+        if (RediosRules.damageSourceDebug() && ctx.amount > 0.0f) {
+            boss.debugLogUnknownDamageSource(ctx.source, ctx.amount);
+        }
+
+        return DamageResult.proceed();
+    }
+
+    // ────────────── Stage 2: Creative mode guard ──────────────
+
+    private static DamageResult stageCreativeModeGuard(DamageContext ctx) {
+        RediosEntity boss = ctx.boss;
+        if (boss.level().isClientSide) {
+            return DamageResult.proceed();
+        }
+
+        if (!BossTargeting.playerOnlyMode()) {
+            return DamageResult.proceed();
+        }
+        Entity sourceEnt = ctx.source.getEntity();
+        if (!(sourceEnt instanceof ServerPlayer creativePlayer) || !creativePlayer.isCreative()
+            || ctx.amount <= 0.0f) {
+            return DamageResult.proceed();
+        }
+
+        UUID creativeId = creativePlayer.getUUID();
+        if (boss.anticheat.creativeStrikers.add(creativeId)) {
+            boss.clearAllExternalEffects();
+            boss.reapplySelfBuffs();
+            boss.anticheat.counterCheatAttacker(creativePlayer);
+            creativePlayer.sendSystemMessage(
+                boss.rediosSigned(
+                    Component.translatable("message.silent_sun.redios.anticheat.creative_return")
+                        .withStyle(ChatFormatting.GOLD)));
+
+            // G4: 记录该创造玩家"检测开始(首次攻击) → 切回生存"期间的物品获得追踪，
+            // 期间拾取的物品切回生存时每种按最大堆叠一组归还
+            boss.anticheat.beginCreativeTracking(creativeId, creativePlayer);
+        }
+
+        if (boss.anticheat.creativeLeaveTimerTicks < 0) {
+            // 2026-08-13：创造玩家一直在（区块保持加载）则 10 分钟后再撤离；
+            // 中途离开/区块卸载由 checkBattleAreaUnloaded 走区块卸载结算提前退场。
+            boss.anticheat.creativeLeaveTimerTicks = 12000;
+            MutableComponent timerMsg = Component.translatable("message.silent_sun.redios.anticheat.creative_leave_timer").withStyle(ChatFormatting.GOLD);
+            boss.broadcastToParticipants(boss.rediosSigned(timerMsg));
+        }
+
+        return DamageResult.proceed();
+    }
+
+    // ────────────── Stage 3: Expelled player guard ──────────────
+
+    private static DamageResult stageExpelledPlayerGuard(DamageContext ctx) {
+        RediosEntity boss = ctx.boss;
+        if (boss.level().isClientSide) {
+            return DamageResult.proceed();
+        }
+        if (boss.isDamageFromExpelledPlayer(ctx.source)) {
+            return DamageResult.cancel();
+        }
+        return DamageResult.proceed();
+    }
+
+    // ────────────── Stage 3.5: Phase1.9 absolute defense (optional) ──────────────
+
+    /**
+     * Phase1.9 完全防御（兼容性补丁，默认关闭）。
+     * <p>
+     * 当 {@code redios.phase1AbsoluteDefense} 开启，且 Boss 处于 phase=1、
+     * titleIndex=9（有所不为）时，对一切伤害强制免伤。用于排查整合包中该头衔
+     * 被外部模组异常破防/秒杀的问题；开启后此头衔期间 Boss 无法受伤，正常投票
+     * 推进也会被暂停，仅作诊断隔离使用。
+     */
+    private static DamageResult stagePhase1AbsoluteDefense(DamageContext ctx) {
+        RediosEntity boss = ctx.boss;
+        if (boss.level().isClientSide) {
+            return DamageResult.proceed();
+        }
+        if (SilentSunConfig.PHASE1_ABSOLUTE_DEFENSE.get()
+            && boss.phase == 1 && boss.titleIndex == 9) {
+            return DamageResult.cancel();
+        }
+        return DamageResult.proceed();
+    }
+
+    // ────────────── Stage 4: noResurrection Phase 2 entry ──────────────
+
+    private static DamageResult stageNoResurrectionGuard(DamageContext ctx) {
+        RediosEntity boss = ctx.boss;
+        if (boss.level().isClientSide) {
+            return DamageResult.proceed();
+        }
+        if (boss.noResurrection && boss.bossState.isPhase1()
+            && boss.getHealth() - ctx.amount <= 1.0f) {
+            boss.setHealth(1.0f);
+            // 合法推进：同步反作弊基线，避免跨 tick 低血量篡改误判
+            boss.anticheat.markLegalHealthChange(1.0f);
+            boss.clearAllExternalEffects();
+            boss.enterNoResurrectionPhase2();
+            return DamageResult.cancel();
+        }
+        return DamageResult.proceed();
+    }
+
+    // ────────────── Stage 5: Phase 1 last title → vote ──────────────
+
+    private static DamageResult stagePhase1VoteGuard(DamageContext ctx) {
+        RediosEntity boss = ctx.boss;
+        if (boss.level().isClientSide) {
+            return DamageResult.proceed();
+        }
+        if (boss.bossState.isPhase1() && boss.titleIndex == RediosEntity.PHASE1_TITLES.size() - 1
+            && boss.getHealth() < 200.0f && ctx.amount > 0.0f
+            && boss.getHealth() - ctx.amount <= 1.0f) {
+            boss.setHealth(1.0f);
+            // 合法推进：同步反作弊基线，避免跨 tick 低血量篡改误判
+            boss.anticheat.markLegalHealthChange(1.0f);
+            // 仅从 PHASE1_COMBAT 合法进入 PENDING；濒死/投票/转阶段期间只取消伤害，
+            // 不再重复重置状态，防止 beginPhase2Choice 被反复调用导致投票提示文案重发。
+            if (boss.bossState == BossState.PHASE1_COMBAT) {
+                boss.transitionTo(BossState.PHASE1_PENDING);
+                boss.enterPendingState();
+            }
+            return DamageResult.cancel();
+        }
+        return DamageResult.proceed();
+    }
+
+    // ────────────── Stage 6: Attacker resolution + mode + cap ──────────────
+
+    private static DamageResult stageAttackerResolution(DamageContext ctx) {
+        RediosEntity boss = ctx.boss;
+        if (boss.level().isClientSide) {
+            return DamageResult.proceed();
+        }
+
+        LivingEntity attacker = boss.tryResolveDamageAttacker(ctx.source);
+        ctx.attacker = attacker;
+
+        if (attacker != null) {
+            // 统一受伤判定：无效攻击者（模式不符 / 被驱逐 / 反作弊免疫）的伤害直接取消
+            if (!BossTargeting.isValidDamageAttacker(boss, attacker)) {
+                return DamageResult.cancel();
+            }
+            // 有主人的宠物在两种模式下都受 FRIENDLY_MOB_DAMAGE_CAP 上限约束
+            if (attacker instanceof OwnableEntity ownable) {
+                if (ownable.getOwnerUUID() != null) {
+                    ctx.amount = Math.min(ctx.amount,
+                        SilentSunConfig.FRIENDLY_MOB_DAMAGE_CAP.get().floatValue());
+                }
+            }
+
+            boss.markBattleParticipant(attacker);
+            ctx.participantMarked = true;
+        }
+
+        return DamageResult.proceed();
+    }
+
+    // ────────────── Stage 7: 1.9 Adaptive guard block ──────────────
+
+    private static DamageResult stageAdaptiveGuardBlock(DamageContext ctx) {
+        RediosEntity boss = ctx.boss;
+        if (boss.level().isClientSide) {
+            return DamageResult.proceed();
+        }
+
+        if (boss.guardUnlocked && ctx.amount > 0.0f) {
+            if (boss.weapons.guardActiveTicks <= 0) {
+                boss.weapons.tryGuardBlock(ctx.source);
+            }
+            if (boss.weapons.guardActiveTicks > 0) {
+                ctx.amount = (float) ((double) ctx.amount
+                    * (1.0 - RediosRules.adaptiveBlockDamageReduction()));
+            }
+        }
+        return DamageResult.proceed();
+    }
+
+    // ────────────── Stage 8: Damage cap ──────────────
+
+    private static DamageResult stageDamageCap(DamageContext ctx) {
+        RediosEntity boss = ctx.boss;
+        if (boss.level().isClientSide) {
+            return DamageResult.proceed();
+        }
+        if (ctx.amount > 0.0f) {
+            ctx.amount = boss.applyDamageCap(ctx.amount);
+        }
+        return DamageResult.proceed();
+    }
+
+    // ────────────── Stage 9: Sorrow Toil void absorption ──────────────
+
+    private static DamageResult stageSorrowToil(DamageContext ctx) {
+        RediosEntity boss = ctx.boss;
+        if (boss.level().isClientSide) {
+            return DamageResult.proceed();
+        }
+        if (boss.isSorrowToilActive() && boss.isVoidDamage(ctx.source)) {
+            boss.addSoulSeverY(Math.max(0L, (long) Math.ceil(ctx.amount)));
+            return DamageResult.cancel();
+        }
+        return DamageResult.proceed();
+    }
+
+    // ────────────── Stage 10: Heal immunity absorption ──────────────
+
+    private static DamageResult stageHealImmunity(DamageContext ctx) {
+        RediosEntity boss = ctx.boss;
+        if (boss.level().isClientSide) {
+            return DamageResult.proceed();
+        }
+        if ((boss.bossState.isPhase1() || boss.bossState.isPhase2()) && ctx.amount > 0.0f
+            && boss.isHealImmunityDamage(ctx.source)) {
+            long inc = Math.max(0L, (long) Math.ceil(ctx.amount));
+            boss.addSoulSeverY(inc);
+            boss.setHeal(ctx.amount);
+            return DamageResult.cancel();
+        }
+        return DamageResult.proceed();
+    }
+
+    // ────────────── Stage 11: Unity Power / Colorless 20% absorb ──────────────
+
+    private static DamageResult stageUnityColorless(DamageContext ctx) {
+        RediosEntity boss = ctx.boss;
+        if (boss.level().isClientSide) {
+            return DamageResult.proceed();
+        }
+        if ((boss.isUnityPowerActive() || boss.isColorlessActive())
+            && ctx.amount > 0.0f && boss.getRandom().nextFloat() < 0.2f) {
+            boss.addSoulSeverY(Math.max(0L, (long) Math.ceil(ctx.amount)));
+            return DamageResult.cancel();
+        }
+        return DamageResult.proceed();
+    }
+
+    // ────────────── Stage 12: Phase 2.1 dodge (AoE + single-target) ──────────────
+
+    private static DamageResult stageUncontrolledSprintDodge(DamageContext ctx) {
+        RediosEntity boss = ctx.boss;
+        if (boss.level().isClientSide) {
+            return DamageResult.proceed();
+        }
+        // 2.1 失控疾驰：范围攻击（爆炸/间接魔法/龙息/药水云）与个体锁定（单体直接
+        // 命中：近战/箭/投掷物等）均按 25% 闪避。此前只躲 isAreaDamage，单体命中漏闪。
+        // 5.1：该闪避为激活后直到死亡都生效的永久效果，由 uncontrolledSprintUnlocked
+        //（进入过 2.1 即永久为 true）驱动，头衔转换不失效。
+        if (boss.uncontrolledSprintUnlocked
+            && (boss.isAreaDamage(ctx.source) || ctx.source.getEntity() instanceof LivingEntity)
+            && boss.getRandom().nextDouble() < RediosRules.uncontrolledSprintAoEDodgeChance()) {
+            return DamageResult.cancel();
+        }
+        return DamageResult.proceed();
+    }
+
+    // ────────────── Stage 13: Wrong interference / dodge ──────────────
+
+    private static DamageResult stageDodge(DamageContext ctx) {
+        RediosEntity boss = ctx.boss;
+        if (boss.level().isClientSide) {
+            return DamageResult.proceed();
+        }
+
+        if (boss.wrongInterferenceActive) {
+            if (ctx.source.getEntity() instanceof LivingEntity
+                && boss.getRandom().nextFloat() > 0.2f) {
+                return DamageResult.cancel();
+            }
+        } else if (boss.dodgeChance > 0.0
+            && ctx.source.getEntity() instanceof LivingEntity
+            && boss.getRandom().nextDouble() < boss.dodgeChance) {
+            return DamageResult.cancel();
+        }
+
+        return DamageResult.proceed();
+    }
+
+    // ────────────── Stage 13.5: phase2.9 确定性闪避 + 反应式传送避让 ──────────────
+
+    /**
+     * phase2.9（空无万象）专属确定性闪避：被玩家远程立体范围锁定（无妄之终球体扫描）
+     * 命中时 100% 取消该次伤害，并置反应式避让传送标志，让 {@code tickVoidAllThings}
+     * 立即执行一次独立于 40 tick 常规冷却的脱离传送。
+     */
+    private static DamageResult stageVoidAllThingsDodge(DamageContext ctx) {
+        RediosEntity boss = ctx.boss;
+        if (boss.level().isClientSide || ctx.source == null) {
+            return DamageResult.proceed();
+        }
+        if (!boss.isVoidAllThingsActive()) {
+            return DamageResult.proceed();
+        }
+        Entity sourceEntity = ctx.source.getEntity();
+        if (!(sourceEntity instanceof ServerPlayer player) || !player.isAlive()) {
+            return DamageResult.proceed();
+        }
+        if (!boss.battleParticipants.contains(player.getUUID())) {
+            return DamageResult.proceed();
+        }
+        // 排除拔刀剑投射物（刀光/剑气/幻影剑/次元斩）：它们的伤害非立体范围锁定。
+        Entity directEntity = ctx.source.getDirectEntity();
+        if (directEntity != null && isSlashBladeProjectile(directEntity)) {
+            return DamageResult.proceed();
+        }
+        // 范围伤害判据：爆炸/魔法/AOE 云，或 Boss 距玩家 > 玩家交互距离（远程立体锁定）。
+        boolean areaHit = boss.isAreaDamage(ctx.source);
+        boolean remoteLock = boss.distanceTo(player)
+            > player.getAttributeValue(Attributes.ENTITY_INTERACTION_RANGE);
+        if (!areaHit && !remoteLock) {
+            return DamageResult.proceed();
+        }
+        // 确定性闪避：取消该次伤害 + 置反应式避让传送。
+        boss.voidDodgeTeleportPending = true;
+        return DamageResult.cancel();
+    }
+
+    private static boolean isSlashBladeProjectile(Entity directEntity) {
+        return directEntity.getClass().getName().startsWith("mods.flammpfeil.slashblade.entity.");
+    }
+
+    // ────────────── Stage 14: Chaos Ruin absolute damage ──────────────
+
+    private static DamageResult stageChaosRuin(DamageContext ctx) {
+        RediosEntity boss = ctx.boss;
+        if (boss.level().isClientSide) {
+            return DamageResult.proceed();
+        }
+
+        if (boss.chaosRuinActive && RediosRules.chaosRuinIncomingAbsoluteEnabled()
+            && ctx.attacker != null) {
+            if (!boss.isVoidAllThingsActive() && boss.getHealth() - ctx.amount <= 1.0f) {
+                // 防止一击打穿死亡保护；同步反作弊基线，避免跨 tick 低血量误判
+                boss.setHealth(1.0f);
+                boss.anticheat.markLegalHealthChange(1.0f);
+                return DamageResult.cancel();
+            }
+            // 绝对伤害直接减血（无视减伤但吃 cap）——不走 AbsoluteDamageUtil：
+            // 该工具对 RediosEntity 硬编码免疫（防外部断魂伤害类绝对伤害绕过反作弊），
+            // 混沌之墟是内部设计路径，需自行施加并同步合法伤害累计，防低血量篡改误判。
+            // applyDamageCap 只减不增（超额部分按比例削减 + 硬上限），因此 finalDamage
+            // 必然 ≤ ctx.amount；voidAllThings 激活时打穿到 ≤1 锁 1 血不推进（无敌语义）。
+            float finalDamage = boss.applyDamageCap(ctx.amount);
+            float next = boss.getHealth() - finalDamage;
+            if (next <= 1.0f) {
+                boss.setHealth(1.0f);
+                boss.anticheat.markLegalHealthChange(1.0f);
+            } else if (finalDamage > 0.0f) {
+                boss.setHealth(next);
+                boss.anticheat.recordLegalDamage(finalDamage);
+            }
+            return DamageResult.cancel();
+        }
+
+        return DamageResult.proceed();
+    }
+
+    // ────────────── Stage 15: Reflect (thorns) ──────────────
+
+    private static DamageResult stageReflect(DamageContext ctx) {
+        RediosEntity boss = ctx.boss;
+        if (boss.level().isClientSide || boss.reflectApplying
+            || !(boss.reflectRatio > 0.0)) {
+            return DamageResult.proceed();
+        }
+
+        Entity entity = ctx.source.getEntity();
+        if (!(entity instanceof LivingEntity attacker)) {
+            return DamageResult.proceed();
+        }
+
+        if (attacker instanceof Player p && (p.isCreative() || p.isSpectator())) {
+            return DamageResult.proceed();
+        }
+
+        boss.reflectApplying = true;
+        attacker.hurt(boss.damageSources().thorns(boss),
+            (float) ((double) ctx.amount * boss.reflectRatio));
+        boss.reflectApplying = false;
+
+        return DamageResult.proceed();
+    }
+
+    // ────────────── Stage 16: Death cheat ──────────────
+
+    private static DamageResult stageDeathCheat(DamageContext ctx) {
+        RediosEntity boss = ctx.boss;
+        if (boss.level().isClientSide || boss.bossState == BossState.PHASE2_PENDING
+            || boss.bossState == BossState.PHASE1_PENDING) {
+            return DamageResult.proceed();
+        }
+        if (boss.getHealth() - ctx.amount > 0.0f) {
+            return DamageResult.proceed();
+        }
+        // 正常战斗状态下伤害把血量打到 ≤0 属于合法击杀流程，不视为死亡作弊：
+        //  - P1：由 stagePhase1Lock 锁 1 血并推进头衔/阶段过渡；
+        //  - P2：由 stagePhase2Pending 锁 1 血并进入 PHASE2_PENDING 内部死亡过渡。
+        // 放行让后续阶段处理，避免高爆发一击打穿最后 1 血被误判为作弊反复触发反作弊。
+        if (boss.bossState.isPhase1Combat() || boss.bossState.isPhase2Combat()) {
+            return DamageResult.proceed();
+        }
+
+        boss.anticheat.deathCheatStrikeCount++;
+        if (boss.anticheat.deathCheatStrikeCount > 9999) boss.anticheat.deathCheatStrikeCount = 9999;
+        // 锁血恢复：仅在血量偏离 1 时写入，避免冻结期每 tick 冗余 setHealth 触发属性同步
+        if (boss.getHealth() != 1.0f) {
+            boss.setHealth(1.0f);
+        }
+
+        if (boss.anticheat.deathCheatStrikeCount == 1) {
+            boss.clearAllExternalEffects();
+            boss.reapplySelfBuffs();
+            boss.level().playSound(null, boss.blockPosition(),
+                SoundEvents.RESPAWN_ANCHOR_CHARGE, SoundSource.HOSTILE, 1.0f, 0.5f);
+            MutableComponent tip = Component.translatable("message.silent_sun.redios.anticheat.death_cheat_1")
+                .withStyle(ChatFormatting.GRAY);
+            boss.broadcastToParticipants(boss.rediosSigned(tip));
+
+        } else if (boss.anticheat.deathCheatStrikeCount == 2) {
+            boss.clearAllExternalEffects();
+            boss.reapplySelfBuffs();
+            boss.anticheat.counterCheatAttacker(ctx.source.getEntity());
+            boss.anticheat.counterAllCheatAttackers((ServerLevel) boss.level());
+            boss.level().playSound(null, boss.blockPosition(),
+                SoundEvents.RESPAWN_ANCHOR_CHARGE, SoundSource.HOSTILE, 1.0f, 1.0f);
+            MutableComponent warn = Component.translatable("message.silent_sun.redios.anticheat.death_cheat_2")
+                .withStyle(ChatFormatting.DARK_RED);
+            boss.broadcastToParticipants(boss.rediosSigned(warn));
+
+        } else {
+            // 第 3 次起的清效果 + 重挂 Buff + 音效 + 广播全部纳入全局 30s 惩罚门：
+            // 冻结期高频触发时每 30s 最多完整响应一次（counter 方法内部受同一门约束
+            // 转为静默），避免反复重复极高频率触发导致的清效果 + 重挂 Buff + 音效广播叠加刷屏。
+            if (boss.anticheat.tryAcquirePunishGate()) {
+                boss.clearAllExternalEffects();
+                boss.reapplySelfBuffs();
+                boss.level().playSound(null, boss.blockPosition(),
+                    SoundEvents.RESPAWN_ANCHOR_CHARGE, SoundSource.HOSTILE, 1.0f, 1.5f);
+                MutableComponent bye = Component.translatable("message.silent_sun.redios.no_loot_farewell")
+                    .withStyle(ChatFormatting.GOLD);
+                boss.broadcastToParticipants(boss.rediosSigned(bye));
+            }
+            boss.anticheat.counterCheatAttacker(ctx.source.getEntity());
+            boss.anticheat.counterAllCheatAttackers((ServerLevel) boss.level());
+            // 反作弊后果调整：死亡作弊仅警告，不再退场（bossLeaveNoLoot），
+            // 也不直接进入全盛状态（enableNoResurrection / enterNoResurrectionPhase2 不再触发）。
+        }
+
+        return DamageResult.cancel();
+    }
+
+    // ────────────── Stage 17: Phase 1 lock threshold ──────────────
+
+    private static DamageResult stagePhase1Lock(DamageContext ctx) {
+        RediosEntity boss = ctx.boss;
+        if (boss.level().isClientSide) {
+            return DamageResult.proceed();
+        }
+        if (boss.bossState.isPhase1Combat()
+            && boss.getHealth() - ctx.amount <= 1.0f) {
+            boss.setHealth(1.0f);
+            // 合法推进：同步反作弊基线，避免跨 tick 低血量篡改误判
+            boss.anticheat.markLegalHealthChange(1.0f);
+            if (boss.titleIndex == RediosEntity.PHASE1_TITLES.size() - 1) {
+                // 一阶段濒死与二阶段濒死同理：进入 PHASE1_PENDING 冻结等待，
+                // 等当前头衔锁血倒计时归零后由 tick() 启动投票（beginPhase2Choice）。
+                boss.transitionTo(BossState.PHASE1_PENDING);
+                boss.enterPendingState();
+            }
+            return DamageResult.cancel();
+        }
+        return DamageResult.proceed();
+    }
+
+    // ────────────── Stage 18: Phase 2 pending death ──────────────
+
+    private static DamageResult stagePhase2Pending(DamageContext ctx) {
+        RediosEntity boss = ctx.boss;
+        if (boss.level().isClientSide) {
+            return DamageResult.proceed();
+        }
+        if (boss.bossState.isPhase2Combat() && !boss.pendingLockReleased
+            && boss.getHealth() - ctx.amount <= 1.0f) {
+            boss.setHealth(1.0f);
+            // 合法推进：同步反作弊基线，避免跨 tick 低血量篡改误判
+            boss.anticheat.markLegalHealthChange(1.0f);
+            boss.transitionTo(BossState.PHASE2_PENDING);
+            boss.enterPendingState();
+            return DamageResult.cancel();
+        }
+        return DamageResult.proceed();
+    }
+}

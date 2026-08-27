@@ -1,0 +1,23 @@
+# Material library for miedao_duan.obj
+# Each material maps to a texture key in models/item/trident.json ("textures" dict)
+
+newmtl blade_damaged
+map_Kd #blade_damaged
+
+newmtl blade_fragment
+map_Kd #blade_fragment
+
+newmtl effect
+map_Kd #effect
+
+newmtl sheath
+map_Kd #sheath
+
+newmtl blade
+map_Kd #blade
+
+newmtl item_damaged
+map_Kd #item_damaged
+
+newmtl item_blade
+map_Kd #item_blade

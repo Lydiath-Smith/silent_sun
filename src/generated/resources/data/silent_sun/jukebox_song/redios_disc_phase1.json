@@ -1,0 +1,8 @@
+{
+  "comparator_output": 15,
+  "description": {
+    "translate": "item.silent_sun.redios_disc_phase1.desc"
+  },
+  "length_in_seconds": 223.0,
+  "sound_event": "silent_sun:redios_battle_music_phase1"
+}

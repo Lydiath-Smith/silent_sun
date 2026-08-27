@@ -1,0 +1,20 @@
+{
+  "display": {
+    "title": {
+      "translate": "advancement.silent_sun.phase2_win.title"
+    },
+    "description": {
+      "translate": "advancement.silent_sun.phase2_win.desc"
+    },
+    "icon": {
+      "id": "silent_sun:redios_disc_phase2"
+    },
+    "frame": "challenge"
+  },
+  "parent": "silent_sun:root",
+  "criteria": {
+    "trigger": {
+      "trigger": "minecraft:impossible"
+    }
+  }
+}

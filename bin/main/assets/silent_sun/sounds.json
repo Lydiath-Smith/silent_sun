@@ -1,0 +1,30 @@
+{
+  "redios_battle_music_phase1": {
+    "sounds": [
+      {
+        "name": "silent_sun:music/redios_phase1",
+        "stream": true,
+        "attenuation_distance": 256
+      }
+    ]
+  },
+  "redios_battle_music_phase2": {
+    "sounds": [
+      {
+        "name": "silent_sun:music/redios_phase2",
+        "stream": true,
+        "attenuation_distance": 256
+      }
+    ]
+  },
+  "starfall_salvo_pre_explosion": {
+    "subtitle": "subtitles.silent_sun.starfall_salvo_pre_explosion",
+    "sounds": [
+      {
+        "name": "silent_sun:starfall_salvo_pre_explosion",
+        "stream": false,
+        "attenuation_distance": 2147483647
+      }
+    ]
+  }
+}

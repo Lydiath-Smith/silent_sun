@@ -1,0 +1,101 @@
+# This is an example neoforge.mods.toml file. It contains the data relating to the loading mods.
+# There are several mandatory fields (#mandatory), and many more that are optional (#optional).
+# The overall format is standard TOML format, v0.5.0.
+# Note that there are a couple of TOML lists in this file.
+# Find more information on toml format here:  https://github.com/toml-lang/toml
+
+# The name of the mod loader type to load - for regular FML @Mod mods it should be javafml
+modLoader="javafml" #mandatory
+
+# A version range to match for said mod loader - for regular FML @Mod it will be the FML version. This is currently 2.
+loaderVersion="${loader_version_range}" #mandatory
+
+# The license for you mod. This is mandatory metadata and allows for easier comprehension of your redistributive properties.
+# Review your options at https://choosealicense.com/. All rights reserved is the default copyright stance, and is thus the default here.
+license="${mod_license}"
+
+# A URL to refer people to when problems occur with this mod
+#issueTrackerURL="https://change.me.to.your.issue.tracker.example.invalid/" #optional
+
+# A list of mods - how many allowed here is determined by the individual mod loader
+[[mods]] #mandatory
+modId="silent_sun"
+version="${mod_version}"
+displayName="Silent Sun"
+authors="Lydiath-Smith"
+credits="AI 协助制作：DeepSeek。" #optional
+description='''
+Redios（碎镜之影）Boss 战与相关系统。
+
+授权说明（完整条款见 META-INF/LICENSE.txt）：
+- 允许包含进任意整合包并分发；允许在任意服务器上使用。
+- 允许个人出于游玩、学习目的修改、编译、运行；完整源码请通过下载本模组的渠道联系作者索取。
+- 基于源码的修改版可发布，但版本号不得与已发布版本重复，且须保留署名。
+- 禁止将本模组或其修改版用于商业用途。
+- 模型、贴图等美术资源保留所有权利（部分由 AI 工具辅助制作）。
+- 本模组为独立自制内容，不隶属于任何官方模组。
+'''
+
+# The [[mixins]] block allows you to declare your mixin config to FML so that it gets loaded.
+#[[mixins]]
+#config="silent_sun.mixins.json"
+
+# The [[accessTransformers]] block allows you to declare where your AT file is.
+# If this block is omitted, a fallback attempt will be made to load an AT from META-INF/accesstransformer.cfg
+#[[accessTransformers]]
+#file="META-INF/accesstransformer.cfg"
+
+# The coremods config file path is not configurable and is always loaded from META-INF/coremods.json
+
+[[dependencies.silent_sun]]
+    modId="neoforge"
+    type="required"
+    versionRange="[${neo_version},)"
+    ordering="NONE"
+    side="BOTH"
+
+[[dependencies.silent_sun]]
+    modId="minecraft"
+    type="required"
+    versionRange="${minecraft_version_range}"
+    ordering="NONE"
+    side="BOTH"
+
+[[dependencies.silent_sun]]
+    modId="geckolib"
+    type="required"
+    versionRange="*"
+    ordering="NONE"
+    side="BOTH"
+
+# 2026-08-13 落地为 B：拔刀剑联动改为硬依赖。
+# 断魂 SE（extinction_day_mod_1784441698:soul_sever）与 silent_sun:soul_sever MobEffect 原本为同一设计，
+# 作者为同一人，为避免两命名空间割裂，此处不再走可选反射降级，而是直接声明灭却之日为必需前置。
+# 同时补上拔刀剑本体（slashblade）与 mrqx 拔刀剑核心（sbr_core）作为前置，
+# 使 Boss 的拔刀剑攻击（连击 / SA / 剑气 / 三连 / 断魂）依赖的运行时类始终可用。
+[[dependencies.silent_sun]]
+    modId="slashblade"
+    type="required"
+    versionRange="*"
+    ordering="NONE"
+    side="BOTH"
+
+[[dependencies.silent_sun]]
+    modId="extinction_day_mod_1784441698"
+    type="required"
+    versionRange="*"
+    ordering="NONE"
+    side="BOTH"
+
+[[dependencies.silent_sun]]
+    modId="sbr_core"
+    type="required"
+    versionRange="*"
+    ordering="NONE"
+    side="BOTH"
+
+# Features are specific properties of the game environment, that you may want to declare you require. This example declares
+# that your mod requires GL version 3.2 or higher. Other features will be added. They are side aware so declaring this won't
+# stop your mod loading on the server for example.
+#[features.silent_sun]
+#openGLVersion="[3.2,)"
