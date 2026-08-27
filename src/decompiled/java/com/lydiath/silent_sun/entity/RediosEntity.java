@@ -201,18 +201,18 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     private static final List<Component> PHASE2_TITLES = List.of(Component.translatable("title.silent_sun.redios.phase2.0"), Component.translatable("title.silent_sun.redios.phase2.1"), Component.translatable("title.silent_sun.redios.phase2.2"), Component.translatable("title.silent_sun.redios.phase2.3"), Component.translatable("title.silent_sun.redios.phase2.4"), Component.translatable("title.silent_sun.redios.phase2.5"), Component.translatable("title.silent_sun.redios.phase2.6"), Component.translatable("title.silent_sun.redios.phase2.7"), Component.translatable("title.silent_sun.redios.phase2.8"), Component.translatable("title.silent_sun.redios.phase2.9"));
     static final TitleDef[] PHASE1_TITLE_DEFS = new TitleDef[]{TitleDef.p1(0, 15, new BossFlag[0]), TitleDef.p1(1, 15, new BossFlag[0]), TitleDef.p1(2, 15, BossFlag.WEAKNESS_CURSE, BossFlag.ENRAGE_STACKING), TitleDef.p1(3, 15, new BossFlag[0]), TitleDef.p1(4, 15, new BossFlag[0]), TitleDef.p1(5, 15, BossFlag.SOUL_SEVER_HARVEST), TitleDef.p1(6, 15, new BossFlag[0]), TitleDef.p1(7, 15, new BossFlag[0]), TitleDef.p1(8, 15, new BossFlag[0]), TitleDef.p1(9, 15, BossFlag.GUARD_BLOCK)};
     static final TitleDef[] PHASE2_TITLE_DEFS = new TitleDef[]{TitleDef.p2(0, 30, BossFlag.SEA_SKY_SOUL_SEVER), TitleDef.p2(1, 30, BossFlag.UNCONTROLLED_SPRINT), TitleDef.p2(2, 30, new BossFlag[0]), TitleDef.p2(3, 30, new BossFlag[0]), TitleDef.p2(4, 30, BossFlag.ASH_DAWN), TitleDef.p2(5, 30, new BossFlag[0]), TitleDef.p2(6, 30, new BossFlag[0]), TitleDef.p2(7, 30, BossFlag.BLACK_SUN), TitleDef.p2(8, 30, BossFlag.COLORLESS, BossFlag.ENRAGE_STACKING), TitleDef.p2(9, 30, new BossFlag[0])};
-    private static final EntityDataAccessor<Integer> CLIENT_PHASE = SynchedEntityData.defineId(RediosEntity.class, (EntityDataSerializer)EntityDataSerializers.INT);
-    private static final EntityDataAccessor<Integer> CLIENT_TITLE_INDEX = SynchedEntityData.defineId(RediosEntity.class, (EntityDataSerializer)EntityDataSerializers.INT);
-    private static final EntityDataAccessor<Integer> CLIENT_TRANSITION_TICKS = SynchedEntityData.defineId(RediosEntity.class, (EntityDataSerializer)EntityDataSerializers.INT);
-    private static final EntityDataAccessor<Integer> CLIENT_BOSS_STATE = SynchedEntityData.defineId(RediosEntity.class, (EntityDataSerializer)EntityDataSerializers.INT);
-    private static final EntityDataAccessor<Long> CLIENT_SOUL_SEVER_Y = SynchedEntityData.defineId(RediosEntity.class, (EntityDataSerializer)EntityDataSerializers.LONG);
-    private static final EntityDataAccessor<Integer> CLIENT_TWILIGHT_ACTIVE = SynchedEntityData.defineId(RediosEntity.class, (EntityDataSerializer)EntityDataSerializers.INT);
-    private static final EntityDataAccessor<Integer> CLIENT_TITLE_LOCK_TICKS = SynchedEntityData.defineId(RediosEntity.class, (EntityDataSerializer)EntityDataSerializers.INT);
-    private static final EntityDataAccessor<Integer> CLIENT_INTRO_ACTIVE = SynchedEntityData.defineId(RediosEntity.class, (EntityDataSerializer)EntityDataSerializers.INT);
+    private static final EntityDataAccessor<Integer> CLIENT_PHASE = SynchedEntityData.defineId(RediosEntity.class, EntityDataSerializers.INT);
+    private static final EntityDataAccessor<Integer> CLIENT_TITLE_INDEX = SynchedEntityData.defineId(RediosEntity.class, EntityDataSerializers.INT);
+    private static final EntityDataAccessor<Integer> CLIENT_TRANSITION_TICKS = SynchedEntityData.defineId(RediosEntity.class, EntityDataSerializers.INT);
+    private static final EntityDataAccessor<Integer> CLIENT_BOSS_STATE = SynchedEntityData.defineId(RediosEntity.class, EntityDataSerializers.INT);
+    private static final EntityDataAccessor<Long> CLIENT_SOUL_SEVER_Y = SynchedEntityData.defineId(RediosEntity.class, EntityDataSerializers.LONG);
+    private static final EntityDataAccessor<Integer> CLIENT_TWILIGHT_ACTIVE = SynchedEntityData.defineId(RediosEntity.class, EntityDataSerializers.INT);
+    private static final EntityDataAccessor<Integer> CLIENT_TITLE_LOCK_TICKS = SynchedEntityData.defineId(RediosEntity.class, EntityDataSerializers.INT);
+    private static final EntityDataAccessor<Integer> CLIENT_INTRO_ACTIVE = SynchedEntityData.defineId(RediosEntity.class, EntityDataSerializers.INT);
     private static final int INTRO_TOTAL_TICKS = 80;
     private static final int INTRO_STAR_COUNT = 6;
     private static final RawAnimation TRANSITION_ANIM = RawAnimation.begin().thenPlay("transition");
-    private final AnimatableInstanceCache cache = GeckoLibUtil.createInstanceCache((GeoAnimatable)this);
+    private final AnimatableInstanceCache cache = GeckoLibUtil.createInstanceCache(this);
     private final ServerBossEvent bossEvent = new ServerBossEvent(Component.empty(), BossEvent.BossBarColor.PURPLE, BossEvent.BossBarOverlay.PROGRESS);
     int phase = 1;
     int titleIndex = 0;
@@ -443,17 +443,17 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     }
 
     protected void registerGoals() {
-        this.goalSelector.addGoal(0, (Goal)new FloatGoal((Mob)this));
-        this.goalSelector.addGoal(1, (Goal)new RediosRiptideDashGoal(this));
-        this.goalSelector.addGoal(2, (Goal)new RediosMeleeAttackGoal(this));
+        this.goalSelector.addGoal(0, new FloatGoal(this));
+        this.goalSelector.addGoal(1, new RediosRiptideDashGoal(this));
+        this.goalSelector.addGoal(2, new RediosMeleeAttackGoal(this));
         if (IntegrationContract.isSlashBladeIntegrationAvailable()) {
-            this.goalSelector.addGoal(3, (Goal)new BladeAttackGoal((Mob)this));
+            this.goalSelector.addGoal(3, new BladeAttackGoal(this));
         }
-        this.goalSelector.addGoal(4, (Goal)new RediosWallAttackGoal(this));
-        this.goalSelector.addGoal(7, (Goal)new RandomStrollGoal((PathfinderMob)this, 0.9));
-        this.goalSelector.addGoal(8, (Goal)new LookAtPlayerGoal((Mob)this, Player.class, 10.0f));
-        this.goalSelector.addGoal(8, (Goal)new RandomLookAroundGoal((Mob)this));
-        this.targetSelector.addGoal(1, (Goal)new HurtByTargetGoal((PathfinderMob)this, new Class[0]){
+        this.goalSelector.addGoal(4, new RediosWallAttackGoal(this));
+        this.goalSelector.addGoal(7, new RandomStrollGoal(this, 0.9));
+        this.goalSelector.addGoal(8, new LookAtPlayerGoal(this, Player.class, 10.0f));
+        this.goalSelector.addGoal(8, new RandomLookAroundGoal(this));
+        this.targetSelector.addGoal(1, new HurtByTargetGoal(this, new Class[0]){
 
             public boolean canUse() {
                 OwnableEntity ownable;
@@ -471,7 +471,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
                 return !BossTargeting.playerOnlyMode() || !(attacker instanceof OwnableEntity) || (ownerId = (ownable = (OwnableEntity)attacker).getOwnerUUID()) != null && RediosEntity.this.battleParticipants.contains(ownerId);
             }
         });
-        this.targetSelector.addGoal(2, (Goal)new NearestAttackableTargetGoal((Mob)this, Player.class, 10, true, false, e -> {
+        this.targetSelector.addGoal(2, new NearestAttackableTargetGoal(this, Player.class, 10, true, false, e -> {
             ServerPlayer sp;
             return e instanceof ServerPlayer && !(sp = (ServerPlayer)e).isCreative() && !sp.isSpectator() && !this.expelledPlayers.contains(sp.getUUID());
         }){
@@ -484,7 +484,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
                 return RediosEntity.this.isTargetingAllowed() && BossTargeting.playerOnlyMode() && super.canContinueToUse();
             }
         });
-        this.targetSelector.addGoal(3, (Goal)new NearestAttackableTargetGoal((Mob)this, LivingEntity.class, 10, true, false, e -> BossTargeting.isValidAttackTarget(this, (LivingEntity)e)){
+        this.targetSelector.addGoal(3, new NearestAttackableTargetGoal(this, LivingEntity.class, 10, true, false, e -> BossTargeting.isValidAttackTarget(this, (LivingEntity)e)){
 
             public boolean canUse() {
                 return RediosEntity.this.isTargetingAllowed() && !BossTargeting.playerOnlyMode() && super.canUse();
@@ -1037,7 +1037,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         }
         if (newMax < desired - 1.0 && !warnedMaxHealthClamped) {
             warnedMaxHealthClamped = true;
-            SilentSunMod.LOGGER.warn("Redios MAX_HEALTH clamped to {} by vanilla attribute cap (1024); install \u5c5e\u6027\u4fee\u590d (attributefix) to reach configured phaseMaxHealth={}.", (Object)newMax, (Object)desired);
+            SilentSunMod.LOGGER.warn("Redios MAX_HEALTH clamped to {} by vanilla attribute cap (1024); install \u5c5e\u6027\u4fee\u590d (attributefix) to reach configured phaseMaxHealth={}.", newMax, desired);
             MutableComponent clampMsg = Component.translatable("message.silent_sun.redios.maxhealth_clamped", new Object[]{(int)desired}).withStyle(ChatFormatting.RED);
             for (ServerPlayer p : serverLevel.players()) {
                 p.displayClientMessage(this.rediosSigned(clampMsg), false);
@@ -1302,7 +1302,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             Integer playingPhase = this.battleMusicPlaying.get(id);
             if (playingPhase != null && playingPhase == desiredPhase) continue;
             this.stopBattleMusicFor(player);
-            player.connection.send((Packet)new ClientboundSoundPacket(music, SoundSource.MUSIC, this.getX(), this.getY(), this.getZ(), volume, 1.0f, this.random.nextLong()));
+            player.connection.send(new ClientboundSoundPacket(music, SoundSource.MUSIC, this.getX(), this.getY(), this.getZ(), volume, 1.0f, this.random.nextLong()));
             this.battleMusicPlaying.put(id, desiredPhase);
         }
         this.battleMusicPlaying.keySet().removeIf(uid -> !this.battleParticipants.contains(uid));
@@ -1312,7 +1312,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         if (player == null || player.connection == null) {
             return;
         }
-        player.connection.send((Packet)new ClientboundStopSoundPacket(null, SoundSource.MUSIC));
+        player.connection.send(new ClientboundStopSoundPacket(null, SoundSource.MUSIC));
     }
 
     private void stopAllBattleMusic() {
@@ -1455,7 +1455,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     }
 
     boolean hasFlag(BossFlag flag) {
-        return this.unlockedFlags.contains((Object)flag);
+        return this.unlockedFlags.contains(flag);
     }
 
     void grantFlag(BossFlag flag) {
@@ -2202,7 +2202,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     @SuppressWarnings("deprecation")
     public SpawnGroupData finalizeSpawn(ServerLevelAccessor level, DifficultyInstance difficulty, MobSpawnType spawnType, SpawnGroupData spawnData) {
         if (spawnType != MobSpawnType.SPAWN_EGG) {
-            SilentSunMod.LOGGER.warn("Redios spawn blocked: spawnType={} at {}", (Object)spawnType, (Object)this.blockPosition());
+            SilentSunMod.LOGGER.warn("Redios spawn blocked: spawnType={} at {}", spawnType, this.blockPosition());
             this.legitRemoval = true;
             super.remove(Entity.RemovalReason.DISCARDED);
             return spawnData;
@@ -2222,7 +2222,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     private void safeDiscard() {
         this.legitRemoval = true;
         if (this.leaveReason != LeaveReason.NONE) {
-            SilentSunMod.LOGGER.warn("Redios leaving (leaveReason={}) at {}", (Object)this.leaveReason, (Object)this.blockPosition());
+            SilentSunMod.LOGGER.warn("Redios leaving (leaveReason={}) at {}", this.leaveReason, this.blockPosition());
         }
         this.discard();
     }
@@ -2245,7 +2245,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             return;
         }
         this.removalPunishCooldownTicks = 1200;
-        SilentSunMod.LOGGER.warn("Redios tamper attempt #{} blocked at {}", (Object)this.anticheat.removalAttemptCount, (Object)this.blockPosition());
+        SilentSunMod.LOGGER.warn("Redios tamper attempt #{} blocked at {}", this.anticheat.removalAttemptCount, this.blockPosition());
         // 作弊警告：无条件清除所有非自身效果，并重挂自身 Buff
         this.clearAllExternalEffects();
         this.reapplySelfBuffs();
@@ -2444,8 +2444,8 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
                                 px = livingTarget.getX() + dx / dist * 1.5;
                                 py = livingTarget.getY() + (double)livingTarget.getBbHeight() * 0.5;
                                 pz = livingTarget.getZ() + dz / dist * 1.5;
-                                sl.sendParticles((ParticleOptions)ParticleTypes.END_ROD, px, py, pz, 5, 0.2, 0.2, 0.2, 0.05);
-                                sl.sendParticles((ParticleOptions)ParticleTypes.LARGE_SMOKE, px, py, pz, 3, 0.15, 0.15, 0.15, 0.01);
+                                sl.sendParticles(ParticleTypes.END_ROD, px, py, pz, 5, 0.2, 0.2, 0.2, 0.05);
+                                sl.sendParticles(ParticleTypes.LARGE_SMOKE, px, py, pz, 3, 0.15, 0.15, 0.15, 0.01);
                                 sl.playSound(null, px, py, pz, SoundEvents.PLAYER_ATTACK_NODAMAGE, SoundSource.HOSTILE, 0.5f, 0.9f + this.random.nextFloat() * 0.2f);
                             }
                             return false;
@@ -3114,7 +3114,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
                 double x = this.getX() + Math.cos(angle) * radius;
                 double z = this.getZ() + Math.sin(angle) * radius;
                 double y = midY + (this.random.nextDouble() - 0.5) * 0.8;
-                serverLevel.sendParticles((ParticleOptions)ParticleTypes.LARGE_SMOKE, x, y, z, 1, 0.0, 0.0, 0.0, 0.2);
+                serverLevel.sendParticles(ParticleTypes.LARGE_SMOKE, x, y, z, 1, 0.0, 0.0, 0.0, 0.2);
             }
         }
         if (this.tickCount % 4 != 0) {
@@ -3196,7 +3196,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
                 double x = this.getX() + Math.cos(angle) * radius;
                 double z = this.getZ() + Math.sin(angle) * radius;
                 double y = this.getY() + 0.3 + this.random.nextDouble() * 2.5;
-                serverLevel.sendParticles((ParticleOptions)ParticleTypes.SCULK_CHARGE_POP, x, y, z, 1, 0.0, 0.1, 0.0, 0.02);
+                serverLevel.sendParticles(ParticleTypes.SCULK_CHARGE_POP, x, y, z, 1, 0.0, 0.1, 0.0, 0.02);
             }
             for (i = 0; i < 6; ++i) {
                 angle = this.random.nextDouble() * 2.0 * Math.PI;
@@ -3204,7 +3204,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
                 double x = this.getX() + Math.cos(angle) * r;
                 double z = this.getZ() + Math.sin(angle) * r;
                 double y = this.getY() + 0.5 + this.random.nextDouble() * 2.0;
-                serverLevel.sendParticles((ParticleOptions)ParticleTypes.ENCHANTED_HIT, x, y, z, 1, 0.0, 0.0, 0.0, 0.0);
+                serverLevel.sendParticles(ParticleTypes.ENCHANTED_HIT, x, y, z, 1, 0.0, 0.0, 0.0, 0.0);
             }
         }
         if (!this.chaosRuinActive) {
@@ -3752,10 +3752,10 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     private void spawnTransitionImpact(ServerLevel serverLevel) {
         double y = this.getY() + 2.0;
         serverLevel.explode(this, this.getX(), y, this.getZ(), 0.0f, Level.ExplosionInteraction.NONE);
-        serverLevel.sendParticles((ParticleOptions)ParticleTypes.EXPLOSION_EMITTER, this.getX(), y, this.getZ(), 1, 0.0, 0.0, 0.0, 0.0);
+        serverLevel.sendParticles(ParticleTypes.EXPLOSION_EMITTER, this.getX(), y, this.getZ(), 1, 0.0, 0.0, 0.0, 0.0);
         for (int i = 0; i < 16; ++i) {
             double angle = Math.PI * 2 * (double)i / 16.0;
-            serverLevel.sendParticles((ParticleOptions)ParticleTypes.LARGE_SMOKE, this.getX() + Math.cos(angle) * 5.0, y - 0.5, this.getZ() + Math.sin(angle) * 5.0, 1, 0.0, 0.0, 0.0, 0.12);
+            serverLevel.sendParticles(ParticleTypes.LARGE_SMOKE, this.getX() + Math.cos(angle) * 5.0, y - 0.5, this.getZ() + Math.sin(angle) * 5.0, 1, 0.0, 0.0, 0.0, 0.12);
         }
     }
 
@@ -4315,7 +4315,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             MutableComponent msg = Component.translatable("message.silent_sun.redios.black_sun_farewell", new Object[]{player.getName().getString()}).withStyle(ChatFormatting.BLUE);
             player.sendSystemMessage(this.rediosSigned(msg));
             if (this.expelledPlayers.contains(id) || player.isSpectator() || player.isCreative() || !player.isAlive() || player.level() != this.level()) continue;
-            PacketDistributor.sendToPlayer((ServerPlayer)player, (CustomPacketPayload)new BlackSunDefeatPayload(), (CustomPacketPayload[])new CustomPacketPayload[0]);
+            PacketDistributor.sendToPlayer(player, new BlackSunDefeatPayload(), (CustomPacketPayload[])new CustomPacketPayload[0]);
         }
         this.endBattleThreeDayCooldown();
     }
@@ -4339,7 +4339,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             loot = RediosLootConfig.roll(serverLevel.random);
         }
         this.ensureMandatoryLoot(loot, includeDefeatBook ? RediosBookOutcome.PHASE1_WIN_PHASE2_LOSE : RediosBookOutcome.PHASE1_WIN_ONLY);
-        loot.add(new ItemStack((ItemLike)ModItems.REDIOS_DISC_PHASE1.get()));
+        loot.add(new ItemStack(ModItems.REDIOS_DISC_PHASE1.get()));
         if (loot.isEmpty()) {
             return;
         }
@@ -4383,7 +4383,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         if (this.battleAnchorPos == null || this.battleAnchorDim == null) {
             this.battleAnchorPos = this.blockPosition();
             this.battleAnchorDim = serverLevel.dimension().location();
-        } else if (serverLevel.dimension().location().equals((Object)this.battleAnchorDim) && (dx = this.getX() - ((double)this.battleAnchorPos.getX() + 0.5)) * dx + (dy = this.getY() - (double)this.battleAnchorPos.getY()) * dy + (dz = this.getZ() - ((double)this.battleAnchorPos.getZ() + 0.5)) * dz <= 16384.0) {
+        } else if (serverLevel.dimension().location().equals(this.battleAnchorDim) && (dx = this.getX() - ((double)this.battleAnchorPos.getX() + 0.5)) * dx + (dy = this.getY() - (double)this.battleAnchorPos.getY()) * dy + (dz = this.getZ() - ((double)this.battleAnchorPos.getZ() + 0.5)) * dz <= 16384.0) {
             this.battleAnchorPos = this.blockPosition();
         }
         ResourceLocation dim = serverLevel.dimension().location();
@@ -4404,7 +4404,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             return;
         }
         ResourceLocation hereDim = serverLevel.dimension().location();
-        boolean crossDim = !hereDim.equals((Object)this.battleAnchorDim);
+        boolean crossDim = !hereDim.equals(this.battleAnchorDim);
         boolean voided = !crossDim && this.getY() < (double)serverLevel.getMinBuildHeight() - 8.0;
         boolean exiled = false;
         if (!crossDim && !voided) {
@@ -4819,7 +4819,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     }
 
     private ItemStack createDefeatBookAndQuill() {
-        ItemStack book = new ItemStack((ItemLike)Items.WRITTEN_BOOK);
+        ItemStack book = new ItemStack(Items.WRITTEN_BOOK);
         List<Filterable<Component>> pages = List.of(Filterable.passThrough(Component.translatable("book.silent_sun.redios.defeat.page0")));
         WrittenBookContent content = new WrittenBookContent(Filterable.passThrough(RediosRules.rediosDefeatBookTitle()), RediosRules.rediosBookAuthor(), 0, pages, true);
         book.set(DataComponents.WRITTEN_BOOK_CONTENT, content);
@@ -5156,7 +5156,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     }
 
     private ItemStack createVictoryBook() {
-        ItemStack book = new ItemStack((ItemLike)Items.WRITTEN_BOOK);
+        ItemStack book = new ItemStack(Items.WRITTEN_BOOK);
         List<Filterable<Component>> pages = List.of(Filterable.passThrough(Component.translatable("book.silent_sun.redios.victory.page0")));
         WrittenBookContent content = new WrittenBookContent(Filterable.passThrough(RediosRules.rediosVictoryBookTitle()), RediosRules.rediosBookAuthor(), 0, pages, true);
         book.set(DataComponents.WRITTEN_BOOK_CONTENT, content);
@@ -5233,16 +5233,16 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         }
         if (outcome == RediosBookOutcome.PHASE2_WIN) {
             if (!hasBeacon) {
-                loot.add(new ItemStack((ItemLike)Items.BEACON));
+                loot.add(new ItemStack(Items.BEACON));
             }
             if (!hasDiamondBlocks) {
-                loot.add(new ItemStack((ItemLike)Items.DIAMOND_BLOCK, 64));
+                loot.add(new ItemStack(Items.DIAMOND_BLOCK, 64));
             }
         }
     }
 
     private ItemStack createOutcomeBook(RediosBookOutcome outcome) {
-        ItemStack book = new ItemStack((ItemLike)Items.WRITTEN_BOOK);
+        ItemStack book = new ItemStack(Items.WRITTEN_BOOK);
         this.applyOutcomeBookContent(book, outcome);
         return book;
     }
@@ -5280,14 +5280,14 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             loot.addAll(RediosLootConfig.roll(serverLevel.random));
         }
         this.ensureMandatoryLoot(loot, includeDefeatBook ? RediosBookOutcome.PHASE1_WIN_PHASE2_LOSE : RediosBookOutcome.PHASE1_WIN_ONLY);
-        loot.add(new ItemStack((ItemLike)ModItems.REDIOS_DISC_PHASE1.get()));
+        loot.add(new ItemStack(ModItems.REDIOS_DISC_PHASE1.get()));
         return loot;
     }
 
     private List<ItemStack> createPhase2Loot(ServerLevel serverLevel, boolean doubleRollOnEmpty) {
         ArrayList<ItemStack> loot = new ArrayList<ItemStack>(RediosRewardOverrideConfig.getOverrideStacks(2, this.titleIndex));
         boolean hasOverride = !loot.isEmpty();
-        loot.add(new ItemStack((ItemLike)ModItems.REDIOS_DISC_PHASE2.get()));
+        loot.add(new ItemStack(ModItems.REDIOS_DISC_PHASE2.get()));
         if (!hasOverride) {
             loot.addAll(RediosLootConfig.roll(serverLevel.random));
             if (doubleRollOnEmpty) {
@@ -5613,7 +5613,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             ServerLevel serverLevel = (ServerLevel)level;
             Vec3 c = this.position().add(0.0, (double)this.getBbHeight() * 0.5, 0.0);
             serverLevel.playSound(null, this.blockPosition(), SoundEvents.SHIELD_BLOCK, SoundSource.HOSTILE, 1.0f, 0.7f);
-            serverLevel.sendParticles((ParticleOptions)ParticleTypes.CRIT, c.x, c.y, c.z, 14, 0.35, 0.35, 0.35, 0.12);
+            serverLevel.sendParticles(ParticleTypes.CRIT, c.x, c.y, c.z, 14, 0.35, 0.35, 0.35, 0.12);
         }
         if (attacker instanceof ServerPlayer) {
             ServerPlayer serverPlayer = (ServerPlayer)attacker;
@@ -5631,8 +5631,8 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     }
 
     public void registerControllers(AnimatableManager.ControllerRegistrar controllers) {
-        controllers.add(new AnimationController((GeoAnimatable)this, "main", 5, state -> state.setAndContinue(DefaultAnimations.IDLE)));
-        controllers.add(new AnimationController((GeoAnimatable)this, "transition", 0, state -> state.setAndContinue(TRANSITION_ANIM)));
+        controllers.add(new AnimationController(this, "main", 5, state -> state.setAndContinue(DefaultAnimations.IDLE)));
+        controllers.add(new AnimationController(this, "transition", 0, state -> state.setAndContinue(TRANSITION_ANIM)));
     }
 
     public AnimatableInstanceCache getAnimatableInstanceCache() {
