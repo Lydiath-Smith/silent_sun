@@ -52,7 +52,9 @@ bin/*
 !bin/main/
 bin/main/*
 !bin/main/assets/
+!bin/main/assets/**
 !bin/main/data/
+!bin/main/data/**
 !bin/main/pack.mcmeta
 # bin/default 是模板仓库的嵌套拷贝（含 .git），显式忽略
 bin/default/
