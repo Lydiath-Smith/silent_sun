@@ -4380,6 +4380,11 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         double dz;
         double dy;
         double dx;
+        // 判定秩序化（A2）：已结算/已移除 → 不再写账本。结算后残余 tick 若继续 upsert，
+        // 会残留记录并被 RediosBattleData.tickServer 误判为实体异常而重建（幽灵 Boss）。
+        if (this.settlementDone || this.isRemoved()) {
+            return;
+        }
         if (this.battleParticipants.isEmpty() && this.mobParticipants.isEmpty()) {
             return;
         }
