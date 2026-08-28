@@ -31,7 +31,8 @@ import java.util.UUID;
 /**
  * Damage pipeline for RediosEntity.
  * <p>
- * Replaces the monolithic {@code hurt()} method with 18 ordered stages,
+ * Replaces the monolithic {@code hurt()} method with 21 ordered stages
+ * (见设计稿《设计文稿-重制版.md》§3.1/§7.1 判定顺序；原始 11 段方案见合集历史),
  * each responsible for one concern.  Stages run in declaration order.
  * The pipeline short-circuits on the first {@link DamageResult#cancel()}.
  * <p>

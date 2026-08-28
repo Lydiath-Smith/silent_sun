@@ -3,6 +3,10 @@ package com.lydiath.silent_sun.entity;
 /**
  * Explicit finite state machine for RediosEntity lifecycle.
  * <p>
+ * 见设计稿《docs/设计文稿-重制版.md》§2.0（权威状态机）：本枚举 + RediosEntity.transitionTo
+ * 为运行时唯一入口；反序列化（readAdditionalSaveData / rebuildFromRecord）经
+ * restoreBossState 直接赋值绕过转移表（历史存档容错）。
+ * <p>
  * Replaces the 6+ implicit boolean flags ({@code phase}, {@code transitionTicks},
  * {@code awaitingPhase2Choice}, {@code noResurrection}, {@code pendingDeath},
  * {@code titleLockTicks}) with a single authoritative state.

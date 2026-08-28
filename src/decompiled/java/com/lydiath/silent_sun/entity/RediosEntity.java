@@ -2017,6 +2017,11 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         }
     }
 
+    /**
+     * 濒死锁血到期收口。见设计稿《docs/设计文稿-重制版.md》§2.2 + `docs/实现计划-2026-08-27-P2濒死锁血修复.md`。
+     * 衔接：配置允许回退 → 回 COMBAT 重打；P2 → pendingLockReleased=true + 切回 COMBAT 等玩家补刀
+     * 自然击杀（不自杀，CD 由 die() 设）；P1 → beginPhase2Choice（投票）。
+     */
     private void onPendingLockExpired() {
         boolean phase2 = this.bossState == BossState.PHASE2_PENDING;
         List<Component> titles = phase2 ? PHASE2_TITLES : PHASE1_TITLES;
@@ -3788,6 +3793,11 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         }
     }
 
+    /**
+     * 头衔推进（每 tick）。见设计稿《docs/设计文稿-重制版.md》§2.2。
+     * 衔接：computeTitleIndex → titleIndex+1（只步进 1，保证中间 BossFlag 逐个授予）
+     * → 重设锁血 → onTitleChanged（唯一头衔切换入口）。锁血中递减 + clampHealthToCurrentTitle。
+     */
     private void updateTitle() {
         List<Component> titles = this.phase == 1 ? PHASE1_TITLES : PHASE2_TITLES;
         int minTicks = this.titleLockDurationTicks();
@@ -4360,6 +4370,12 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         }
     }
 
+    /**
+     * 战斗账本心跳（每 tick upsert）。见 `docs/实现计划-2026-08-27-判定秩序化.md`。
+     * 衔接：RediosBattleData.upsert → tickServer 扫描（实体缺失 + chunk 加载 + 时间窗 → 重建）。
+     * ⚠️ 判定秩序化待办：本方法缺 settlementDone/isRemoved 守卫（结算后残余 tick 会残留账本记录，
+     * 被 tickServer 误判为实体异常而重建——见判定秩序化计划方案 1）。
+     */
     private void updateBattleRecord(ServerLevel serverLevel) {
         double dz;
         double dy;
