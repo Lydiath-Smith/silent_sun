@@ -4472,7 +4472,11 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     }
 
     private void clearBattleRecord(ServerLevel serverLevel) {
-        RediosBattleData.get(serverLevel).remove(this.getUUID());
+        // 判定秩序化（A3）：先标记「已合法离场」再移除——双保险：
+        // 即使移除后竞态残留记录，tickServer 也按 settled 清理而非重建（幽灵 Boss 防线）。
+        RediosBattleData data = RediosBattleData.get(serverLevel);
+        data.markSettled(this.getUUID());
+        data.remove(this.getUUID());
         this.clearDamageDebugCaches();
     }
 

@@ -55,6 +55,8 @@ extends SavedData {
                 r.bossStateOrd = e.getInt("BossState");
                 r.titleLockTicks = e.getInt("TitleLock");
                 r.colorlessChallengeTicks = e.contains("ColorlessChallenge") ? e.getInt("ColorlessChallenge") : -1;
+                // 判定秩序化（A3）：已合法离场标记（旧存档无此键 → 默认 false）
+                r.settled = e.contains("Settled") && e.getBoolean("Settled");
                 ListTag participants = e.getList("Participants", 10);
                 int j = 0;
                 while (j < participants.size()) {
@@ -98,6 +100,7 @@ extends SavedData {
             e.putInt("BossState", r.bossStateOrd);
             e.putInt("TitleLock", r.titleLockTicks);
             e.putInt("ColorlessChallenge", r.colorlessChallengeTicks);
+            e.putBoolean("Settled", r.settled);
             ListTag participants = new ListTag();
             for (UUID id : r.participants) {
                 CompoundTag p = new CompoundTag();
@@ -140,6 +143,8 @@ extends SavedData {
         // 复位重建计数，避免"累计 3 次重建后永久失效"，同时保留对"重建失败(实体始终未出现)"
         // 的上限保护——重建失败时 upsert 不会被调用，rebuildCount 仍会累加直至 3 次停用。
         r.rebuildCount = 0;
+        // 判定秩序化（A3）：心跳即「战斗进行中」，复位已结算标记（新战斗重新上报）。
+        r.settled = false;
         r.participants.clear();
         r.participants.addAll(participants);
         r.expelled.clear();
@@ -149,6 +154,22 @@ extends SavedData {
 
     public void remove(UUID bossId) {
         if (this.records.remove(bossId) != null) {
+            this.setDirty();
+        }
+    }
+
+    /**
+     * 标记记录为「已合法结算/离场」（判定秩序化 A3）。
+     * <p>
+     * 在 {@link #remove} 之前调用：先置 settled=true 再移除。即使移除后因竞态
+     * 又有心跳写入（理论上已被 updateBattleRecord 守卫堵住，此处双保险），
+     * tickServer 也会按 settled 清理而非重建——合法退场永不被判为实体异常。
+     * 若记录已不存在（正常移除成功）则 no-op。
+     */
+    public void markSettled(UUID bossId) {
+        BattleRecord r = this.records.get(bossId);
+        if (r != null) {
+            r.settled = true;
             this.setDirty();
         }
     }
@@ -182,6 +203,12 @@ extends SavedData {
             }
             ServerLevel level = server.getLevel(ResourceKey.create(Registries.DIMENSION, r.dimension));
             if (level == null || level.getEntity(r.bossId) != null) {
+                continue;
+            }
+            // 判定秩序化（A3）：记录标记「已合法离场」→ 清理残留，不重建。
+            // 合法退场（击败/卸载/计时胜利/无奖励）后若记录残留，不当作实体异常（作弊删除）。
+            if (r.settled) {
+                this.remove(r.bossId);
                 continue;
             }
             long since = now - r.lastSeenGameTime;
@@ -236,6 +263,14 @@ extends SavedData {
         public int titleLockTicks;
         /** 无色挑战剩余 tick（-1 表示未激活），用于重建后保留无色挑战进度。 */
         public int colorlessChallengeTicks = -1;
+        /**
+         * 已合法结算/离场标记（判定秩序化 A3）。
+         * <p>
+         * 合法退场（击败/卸载/计时胜利/无奖励）后若记录残留，tickServer 靠此标记
+         * 识别为「合法离场」→ 清理而非重建；防止把正常结算误判为实体异常（作弊删除）。
+         * 心跳 upsert 时复位为 false（新战斗重新开始上报）。
+         */
+        public boolean settled = false;
         public final Set<UUID> participants = new HashSet<UUID>();
         public final Set<UUID> expelled = new HashSet<UUID>();
     }
