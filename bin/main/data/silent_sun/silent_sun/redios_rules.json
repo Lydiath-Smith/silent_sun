@@ -62,8 +62,6 @@
   "redios_battle_music_intro_ticks": 3600,
   "redios_battle_music_loop_ticks": 3180,
   "redios_battle_music_outro_enabled": true,
-  "vote_timeout_seconds": 30,
-  "vote_tie_as_yes": false,
   "adaptive_block_trigger_hits_per_second": 6.0,
   "adaptive_block_duration_ticks": 20,
   "adaptive_block_damage_reduction": 0.8,

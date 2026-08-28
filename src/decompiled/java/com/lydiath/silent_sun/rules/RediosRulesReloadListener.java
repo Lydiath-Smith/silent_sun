@@ -508,6 +508,9 @@ extends SimpleJsonResourceReloadListener {
                 rediosBattleMusicVolume = 1.0f;
             }
         }
+        // 死配置（M5）：vote_timeout_seconds / vote_tie_as_yes 无任何消费方——
+        // 投票超时/平局已硬编码 30s/否决（设计裁决）。保留解析仅为兼容旧 json 里仍有这两个键，
+        // 值被读入 RediosRules 但无调用点。新 json 已移除这两个键。
         int voteTimeoutSeconds = 30;
         if (root.has("vote_timeout_seconds")) {
             try {
