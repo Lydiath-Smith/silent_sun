@@ -2392,7 +2392,6 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         double pz = 0.0;
         float damage = 0.0f;
         DamageSource src = null;
-        Holder<DamageType> dmgHolder = null;
         boolean result = false;
         Player p = null;
         Player p2 = null;
@@ -2464,11 +2463,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
                         }
                         if (!this.chaosRuinActive && !this.chaosRuinAbsoluteAttacks && !this.isSharpenTrialActiveNow()) break block27;
                         damage = (float)this.getAttributeValue(Attributes.ATTACK_DAMAGE);
-                        src = ModDamageTypes.rediosAttack(this.level(), this);
-                        dmgHolder = this.resolveAttackDamageHolder();
-                        if (dmgHolder != null) {
-                            src = new DamageSource(dmgHolder);
-                        }
+                        src = this.buildAttackSource();
                         if (livingTarget instanceof ServerPlayer && (sp = (ServerPlayer)livingTarget).level().getLevelData().isHardcore() && damage >= sp.getHealth()) {
                             damage = Math.max(0.0f, sp.getHealth() - 1.0f);
                             this.hardcoreProtectedPlayers.add(sp.getUUID());
@@ -2484,11 +2479,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
                     }
                     if (!this.attackRandomized && !this.attackSpecialized) break block29;
                     damage = (float)this.getAttributeValue(Attributes.ATTACK_DAMAGE);
-                    src = ModDamageTypes.rediosAttack(this.level(), this);
-                    dmgHolder = this.resolveAttackDamageHolder();
-                    if (dmgHolder != null) {
-                        src = new DamageSource(dmgHolder);
-                    }
+                    src = this.buildAttackSource();
                     result = livingTarget.hurt(src, damage);
                     break block30;
                 }
@@ -3658,6 +3649,19 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             return null;
         }
         return holders.get(this.random.nextInt(holders.size()));
+    }
+
+    /**
+     * 构建攻击 DamageSource（合并冗余，M2）：默认 rediosAttack，特化/随机类型时用解析出的 holder。
+     * 衔接：doHurtTarget 分支 A/B 共用；见设计稿 §3.1（1.8 砺锋随机化 / 2.7 弱点特化）。
+     */
+    private DamageSource buildAttackSource() {
+        DamageSource src = ModDamageTypes.rediosAttack(this.level(), this);
+        Holder<DamageType> dmgHolder = this.resolveAttackDamageHolder();
+        if (dmgHolder != null) {
+            src = new DamageSource(dmgHolder);
+        }
+        return src;
     }
 
     private void recordPlayerDamageType(DamageSource source, float amount) {
