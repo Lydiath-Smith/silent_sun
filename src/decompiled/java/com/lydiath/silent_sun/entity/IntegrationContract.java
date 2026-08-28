@@ -279,8 +279,18 @@ public final class IntegrationContract {
             }
             try {
                 Class.forName(EXTINCTION_DAY_MOD_CLASS);
-                Class.forName(SLASH_BLADE_ITEM_CLASS);
+                Class<?> slashBladeClass = Class.forName(SLASH_BLADE_ITEM_CLASS);
                 cachedAvailable = true;
+                // 版本断言（改进项 2）：类存在但关键 API 签名不匹配 → 明确告警而非静默降级。
+                // slashblade / sbr_core 升级后若 getBlade 方法签名变化，此处能快速定位。
+                // 仅在首次检测到不匹配时告警一次（availability 状态仍为 true，后续调用会走各自的
+                // 反射失败日志，但此处给出「版本可能不匹配」的明确提示）。
+                try {
+                    slashBladeClass.getMethod(GET_BLADE_METHOD, Item.class, HolderLookup.Provider.class);
+                } catch (NoSuchMethodException apiErr) {
+                    LOG.warn("[版本断言] SlashBlade 已加载但 getBlade({}, HolderLookup.Provider) 签名不匹配 —— " +
+                        "slashblade 版本可能升级过 API，Boss 拔刀剑装备/SA 可能异常。请核对 slashblade 版本。", Item.class.getSimpleName());
+                }
             } catch (ClassNotFoundException e) {
                 cachedAvailable = false;
             }
