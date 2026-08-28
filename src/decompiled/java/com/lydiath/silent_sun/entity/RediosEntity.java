@@ -620,10 +620,12 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             return;
         }
         if (this.bossState == BossState.PHASE1_PENDING || this.bossState == BossState.PHASE2_PENDING) {
-            if (this.checkAllParticipantsDisengaged(serverLevel)) {
+            // 判定秩序化（A4）：三守卫统一顺序 = 全灭 → 脱战 → 卸载（与 COMBAT 主流程一致）。
+            // 全灭判定对 VOTE/转场自行豁免（checkDefeatByAllDead 的 isVoteOrTransition 守卫）。
+            if (this.checkDefeatByAllDead(serverLevel)) {
                 return;
             }
-            if (this.checkDefeatByAllDead(serverLevel)) {
+            if (this.checkAllParticipantsDisengaged(serverLevel)) {
                 return;
             }
             if (this.checkBattleAreaUnloaded(serverLevel)) {
