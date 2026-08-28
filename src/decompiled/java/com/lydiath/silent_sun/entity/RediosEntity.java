@@ -4091,6 +4091,9 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     private void endBattleHalfDayCooldown() {
         Level level = this.level();
         if (!(level instanceof ServerLevel)) {
+            // 判定秩序化（A5）：客户端分支只 safeDiscard，不（也无法）清服务端账本——
+            // 本方法只在服务端结算路径调用（level 必为 ServerLevel），此分支实际不可达；
+            // 账本清理由 settleBattle 完成。勿在此补 clearBattleRecord（无 ServerLevel 参数）。
             this.safeDiscard();
             return;
         }
@@ -4101,6 +4104,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     private void endBattleHalfDayDefeatCooldown() {
         Level level = this.level();
         if (!(level instanceof ServerLevel)) {
+            // 判定秩序化（A5）：同 endBattleHalfDayCooldown——客户端分支实际不可达，账本由 settleBattle 清理。
             this.safeDiscard();
             return;
         }
@@ -4322,6 +4326,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     private void endBattleThreeDayCooldown() {
         Level level = this.level();
         if (!(level instanceof ServerLevel)) {
+            // 判定秩序化（A5）：同 endBattleHalfDayCooldown——客户端分支实际不可达，账本由 settleBattle 清理。
             this.safeDiscard();
             return;
         }
