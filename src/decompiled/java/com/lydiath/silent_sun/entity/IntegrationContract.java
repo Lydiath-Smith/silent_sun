@@ -113,9 +113,7 @@ public final class IntegrationContract {
     static final float DRIVE_SPEED = 2.5f;
     static final float DRIVE_LIFETIME = 30.0f;
     static final int DRIVE_COLOR = 0x3333FF;
-    /** 刀光（EntitySlashEffect）生成护栏（2026-08-30）：slashblade 时间轴对 Mob 会一次性全量
-     *  产出，Boss 出场实测 10 秒瞬发上万条导致服务器掉刻。这里限制每秒（20 tick）生成上限。 */
-    static final int SLASH_EFFECT_SPAWN_CAP_PER_TICK = 40;
+    /** 刀光（EntitySlashEffect）反射缓存：普攻斩击轨迹 + triple_whammy 三连特效 */
     /** EntityAbstractSummonedSword（剑气/幻影剑基类）：手动碰撞 doForceHitEntity 绕过 pvp_enable 拦玩家 */
     static final String ENTITY_ABSTRACT_SUMMONED_SWORD_CLASS = "mods.flammpfeil.slashblade.entity.EntityAbstractSummonedSword";
     static final String ENTITY_ABSTRACT_SUMMONED_SWORD_DO_FORCE_HIT_METHOD = "doForceHitEntity";
@@ -221,9 +219,6 @@ public final class IntegrationContract {
     private static volatile Method slashEffectSetOwnerMethod;
     private static volatile Method slashEffectSetYRotMethod;
     private static volatile Method slashEffectSetXRotMethod;
-    // 刀光生成护栏计数（2026-08-30）：按游戏 tick 重置的每 tick 生成计数，超限丢弃。
-    private static long lastSlashEffectSpawnGameTime = -1L;
-    private static int slashEffectSpawnedThisTick = 0;
     // EntityAbstractSummonedSword 手动碰撞命中（doForceHitEntity）：绕过 pvp_enable=false 拦玩家
     private static volatile Class<?> entityAbstractSummonedSwordClass;
     private static volatile Method summonedSwordDoForceHitEntityMethod;
@@ -1217,20 +1212,11 @@ public final class IntegrationContract {
      * 反射生成一个 slashblade 刀光实体（EntitySlashEffect），参数与玩家 doSlash / TripleWhammy 一致。
      * damage=0 纯视觉（KnockBacks.cancel ordinal=0 无击退）。
      * <p>
-     * 2026-08-30 护栏：每游戏 tick 生成上限 {@link #SLASH_EFFECT_SPAWN_CAP_PER_TICK} 条，
-     * 超出丢弃（slashblade 时间轴对 Mob 一次性全量产出的防御，防止万条级实体爆发卡服）。
+     * 2026-08-30：刀光速率的源头限速在 BladeAttackGoal 的 combo 驱动间隔（≥7 tick），
+     * 本方法不额外丢弃；保留 isSlashEffectEntity 供存量护栏查询。
      */
     private static void spawnSlashEffect(LivingEntity owner, Vec3 pos, float roll, int color,
                                          boolean mute, boolean critical, double damage) {
-        long gameTime = owner.level().getGameTime();
-        if (gameTime != lastSlashEffectSpawnGameTime) {
-            lastSlashEffectSpawnGameTime = gameTime;
-            slashEffectSpawnedThisTick = 0;
-        }
-        if (slashEffectSpawnedThisTick >= SLASH_EFFECT_SPAWN_CAP_PER_TICK) {
-            return;
-        }
-        slashEffectSpawnedThisTick++;
         try {
             Object slash = entitySlashEffectCtor.newInstance(slashEffectEntityType, owner.level());
             Entity entity = (Entity) slash;

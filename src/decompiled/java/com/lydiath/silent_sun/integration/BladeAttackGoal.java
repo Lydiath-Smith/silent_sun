@@ -42,8 +42,13 @@ public class BladeAttackGoal extends Goal {
     private int bladeEntityCooldown;
 
     /** 刀光实体护栏（2026-08-30）：Boss 周围 64 格内 slash_effect 存量上限，超出跳过 combo 驱动。
-     *  实测稳态存量约 45 条（原阈值 80 不触发），收紧到 20 让护栏真正生效。 */
-    private static final int SLASH_EFFECT_CAP = 20;
+     *  实测稳态存量约 45 条（原阈值 80 不触发），收紧到 10 让护栏真正生效。 */
+    private static final int SLASH_EFFECT_CAP = 10;
+
+    /** combo 驱动最小间隔（tick）：用户裁决「0 加成时每秒 3 条刀光就够多了」。
+     *  驱动频率下限 = 7 tick（每秒约 3 次驱动）——低于此会因 slashblade 内部 combo
+     *  时间轴一次性全量产出导致 slash_effect 洪峰（实测 10 秒上万条 + 触发清扫误杀）。 */
+    private static final int BLADE_COMBO_DRIVE_MIN_INTERVAL_TICKS = 7;
 
     public static boolean isAvailable() {
         return IntegrationContract.isSlashBladeIntegrationAvailable();
@@ -65,7 +70,9 @@ public class BladeAttackGoal extends Goal {
         this.comboCooldown = 10 + boss.getRandom().nextInt(8);
         this.burstDriveCooldown = 20 + boss.getRandom().nextInt(10);
         this.phantomSwordCooldown = 30 + boss.getRandom().nextInt(20);
-        this.bladeEntityCooldown = this.redios != null ? this.redios.getAttackCooldownTicks() : 10;
+        this.bladeEntityCooldown = Math.max(
+            this.redios != null ? this.redios.getAttackCooldownTicks() : 10,
+            BLADE_COMBO_DRIVE_MIN_INTERVAL_TICKS);
         ItemStack blade = IntegrationContract.tryEquipBlade(this.redios);
         if (!blade.isEmpty()) {
             boss.setItemInHand(InteractionHand.MAIN_HAND, blade);
@@ -122,7 +129,10 @@ public class BladeAttackGoal extends Goal {
                 }
             }
             IntegrationContract.tryTickBladeCombo(boss);
-            bladeEntityCooldown = this.redios != null ? this.redios.getAttackCooldownTicks() : 10;
+            // 降速（2026-08-30）：combo 驱动间隔不低于 7 tick（每秒约 3 次），
+            // 从源头限制 slashblade 内部 combo 时间轴产出的刀光速率。
+            int base = this.redios != null ? this.redios.getAttackCooldownTicks() : 10;
+            bladeEntityCooldown = Math.max(base, BLADE_COMBO_DRIVE_MIN_INTERVAL_TICKS);
         }
 
         boss.getLookControl().setLookAt(target);
