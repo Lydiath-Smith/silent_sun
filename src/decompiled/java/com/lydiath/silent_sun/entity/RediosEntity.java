@@ -4381,6 +4381,11 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         }
         this.ensureMandatoryLoot(loot, includeDefeatBook ? RediosBookOutcome.PHASE1_WIN_PHASE2_LOSE : RediosBookOutcome.PHASE1_WIN_ONLY);
         loot.add(new ItemStack(ModItems.REDIOS_DISC_PHASE1.get()));
+        // 灭却之日（required 前置）提供的一阶段掉落「长梦彼端的灾厄之影」：1~4 个随机
+        // （2026-08-30 用户裁决）。走注册表查找而非反射，避免编译期硬依赖；未提供时静默跳过。
+        List<ItemStack> lootFinal = loot;
+        BuiltInRegistries.ITEM.getOptional(ResourceLocation.fromNamespaceAndPath("extinction_day_mod_1784441698", "calamity_shadow"))
+            .ifPresent(calamityShadow -> lootFinal.add(new ItemStack(calamityShadow, 1 + serverLevel.random.nextInt(4))));
         if (loot.isEmpty()) {
             return;
         }
@@ -5381,6 +5386,10 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         }
         this.ensureMandatoryLoot(loot, includeDefeatBook ? RediosBookOutcome.PHASE1_WIN_PHASE2_LOSE : RediosBookOutcome.PHASE1_WIN_ONLY);
         loot.add(new ItemStack(ModItems.REDIOS_DISC_PHASE1.get()));
+        // 灭却之日（required 前置）提供的一阶段掉落「长梦彼端的灾厄之影」：1~4 个随机
+        // （2026-08-30 用户裁决）。走注册表查找而非反射，避免编译期硬依赖；未提供时静默跳过。
+        BuiltInRegistries.ITEM.getOptional(ResourceLocation.fromNamespaceAndPath("extinction_day_mod_1784441698", "calamity_shadow"))
+            .ifPresent(calamityShadow -> loot.add(new ItemStack(calamityShadow, 1 + serverLevel.random.nextInt(4))));
         return loot;
     }
 
@@ -5394,10 +5403,14 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
                 loot.addAll(RediosLootConfig.roll(serverLevel.random));
             }
         }
-        // 灭却之日（required 前置）提供的二阶段固定掉落「长梦彼端的灾厄之影」。
+        // 灭却之日（required 前置）提供的二阶段掉落「长梦彼端的灾厄之影」：
+        // 原有固定 1 个保留，再增加 7~12 个随机（2026-08-30 用户裁决：增加而非替换）。
         // 走注册表查找而非反射，避免编译期硬依赖；灭却之日未提供该物品时静默跳过。
         BuiltInRegistries.ITEM.getOptional(ResourceLocation.fromNamespaceAndPath("extinction_day_mod_1784441698", "calamity_shadow"))
-            .ifPresent(calamityShadow -> loot.add(new ItemStack(calamityShadow)));
+            .ifPresent(calamityShadow -> {
+                loot.add(new ItemStack(calamityShadow)); // 原有固定 1 个
+                loot.add(new ItemStack(calamityShadow, 7 + serverLevel.random.nextInt(6))); // 新增 7~12 个
+            });
         return loot;
     }
 
