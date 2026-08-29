@@ -113,6 +113,9 @@ public final class IntegrationContract {
     static final float DRIVE_SPEED = 2.5f;
     static final float DRIVE_LIFETIME = 30.0f;
     static final int DRIVE_COLOR = 0x3333FF;
+    /** 刀光（EntitySlashEffect）生成护栏（2026-08-30）：slashblade 时间轴对 Mob 会一次性全量
+     *  产出，Boss 出场实测 10 秒瞬发上万条导致服务器掉刻。这里限制每秒（20 tick）生成上限。 */
+    static final int SLASH_EFFECT_SPAWN_CAP_PER_TICK = 40;
     /** EntityAbstractSummonedSword（剑气/幻影剑基类）：手动碰撞 doForceHitEntity 绕过 pvp_enable 拦玩家 */
     static final String ENTITY_ABSTRACT_SUMMONED_SWORD_CLASS = "mods.flammpfeil.slashblade.entity.EntityAbstractSummonedSword";
     static final String ENTITY_ABSTRACT_SUMMONED_SWORD_DO_FORCE_HIT_METHOD = "doForceHitEntity";
@@ -218,6 +221,9 @@ public final class IntegrationContract {
     private static volatile Method slashEffectSetOwnerMethod;
     private static volatile Method slashEffectSetYRotMethod;
     private static volatile Method slashEffectSetXRotMethod;
+    // 刀光生成护栏计数（2026-08-30）：按游戏 tick 重置的每 tick 生成计数，超限丢弃。
+    private static long lastSlashEffectSpawnGameTime = -1L;
+    private static int slashEffectSpawnedThisTick = 0;
     // EntityAbstractSummonedSword 手动碰撞命中（doForceHitEntity）：绕过 pvp_enable=false 拦玩家
     private static volatile Class<?> entityAbstractSummonedSwordClass;
     private static volatile Method summonedSwordDoForceHitEntityMethod;
@@ -279,14 +285,16 @@ public final class IntegrationContract {
             }
             try {
                 Class.forName(EXTINCTION_DAY_MOD_CLASS);
-                Class<?> slashBladeClass = Class.forName(SLASH_BLADE_ITEM_CLASS);
+                Class.forName(SLASH_BLADE_ITEM_CLASS);
                 cachedAvailable = true;
                 // 版本断言（改进项 2）：类存在但关键 API 签名不匹配 → 明确告警而非静默降级。
                 // slashblade / sbr_core 升级后若 getBlade 方法签名变化，此处能快速定位。
-                // 仅在首次检测到不匹配时告警一次（availability 状态仍为 true，后续调用会走各自的
-                // 反射失败日志，但此处给出「版本可能不匹配」的明确提示）。
+                // 2026-08-30 修正：getBlade 实际定义在 SlashBladeDefinition（命名刀注册表 value 类），
+                // 而非 ItemSlashBlade（其上只有 getBladeId）——原断言查错类导致两版 jar 均误报 WARN。
+                // 实测重锋版 2.0.3 与 Refix 版该签名一致，断言通过即代表装备链路可用。
                 try {
-                    slashBladeClass.getMethod(GET_BLADE_METHOD, Item.class, HolderLookup.Provider.class);
+                    Class<?> definitionClass = Class.forName(SLASH_BLADE_DEFINITION_CLASS);
+                    definitionClass.getMethod(GET_BLADE_METHOD, Item.class, HolderLookup.Provider.class);
                 } catch (NoSuchMethodException apiErr) {
                     LOG.warn("[版本断言] SlashBlade 已加载但 getBlade({}, HolderLookup.Provider) 签名不匹配 —— " +
                         "slashblade 版本可能升级过 API，Boss 拔刀剑装备/SA 可能异常。请核对 slashblade 版本。", Item.class.getSimpleName());
@@ -1208,9 +1216,21 @@ public final class IntegrationContract {
     /**
      * 反射生成一个 slashblade 刀光实体（EntitySlashEffect），参数与玩家 doSlash / TripleWhammy 一致。
      * damage=0 纯视觉（KnockBacks.cancel ordinal=0 无击退）。
+     * <p>
+     * 2026-08-30 护栏：每游戏 tick 生成上限 {@link #SLASH_EFFECT_SPAWN_CAP_PER_TICK} 条，
+     * 超出丢弃（slashblade 时间轴对 Mob 一次性全量产出的防御，防止万条级实体爆发卡服）。
      */
     private static void spawnSlashEffect(LivingEntity owner, Vec3 pos, float roll, int color,
                                          boolean mute, boolean critical, double damage) {
+        long gameTime = owner.level().getGameTime();
+        if (gameTime != lastSlashEffectSpawnGameTime) {
+            lastSlashEffectSpawnGameTime = gameTime;
+            slashEffectSpawnedThisTick = 0;
+        }
+        if (slashEffectSpawnedThisTick >= SLASH_EFFECT_SPAWN_CAP_PER_TICK) {
+            return;
+        }
+        slashEffectSpawnedThisTick++;
         try {
             Object slash = entitySlashEffectCtor.newInstance(slashEffectEntityType, owner.level());
             Entity entity = (Entity) slash;
@@ -1228,6 +1248,11 @@ public final class IntegrationContract {
         } catch (Exception e) {
             LOG.warn("Failed to spawn slash blade effect entity (刀光): {}", e.toString());
         }
+    }
+
+    /** 判断实体是否为 slashblade 刀光（EntitySlashEffect）；反射缓存未就绪时返回 false。 */
+    public static boolean isSlashEffectEntity(net.minecraft.world.entity.Entity e) {
+        return entitySlashEffectClass != null && entitySlashEffectClass.isInstance(e);
     }
 
     private static boolean ensureReflectionReady() {

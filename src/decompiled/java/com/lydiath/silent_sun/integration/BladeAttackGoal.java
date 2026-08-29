@@ -2,7 +2,9 @@ package com.lydiath.silent_sun.integration;
 
 import com.lydiath.silent_sun.entity.IntegrationContract;
 import com.lydiath.silent_sun.entity.RediosEntity;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.InteractionHand;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.ai.goal.Goal;
@@ -38,6 +40,9 @@ public class BladeAttackGoal extends Goal {
      * 避免 blade mode 一激活就每 tick 无节流产实体、把剑技速度拉满导致卡顿。
      */
     private int bladeEntityCooldown;
+
+    /** 刀光实体护栏（2026-08-30）：Boss 周围 64 格内 slash_effect 存量上限，超出跳过 combo 驱动。 */
+    private static final int SLASH_EFFECT_CAP = 80;
 
     public static boolean isAvailable() {
         return IntegrationContract.isSlashBladeIntegrationAvailable();
@@ -103,6 +108,18 @@ public class BladeAttackGoal extends Goal {
         if (bladeEntityCooldown > 0) {
             bladeEntityCooldown--;
         } else {
+            // 2026-08-30 实体护栏：slashblade 时间轴对 Mob 一次性全量产出刀光，
+            // Boss 周围 64 格内 slash_effect 存量超阈值时跳过本次驱动并延长冷却，
+            // 让存量实体先被自然清理，防止 10 秒万条级实体爆发卡服。
+            if (boss.level() instanceof ServerLevel serverLevel) {
+                java.util.List<Entity> effects = serverLevel.getEntitiesOfClass(Entity.class,
+                    boss.getBoundingBox().inflate(64.0),
+                    e -> IntegrationContract.isSlashEffectEntity(e) && e.isAlive());
+                if (effects.size() > SLASH_EFFECT_CAP) {
+                    bladeEntityCooldown = 20;
+                    return;
+                }
+            }
             IntegrationContract.tryTickBladeCombo(boss);
             bladeEntityCooldown = this.redios != null ? this.redios.getAttackCooldownTicks() : 10;
         }

@@ -5,6 +5,7 @@ package com.lydiath.silent_sun.event;
 
 import com.lydiath.silent_sun.data.RediosBattleData;
 import com.lydiath.silent_sun.data.RediosCooldownData;
+import com.lydiath.silent_sun.data.RediosCooldownData;
 import com.lydiath.silent_sun.entity.IntegrationContract;
 import com.lydiath.silent_sun.entity.RediosEntity;
 import com.lydiath.silent_sun.loot.RediosLocalConfigReloadListener;
@@ -131,6 +132,19 @@ public final class CommonEvents {
     public static void onServerStarting(ServerStartingEvent event) {
         RediosLootConfig.loadOrCreate();
         RediosRewardOverrideConfig.loadOrCreate();
+        // 2026-08-30 用户裁决：每次进入游戏清理全版本遗留莱德厄斯（实体 + 账本 + 冷却），
+        // 防止老版本 jar 生成的 Boss（旧 NBT 数据）带着旧逻辑直接加载进世界。
+        MinecraftServer server = event.getServer();
+        for (ServerLevel sl : server.getAllLevels()) {
+            for (Entity e : sl.getEntities().getAll()) {
+                if (e instanceof RediosEntity redios && !redios.isRemoved()) {
+                    redios.forceDiscardSilently();
+                }
+            }
+        }
+        ServerLevel overworld = server.overworld();
+        RediosBattleData.get(overworld).clearAllRecords();
+        RediosCooldownData.get(overworld).resetCooldown();
     }
 
     @SubscribeEvent

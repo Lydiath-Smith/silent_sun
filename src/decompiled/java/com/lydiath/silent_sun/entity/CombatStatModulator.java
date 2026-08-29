@@ -19,13 +19,24 @@ final class CombatStatModulator {
     /** P2 失控疾驰攻速冷却（tick）：用户裁决为「寻常拔刀剑攻速两倍半」。 */
     private static final int P2_SPRINT_ATTACK_COOLDOWN_TICKS = 5;
 
+    /** 拔刀剑攻速基准（tick）：灭刀·断·试做原版攻速 4.0 → 20/4.0 = 5 tick。 */
+    private static final int BLADE_BASE_ATTACK_COOLDOWN_TICKS = 5;
+
+    /** 解除攻速限制后的冷却下限（tick）：原版攻速 ×2 ≈ 3 tick 封顶（用户裁决）。 */
+    private static final int BLADE_MAX_SPEED_COOLDOWN_TICKS = 3;
+
+    /** 激怒攻速加成系数：用户裁决「加成只有原来的 20%」（原每级 +0.3 → 现每级 +0.06）。 */
+    private static final double ENRAGE_SPEED_BONUS_FACTOR = 0.3 * 0.2;
+
     private final RediosEntity host;
 
     CombatStatModulator(RediosEntity host) {
         this.host = host;
     }
 
-    /** 攻击冷却（tick）：近战与拔刀剑实体斩击的统一节奏源。 */
+    /** 攻击冷却（tick）：近战与拔刀剑实体斩击的统一节奏源。
+     *  基准 = 灭刀·断·试做原版攻速 4.0（5 tick）；激怒加成仅保留原 20%；
+     *  解除限制后冷却下限 3 tick（= 原版攻速 ×2 封顶）。 */
     int attackCooldownTicks() {
         if (this.host.weaponWeakpointSlowTicks > 0) {
             return Math.max(1, RediosRules.weaponWeakpointFixedCooldown());
@@ -34,11 +45,10 @@ final class CombatStatModulator {
             return P2_SPRINT_ATTACK_COOLDOWN_TICKS;
         }
         int level = this.enrageLevel();
-        double speed = 1.0 + 0.3 * (double) level;
-        int base = Math.max(1, (int) Math.round(20.0 / speed));
-        int extra = Math.max(0, level);
-        int jitter = this.host.getRandom().nextInt(3);
-        return Math.max(3, base - extra + jitter);
+        double speed = 1.0 + ENRAGE_SPEED_BONUS_FACTOR * (double) level;
+        int base = Math.max(1, (int) Math.round(20.0 / (4.0 * speed)));
+        int jitter = this.host.getRandom().nextInt(2);
+        return Math.max(BLADE_MAX_SPEED_COOLDOWN_TICKS, base + jitter);
     }
 
     /** 攻击范围（格）：基础值 + 激怒等级加成（上限 +3）。 */

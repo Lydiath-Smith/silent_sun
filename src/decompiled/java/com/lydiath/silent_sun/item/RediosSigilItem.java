@@ -32,7 +32,6 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.TooltipFlag;
 import net.minecraft.world.item.UseAnim;
 import net.minecraft.world.level.Level;
-import net.minecraft.world.level.levelgen.Heightmap;
 
 public final class RediosSigilItem
 extends Item {
@@ -120,16 +119,15 @@ extends Item {
         return null;
     }
 
-    /** 把玩家传送到 Boss 附近水平 3~5 格随机落点（安全落地高度）。 */
+    /** 把玩家传送到 Boss 附近水平 3~5 格随机落点（2026-08-30：落点高度 = Boss 所在高度，
+     *  Boss 在空中/高处时玩家也传到同高度，不再回落地表）。 */
     private void teleportPlayerNearBoss(Player player, RediosEntity boss) {
         ServerLevel sl = (ServerLevel) boss.level();
         double angle = sl.getRandom().nextDouble() * Math.PI * 2.0;
         double dist = 3.0 + sl.getRandom().nextDouble() * 2.0;
         double x = boss.getX() + Math.cos(angle) * dist;
         double z = boss.getZ() + Math.sin(angle) * dist;
-        BlockPos surface = sl.getHeightmapPos(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES,
-            new BlockPos((int) x, (int) boss.getY(), (int) z));
-        player.teleportTo(sl, x, surface.getY() + 0.5, z, Set.of(), player.getYRot(), player.getXRot());
+        player.teleportTo(sl, x, boss.getY() + 0.5, z, Set.of(), player.getYRot(), player.getXRot());
     }
 
     @Override
