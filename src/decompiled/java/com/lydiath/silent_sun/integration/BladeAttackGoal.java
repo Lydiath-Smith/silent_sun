@@ -41,8 +41,9 @@ public class BladeAttackGoal extends Goal {
      */
     private int bladeEntityCooldown;
 
-    /** 刀光实体护栏（2026-08-30）：Boss 周围 64 格内 slash_effect 存量上限，超出跳过 combo 驱动。 */
-    private static final int SLASH_EFFECT_CAP = 80;
+    /** 刀光实体护栏（2026-08-30）：Boss 周围 64 格内 slash_effect 存量上限，超出跳过 combo 驱动。
+     *  实测稳态存量约 45 条（原阈值 80 不触发），收紧到 20 让护栏真正生效。 */
+    private static final int SLASH_EFFECT_CAP = 20;
 
     public static boolean isAvailable() {
         return IntegrationContract.isSlashBladeIntegrationAvailable();

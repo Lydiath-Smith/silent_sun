@@ -226,6 +226,9 @@ extends SavedData {
             // 暴力清除反制：未到卸载超时但实体缺失。若所在 chunk 已加载（战斗区域仍活跃）→
             // 判定为被外部删除（在线清实体 / 停服删 entities 存档后重启加载）→ 用记录重建 Boss。
             // chunk 未加载 → 正常卸载，不强制加载，留待超时结算。
+            // 退场秩序化（2026-08-30）：合法离场（settled 标记）一律不重建——结算路径
+            // （settleBattle/leaveBattle/die）现在都先 clearBattleRecord（markSettled+remove），
+            // 残留只会是结算竞态且带 settled 标记，上方 L210 分支已清理。此处保持原重建窗口。
             if (!scanNow || since < 400L || r.rebuildCount >= 3) {
                 continue;
             }

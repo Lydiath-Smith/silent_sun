@@ -2115,6 +2115,10 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
 
     private void leaveBattle(ServerLevel serverLevel, Component farewellMsg, boolean setCooldown) {
         if (this.settlementDone) {
+            // 退场秩序化（2026-08-30）：同 settleBattle——已结算但实体未移除 → 兜底移除。
+            if (!this.isRemoved()) {
+                this.safeDiscard();
+            }
             return;
         }
         this.settlementDone = true;
@@ -2182,6 +2186,11 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     }
 
     public void remove(Entity.RemovalReason reason) {
+        // 退场秩序化（2026-08-30）：1.21.1 的 RemovalReason 仅 KILLED / DISCARDED 两值
+        // （无 UNLOAD_CHUNK——chunk 卸载走「chunk NBT 保存 + 实体列表清空」，不触发本覆写）。
+        // 因此本覆写只需放行 KILLED/DISCARDED 与 legitRemoval；其余原因（在线指令删实体等）
+        // 仍按防作弊判定拦截。卸载退场的误判源不在此处，而在账本重建链（见 settleBattle/
+        // leaveBattle/die 先标记 settled 的改动）。
         if (!(reason != Entity.RemovalReason.KILLED && reason != Entity.RemovalReason.DISCARDED || this.legitRemoval || this.level().isClientSide)) {
             Level level = this.level();
             if (level instanceof ServerLevel) {
@@ -2310,6 +2319,11 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             this.cleanupNearbyLivingAfterBattle(serverLevel);
             this.cleanupPlayersAfterBattle(serverLevel);
             this.clearBattleRecord(serverLevel);
+            // 退场秩序化（2026-08-30）：P1 未通关就被打死时，settlementDone 已在上方置 true，
+            // 若不 discard 会留下「已结算幽灵」——实体还在但所有后续 settleBattle/leaveBattle
+            // 被 settlementDone 短路，导致投票 no 离场失效、Boss 赖着不走、反复重启投票。
+            // 必须真正移除实体，让退场闭环。
+            this.discard();
             return;
         }
         if (this.phase == 2) {
@@ -2321,6 +2335,8 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             }
             serverLevel.playSound(null, this.blockPosition(), SoundEvents.WARDEN_SONIC_CHARGE, SoundSource.HOSTILE, 1.0f, 1.0f);
             serverLevel.playSound(null, this.blockPosition(), SoundEvents.WARDEN_DEATH, SoundSource.HOSTILE, 1.0f, 1.0f);
+            // 退场秩序化（2026-08-30）：先标记账本「已合法离场」再掉落，防掉落异常导致被误判重建。
+            this.clearBattleRecord(serverLevel);
             ArrayList<ItemStack> loot = new ArrayList<ItemStack>();
             loot.addAll(this.createPhase1Loot(serverLevel, false));
             loot.addAll(this.createPhase2Loot(serverLevel, true));
@@ -2341,10 +2357,14 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             this.cleanupNearbyLivingAfterBattle(serverLevel);
             this.cleanupPlayersAfterBattle(serverLevel);
             this.bossEvent.setVisible(false);
-            this.clearBattleRecord(serverLevel);
             this.discard();
             return;
         }
+        // 退场秩序化（2026-08-30）：先标记账本「已合法离场」再掉落——即使掉落/清理抛异常，
+        // 账本已是 settled，tickServer 只清理不重建（杜绝账本位置与击杀地相距很远时的误判复活）。
+        // super.die 放在 clearBattleRecord 之前是为了 vanilla 死亡动画正常触发；
+        // 账本标记先行保证退场顺序：先确认合法离场 → 再做后续。
+        this.clearBattleRecord(serverLevel);
         super.die(damageSource);
         includeDefeatBook = this.phase == 2;
         if (includeDefeatBook && this.isFinalKillerPlayer(damageSource)) {
@@ -2354,7 +2374,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         this.disableBossOutline(serverLevel);
         this.cleanupNearbyLivingAfterBattle(serverLevel);
         this.cleanupPlayersAfterBattle(serverLevel);
-        this.clearBattleRecord(serverLevel);
+        // 正常路径无显式 discard：super.die 走 vanilla 死亡流程自动移除；账本已 settled，不会被重建。
     }
 
     private boolean isFinalKillerPlayer(DamageSource damageSource) {
@@ -3856,8 +3876,14 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         }
         float epsilon = 0.001f;
         float lockPoint = low + 1.0f;
-        float min = this.titleIndex == titles.size() - 1 ? low + epsilon : lockPoint;
-        float clampHigh = SilentSunConfig.ALLOW_TITLE_LOCK_HEAL_REGRESSION.get() != false ? maxHealth : high - epsilon;
+        // 退场秩序化（2026-08-30）：锁血期间回血不应被压回锁血点——Boss 自身回血继续生效，
+        // 血量在 [lockPoint, 当前头衔段顶) 之间自然回升（第 3/4 条规范：从当前血量从下往上回，
+        // 不回到区间满值、不越过头衔段边界）。clamp 下限仅防血量被外力压到锁血点以下
+        // （≤0 由 setHealth/锁血流程另行处理），上限固定为当前头衔段顶 - ε。
+        // 原实现 min=lockPoint 会把回血逐 tick 压回锁血点（回血被完全吃掉）；原实现
+        // ALLOW_TITLE_LOCK_HEAL_REGRESSION=true 时上限为 maxHealth 会越段回血（跳阶段回血）。
+        float min = lockPoint - 1.0f;
+        float clampHigh = high - epsilon;
         float clamped = Mth.clamp(this.getHealth(), min, clampHigh);
         if (clamped != this.getHealth()) {
             this.setHealth(clamped);
@@ -4493,9 +4519,20 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
 
     private void settleBattle(ServerLevel serverLevel, long cooldownTicks, boolean dropPhase1Reward, boolean includeDefeatBook) {
         if (this.settlementDone) {
+            // 退场秩序化（2026-08-30）：settlementDone 已 true 说明本 Boss 已走过结算。
+            // 若实体仍未移除（历史幽灵 / 竞态残留），补一次兜底移除，避免「已结算但赖着不走」。
+            // 正常结算路径 settlementDone 与 safeDiscard 同 tick 完成，此分支仅防御。
+            if (!this.isRemoved()) {
+                this.safeDiscard();
+            }
             return;
         }
         this.settlementDone = true;
+        // 退场秩序化（2026-08-30）：先标记账本「已合法离场」再执行掉落等可能抛异常的步骤。
+        // 顺序颠倒（先 clearBattleRecord 再 dropPhase1Reward）能保证：即使掉落/音效/清理中
+        // 抛异常中断，账本记录也已是 settled——RediosBattleData.tickServer 只会清理残留、
+        // 绝不重建（「先确认是合法离场再做复活」，杜绝账本位置与击杀地相距很远时的误判复活）。
+        this.clearBattleRecord(serverLevel);
         this.restoreDarkStarSpecialBlocks(serverLevel);
         if (dropPhase1Reward) {
             this.dropPhase1Reward(serverLevel, includeDefeatBook);
@@ -4515,7 +4552,6 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         this.cleanupNearbyLivingAfterBattle(serverLevel);
         this.cleanupPlayersAfterBattle(serverLevel);
         this.bossEvent.setVisible(false);
-        this.clearBattleRecord(serverLevel);
         this.safeDiscard();
     }
 
