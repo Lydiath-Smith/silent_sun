@@ -2370,7 +2370,14 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         if (includeDefeatBook && this.isFinalKillerPlayer(damageSource)) {
             this.applySummonCooldown(serverLevel, (long)(SilentSunConfig.COOLDOWN_DAYS.get()).intValue() * 24000L);
         }
-        this.dropPhase1Reward(serverLevel, includeDefeatBook);
+        // 掉落潜影盒规范化（2026-08-30）：按 phase 分派——P1（一阶段停手/中途结算）→ P1 箱；
+        // P2（二阶段击杀）→ P2 箱。原实现 P2 也调 dropPhase1Reward（内部回退 P1 配置），
+        // 导致二阶段击杀掉成 P1 的箱子（箱子调用脱节）。
+        if (this.phase == 2) {
+            this.dropPhase2Reward(serverLevel, includeDefeatBook);
+        } else {
+            this.dropPhase1Reward(serverLevel, includeDefeatBook);
+        }
         this.disableBossOutline(serverLevel);
         this.cleanupNearbyLivingAfterBattle(serverLevel);
         this.cleanupPlayersAfterBattle(serverLevel);
@@ -4529,13 +4536,22 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         }
         this.settlementDone = true;
         // 退场秩序化（2026-08-30）：先标记账本「已合法离场」再执行掉落等可能抛异常的步骤。
-        // 顺序颠倒（先 clearBattleRecord 再 dropPhase1Reward）能保证：即使掉落/音效/清理中
-        // 抛异常中断，账本记录也已是 settled——RediosBattleData.tickServer 只会清理残留、
-        // 绝不重建（「先确认是合法离场再做复活」，杜绝账本位置与击杀地相距很远时的误判复活）。
+        // 顺序颠倒（先 clearBattleRecord 再掉落）能保证：即使掉落/音效/清理中抛异常中断，
+        // 账本记录也已是 settled——RediosBattleData.tickServer 只会清理残留、绝不重建
+        // （「先确认是合法离场再做复活」，杜绝账本位置与击杀地相距很远时的误判复活）。
         this.clearBattleRecord(serverLevel);
         this.restoreDarkStarSpecialBlocks(serverLevel);
         if (dropPhase1Reward) {
-            this.dropPhase1Reward(serverLevel, includeDefeatBook);
+            // 掉落潜影盒规范化（2026-08-30）：按当前 phase 分派箱子——
+            // P1（一阶段停手）→ dropPhase1Reward（BROWN 箱 + P1 唱片）；
+            // P2（二阶段击杀/计时）→ dropPhase2Reward（WHITE 箱 + P2 唱片 + 二阶段战利品）。
+            // 原实现统一调 dropPhase1Reward（其内部 phase==2 时回退 P1 配置），
+            // 导致二阶段击杀/计时掉落成 P1 的箱子——「箱子调用脱节」。
+            if (this.phase == 2) {
+                this.dropPhase2Reward(serverLevel, includeDefeatBook);
+            } else {
+                this.dropPhase1Reward(serverLevel, includeDefeatBook);
+            }
         }
         if (includeDefeatBook) {
             MutableComponent msg = Component.translatable("message.silent_sun.redios.defeat_book_farewell").withStyle(ChatFormatting.DARK_PURPLE);
@@ -4553,6 +4569,31 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         this.cleanupPlayersAfterBattle(serverLevel);
         this.bossEvent.setVisible(false);
         this.safeDiscard();
+    }
+
+    /** 二阶段掉落潜影盒（2026-08-30 规范化）：WHITE 箱 + P2 唱片 + 二阶段战利品（含灭却之日固定掉落）。
+     *  与 isVoidAllThingsActive 特例分支共用 createPhase2Loot 语义，但由本方法统一放箱与播报坐标。
+     *  outcome 固定 PHASE2_WIN：二阶段击杀/计时都是「二阶段胜利」，ensureMandatoryLoot 据此
+     *  补信标 + 钻石块 + 结局之书（includeDefeatBook 只影响书内容文案，不影响 outcome）。 */
+    private void dropPhase2Reward(ServerLevel serverLevel, boolean includeDefeatBook) {
+        ArrayList<ItemStack> loot = new ArrayList<ItemStack>();
+        loot.addAll(this.createPhase1Loot(serverLevel, false));
+        loot.addAll(this.createPhase2Loot(serverLevel, true));
+        this.ensureMandatoryLoot(loot, RediosBookOutcome.PHASE2_WIN);
+        if (loot.isEmpty()) {
+            return;
+        }
+        BlockPos placePos = this.findNearbyRewardPlacement(serverLevel);
+        boolean placed = false;
+        if (placePos != null) {
+            placed = ShulkerBoxUtil.placeShulkerBox(serverLevel, placePos, Blocks.WHITE_SHULKER_BOX.defaultBlockState(), loot, Component.translatable("container.silent_sun.redios_loot"));
+        }
+        if (!placed) {
+            ItemStack box = ShulkerBoxUtil.createShulkerBox(Items.WHITE_SHULKER_BOX, loot, Component.translatable("container.silent_sun.redios_loot"));
+            this.spawnAtLocation(box);
+            placePos = this.blockPosition();
+        }
+        this.notifyRewardCoordinates(serverLevel, placePos);
     }
 
     private void cleanupPlayersAfterBattle(ServerLevel serverLevel) {
