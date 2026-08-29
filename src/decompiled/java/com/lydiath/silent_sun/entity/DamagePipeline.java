@@ -47,6 +47,7 @@ public final class DamagePipeline {
 
     private static final DamagePipelineStage[] STAGES = {
         DamagePipeline::stageDirectKillGuard,
+        DamagePipeline::stageSelfDamageGuard,
         DamagePipeline::stagePhaseConfig,
         DamagePipeline::stageCreativeModeGuard,
         DamagePipeline::stageExpelledPlayerGuard,
@@ -111,6 +112,35 @@ public final class DamagePipeline {
             if ("generic_kill".equals(msgId) || "kill".equals(msgId) || "magic".equals(msgId)) {
                 return DamageResult.cancel();
             }
+        }
+        return DamageResult.proceed();
+    }
+
+    // ────────────── Stage 0.5: Self-damage guard ──────────────
+
+    /**
+     * 自伤豁免：Boss 被「自己的 slashblade 投射物」打到的伤害一律取消。
+     * <p>
+     * 2026-08-30 实测：slashblade 内部 combo 时间轴（tryTickBladeCombo 驱动）生成的剑气/刀光
+     * 在生成瞬间 shooter/owner 为空，slashblade 的 onHitEntity 用「实体自身」作伤害源结算
+     * （getShooter()==null → indirectMagic(实体, 实体)），密集命中时会把 Boss 自己「穿死」。
+     * 判定：directEntity 是 slashblade 实体（包名 mods.flammpfeil.slashblade.entity.）且
+     * 其 owner == Boss，或 source.getEntity() == Boss——都是 Boss 自己的武器误伤自己。
+     */
+    private static DamageResult stageSelfDamageGuard(DamageContext ctx) {
+        RediosEntity boss = ctx.boss;
+        if (boss.level().isClientSide || ctx.source == null) {
+            return DamageResult.proceed();
+        }
+        Entity direct = ctx.source.getDirectEntity();
+        Entity sourceEnt = ctx.source.getEntity();
+        if (direct instanceof net.minecraft.world.entity.projectile.Projectile projectile) {
+            // 投射物（slashblade 剑气/刀光等）的 owner == Boss → 自己的武器误伤自己。
+            if (projectile.getOwner() == boss || sourceEnt == boss) {
+                return DamageResult.cancel();
+            }
+        } else if (sourceEnt == boss) {
+            return DamageResult.cancel();
         }
         return DamageResult.proceed();
     }
