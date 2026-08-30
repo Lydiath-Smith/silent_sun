@@ -85,8 +85,10 @@ public final class IntegrationContract {
     static final String COMBO_STATE_TICK_ACTION_METHOD = "tickAction";
     /** slashblade 模组 id（ModList 版本探测用）：重锋 2.0.3 / Refix 2.0.3-0.2.3 */
     static final String SLASHBLADE_MOD_ID = "slashblade";
-    /** 重锋版 combo 卡死重置阈值：combo 状态连续停留超过该 tick 数（正常 SA 时间线 < 6s）视为卡死 */
-    static final int COMBO_STUCK_RESET_TICKS = 120;
+    /** 重锋版 combo 卡死重置阈值：combo 距上次回到 NONE/standby 超过该 tick 数视为卡死。
+     *  400 tick = 20s：合法长 SA（蓄力系多段 TimeoutNext 演出）均 < 20s，不会被误杀；
+     *  真卡死（getNext 环/永久停留不回 NONE）20s 后仍会被强制重置。 */
+    static final int COMBO_STUCK_RESET_TICKS = 400;
     /** Boss 刀刃强化 setter 名（底层写入 NBT 键 killCount / proudSoul / RepairCounter） */
     static final String ISLASH_BLADE_STATE_SET_KILL_COUNT_METHOD = "setKillCount";
     static final String ISLASH_BLADE_STATE_SET_PROUD_SOUL_COUNT_METHOD = "setProudSoulCount";
@@ -180,13 +182,16 @@ public final class IntegrationContract {
      *  false=重锋版/未知（默认带卡死检测，防御性）。 */
     private static volatile Boolean refixRuntime;
 
-    /** combo 卡死监控（重锋版）：key=caster，value=当前 combo 停留状态。WeakHashMap 防实体泄漏。 */
+    /** combo 卡死监控（重锋版）：key=caster，value=combo 活跃跟踪。WeakHashMap 防实体泄漏。
+     *  2026-09-01 改版：原「连续停留」检测有两大缺陷——① TimeoutNext 未超时 getNext 返回
+     *  「自己」，长 SA（>120 tick）被误杀中断结算；② getNext 环（A1→…→A5→A1）combo id 每
+     *  tick 变化，停留计数恒 0 检测失效。现改为「距上次回到 NONE/standby 的 tick」：正常 combo
+     *  总会回 standby 刷新计时，环/永久停留不回则超阈值被重置。 */
     private static final java.util.Map<LivingEntity, ComboStuckState> COMBO_STUCK_TRACKERS = new java.util.WeakHashMap<>();
 
-    /** 单个 caster 的 combo 停留状态 */
+    /** 单个 caster 的 combo 活跃跟踪：lastStandbyTick = 最近一次 combo 处于 NONE/standby 的 tickCount */
     private static final class ComboStuckState {
-        ResourceLocation lastComboId;
-        int stuckTicks;
+        int lastStandbyTick = -1;
     }
 
     /**
@@ -307,8 +312,12 @@ public final class IntegrationContract {
     private static volatile Method getSpecialEffectsMethod;
     private static volatile boolean reflectionInitialized;
     /** SA 注册表键集缓存：slash_arts 启动注册完成后基本不变，避免每次施放随机 SA
-     *  都反射 keySet + 拷贝 HashSet/ArrayList（中距离 SA 每 80~120 tick 一次）。 */
+     *  都反射 keySet + 拷贝 HashSet/ArrayList（中距离 SA 每 80~120 tick 一次）。
+     *  2026-09-01：加 TTL 定期刷新——运行时其他 mod（KubeJS 等）新注册的 SA 能收录进随机池。 */
     private static volatile List<Object> cachedSlashArtsKeys;
+    private static volatile long cachedSlashArtsKeysAt;
+    /** SA 键集缓存有效期：60s 后重新 keySet 收录新增 SA */
+    private static final long SLASH_ARTS_KEYS_TTL_MS = 60_000L;
 
     // ── Public API ──
 
@@ -470,9 +479,11 @@ public final class IntegrationContract {
         if (caster.getAttributeValue(Attributes.ATTACK_DAMAGE) <= 0.0) return;
         try {
             // 缓存 SA 注册表键集：slash_arts 启动注册完成后基本不变，避免每次施放
-            // 随机 SA 都反射 keySet + 拷贝 HashSet/ArrayList。
+            // 随机 SA 都反射 keySet + 拷贝 HashSet/ArrayList；TTL 过期重新 keySet，
+            // 收录运行时新注册的 SA（KubeJS 等）。
             List<Object> keyList = cachedSlashArtsKeys;
-            if (keyList == null) {
+            long now = System.currentTimeMillis();
+            if (keyList == null || (now - cachedSlashArtsKeysAt) > SLASH_ARTS_KEYS_TTL_MS) {
                 Object registry = slashArtsRegistry;
                 @SuppressWarnings("unchecked")
                 Set<Object> keys = new java.util.HashSet<>((Set<Object>) slashArtsRegistryKeySetMethod.invoke(registry));
@@ -480,6 +491,7 @@ public final class IntegrationContract {
                 keys.removeIf(k -> k instanceof ResourceLocation rl && SLASH_ARTS_NONE_ID.equals(rl));
                 keyList = new ArrayList<>(keys);
                 cachedSlashArtsKeys = keyList;
+                cachedSlashArtsKeysAt = now;
             }
             if (keyList.isEmpty()) {
                 LOG.warn("slash_arts registry is empty, cannot invoke random SA.");
@@ -706,24 +718,23 @@ public final class IntegrationContract {
                 if (cs != null) {
                     // 重锋版适配（2026-09-01）：combo 卡死检测。重锋版 combo 注册内容重写，
                     // 对 Mob 可能卡在活跃段回不到 NONE/standby → tickAction 每 tick 刷刀光，
-                    // 无攻击动作也瞬爆。连续停留超阈值强制 updateComboSeq(none) 重置回 standby。
-                    // Refix 版（历史 jar 验证正常）不做检测，保持原驱动节奏。
+                    // 无攻击动作也瞬爆。改为「距上次回 NONE/standby 超阈值」判定：
+                    // 正常 combo（普攻连击 A1→…→A5、SA 时间线）总会回到 standby 刷新计时；
+                    // getNext 环 / 永久停留不回 NONE 则超阈值被强制 updateComboSeq(none) 重置。
+                    // 阈值 400 tick 覆盖合法长 SA（TimeoutNext 未超时 getNext 返回自己，见
+                    // 研究文档 §9），Refix 版（历史 jar 验证正常）不做检测，保持原驱动节奏。
                     if (!isRefixRuntime()) {
                         ComboStuckState st = COMBO_STUCK_TRACKERS.computeIfAbsent(caster, k -> new ComboStuckState());
                         if (SLASH_ARTS_NONE_ID.equals(rl) || SLASH_BLADE_STANDBY_ID.equals(rl)) {
-                            st.lastComboId = null;
-                            st.stuckTicks = 0;
-                        } else if (!rl.equals(st.lastComboId)) {
-                            st.lastComboId = rl;
-                            st.stuckTicks = 0;
+                            st.lastStandbyTick = caster.tickCount;
                         } else {
-                            st.stuckTicks++;
-                            if (st.stuckTicks > COMBO_STUCK_RESET_TICKS) {
-                                LOG.warn("Slash blade combo stuck at {} for {} ticks (boss={}) — forcing reset to NONE",
-                                    rl, st.stuckTicks, caster.getName().getString());
+                            if (st.lastStandbyTick < 0) {
+                                st.lastStandbyTick = caster.tickCount;
+                            } else if (caster.tickCount - st.lastStandbyTick > COMBO_STUCK_RESET_TICKS) {
+                                LOG.warn("Slash blade combo not returning to NONE for {} ticks (boss={}, combo={}) — forcing reset",
+                                    caster.tickCount - st.lastStandbyTick, caster.getName().getString(), rl);
                                 updateComboSeqMethod.invoke(state, caster, SLASH_ARTS_NONE_ID);
-                                st.lastComboId = null;
-                                st.stuckTicks = 0;
+                                st.lastStandbyTick = caster.tickCount;
                                 return;
                             }
                         }
