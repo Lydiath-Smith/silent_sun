@@ -16,7 +16,7 @@ import java.util.EnumSet;
  * <p>
  * 反射调用通过 {@link IntegrationContract} 统一管理，具备日志输出和缓存刷新能力。
  * <p>
- * 近身（&lt;3 格）像玩家左键一样周期性推进普攻连击（progressCombo）；
+ * 近身（&lt;3 格）像玩家左键一样**按刀攻速**推进普攻连击（progressCombo，伪玩家设计）；
  * 中距离（3~15 格）从 slash_arts 注册表随机施放一个 SA，冷却 80~120 tick。
  * 与 Boss 自身技能不冲突：仅当距离合适且冷却归零时释放，
  * 其余时间交给 Boss 自己的 Goal 处理。
@@ -49,7 +49,8 @@ public class BladeAttackGoal extends Goal {
         // 首拍零冷却治理：四路攻击（近身连击/剑气/SA/幻影剑）给随机初值错峰，
         // 避免刀窗口开启第一个 tick 四路齐射导致斩击实体爆发。
         this.cooldown = 40 + boss.getRandom().nextInt(40);
-        this.comboCooldown = 10 + boss.getRandom().nextInt(8);
+        // 普攻首拍按刀攻速（伪玩家，2026-09-01）：灭刀断 4.0 → 5 tick，随激怒缩短
+        this.comboCooldown = this.redios.getAttackCooldownTicks();
         this.burstDriveCooldown = 20 + boss.getRandom().nextInt(10);
         this.phantomSwordCooldown = 30 + boss.getRandom().nextInt(20);
         ItemStack blade = IntegrationContract.tryEquipBlade(this.redios);
@@ -113,19 +114,19 @@ public class BladeAttackGoal extends Goal {
         }
 
         double dist = boss.distanceTo(target);
-        // 近身（<3 格）：像玩家左键一样周期性推进普攻连击（progressCombo）
+        // 近身（<3 格）：像玩家左键一样按攻速推进普攻连击（progressCombo）
         if (dist < 3.0) {
             if (comboCooldown <= 0) {
                 // D-断魂：拔刀剑攻击发起时统一补挂断魂（海天解锁时；低频率，防 amplifier 秒满）
                 if (this.redios != null) this.redios.markSoulSeverIfUnlocked(target);
-                // 普攻挥刀刀光：复刻玩家左键 combo_a1 的斩击轨迹
-                //（EntitySlashEffect，damage=0 纯视觉，伤害仍由近战 doHurtTarget 结算）。
-                IntegrationContract.trySpawnBossSlashEffect(boss, target);
-                // 推进 combo：updateComboSeq 内部无条件调 clickAction（A1 段攻击动作）。
+                // 推进 combo：updateComboSeq 内部无条件调 clickAction（A1 段攻击动作 = 玩家左键
+                // doSlash，刀光由此产出——伪玩家不额外直发刀光，2026-09-01 移除 trySpawnBossSlashEffect）。
                 IntegrationContract.tryProgressCombo(boss);
-                // 普攻频率（恢复历史）：10~18 tick（每秒约 1.1~1.4 次），不随攻速放大
-                //（历史 jar 对照：comboCooldown = 10 + rand(8)）。
-                comboCooldown = 10 + boss.getRandom().nextInt(8);
+                // 普攻频率（2026-09-01 伪玩家）：按刀攻速——灭刀断 4.0 → 5 tick/刀，
+                // 激怒加成仅原 20%（满层 1.6x → 3 tick 封顶），P2 失控疾驰 5 tick 固定，
+                // weakpoint 固定冷却（见 CombatStatModulator.attackCooldownTicks）。
+                // 之前 10+rand(8) 是双重驱动时代防爆发的临时节奏，去重后恢复攻速（设计稿 §3.1）。
+                comboCooldown = this.redios.getAttackCooldownTicks();
                 // 剑气跟随普通攻击：super_burst_drive 的剑气链路在灭却之日里被
                 // instanceof Player 检查挡掉（Boss 是 Mob），这里由 silent_sun 反射直发
                 // slashblade:drive 剑气，方向随 Boss 当前朝向（lookAt 已同步 yRot）。

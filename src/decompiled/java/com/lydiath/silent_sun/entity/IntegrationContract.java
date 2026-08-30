@@ -632,37 +632,6 @@ public final class IntegrationContract {
     }
 
     /**
-     * Boss 普攻挥刀刀光（视觉），等效玩家左键 combo_a1 的斩击轨迹。
-     * <p>
-     * 玩家左键点击 → clickAction = {@code AttackManager.doSlash(entity, -10, true, false, 0.44f)}
-     * → 生成 EntitySlashEffect 刀光。Mob 无 IInputState，连击只能停在 NONE/standby，
-     * {@code updateComboSeq} 跳入 combo_a1 时 clickAction 链路不可靠（BladeMotionEvent/
-     * DoSlashEvent 均可能被拦截），这里按 doSlash 同款参数反射直发刀光实体：
-     * 出生点 = 眼睛高度 3/4 + 朝向 0.3 格，A1(-10°)/A2(170°) 斩击角交替，
-     * 颜色取刀刃 getColorCode，damage=0 纯视觉（伤害仍由原版近战 doHurtTarget 结算，
-     * 避免 slashblade 刀光命中再结算一次造成双份伤害）。失败仅记日志，不影响普攻。
-     */
-    public static void trySpawnBossSlashEffect(LivingEntity caster, LivingEntity target) {
-        if (!ensureReflectionReady()) return;
-        try {
-            Level level = caster.level();
-            if (level.isClientSide()) return;
-            ItemStack blade = caster.getMainHandItem();
-            if (blade.isEmpty() || !isSlashBladeItem(blade.getItem())) return;
-            int color = bladeColorCode(blade);
-            // 出生点与玩家 doSlash 完全一致：眼睛高度 3/4 + 朝向 0.3 格
-            Vec3 pos = caster.position()
-                .add(0.0, caster.getEyeHeight() * 0.75, 0.0)
-                .add(caster.getLookAngle().scale(0.3));
-            // A1/A2 两段斩击角度交替，观感贴近玩家连打左键
-            float roll = caster.getRandom().nextBoolean() ? -10.0f : 170.0f;
-            spawnSlashEffect(caster, pos, roll, color, true, false, 0.0);
-        } catch (Exception e) {
-            LOG.warn("Failed to spawn boss slash effect (刀光) via reflection: {}", e.toString());
-        }
-    }
-
-    /**
      * Boss 普攻命中后触发灭却之日 triple_whammy SE（三连击）。
      * <p>
      * 灭却之日 {@code TripleWhammyEffect.onSlashBladeHit} 监听 SlashBladeEvent.HitEvent
