@@ -490,10 +490,9 @@ public final class IntegrationContract {
                 @SuppressWarnings("unchecked")
                 Set<Object> keys = new java.util.HashSet<>((Set<Object>) slashArtsRegistryKeySetMethod.invoke(registry));
                 // NeoForge 1.21.1：Registry.keySet() 返回 ResourceLocation（非 ResourceKey）。
-                // 2026-09-01：随机池 namespace 过滤——第三方拔刀剑附属 mod（foxextra/
-                // amazingshine/shinkubloodkatana）的特效密集型 SA 时间线每帧生成多条剑气+刀光，
-                // Boss 驱动时卡活跃段造成刀光洪峰；只保留配置允许的 namespace（默认
-                // slashblade 内置 + 灭却之日，config redios.bossSaAllowedNamespaces 可调）。
+                // 2026-09-01：随机池 namespace 过滤（黑名单）——狐月刀(foxextra)/天杀星刀
+                // (tianshaxing) 的 SA 有 SE 前提且 foxextra 时间线每帧多实体是刀光洪峰源，
+                // 默认排除；其余全进池（config redios.bossSaExcludedNamespaces 可调）。
                 keys.removeIf(k -> k instanceof ResourceLocation rl
                     && (!isSaAllowed(rl) || SLASH_ARTS_NONE_ID.equals(rl)));
                 keyList = new ArrayList<>(keys);
@@ -530,20 +529,21 @@ public final class IntegrationContract {
     }
 
     /**
-     * SA 随机池 namespace 过滤（2026-09-01）：只保留配置允许的 namespace。
+     * SA 随机池 namespace 过滤（2026-09-01，黑名单模式）：默认全放行，仅排除配置列出的
+     * namespace（config redios.bossSaExcludedNamespaces，默认 foxextra/tianshaxing）。
      * <p>
-     * 第三方拔刀剑附属 mod（foxextra / slashbladeamazingshine / shinkubloodkatana）注册的
-     * 特效密集型 SA，其 combo 时间线（TimeLineTickAction）每帧调 Drive.doSlash + 
-     * AttackManager.doSlash 生成多条剑气+刀光；Boss（Mob）驱动时 combo 卡活跃段回不到 NONE，
-     * tickAction 每 tick 刷实体 → 刀光洪峰（实测成千/秒）。随机池默认只保留 slashblade 内置
-     * + 灭却之日（config redios.bossSaAllowedNamespaces 可调），保持池内全随机。
+     * 狐月刀（foxextra）与天杀星刀（tianshaxing）的 SA 有 SE 前提（Boss 刀 miedao_duan 无对应
+     * SE 会放不出/异常）；且 foxextra 的 VoidSlashPlus 时间线（TimeLineTickAction）每帧调
+     * Drive.doSlash + AttackManager.doSlash 生成多条剑气+刀光，Boss 驱动时 combo 卡活跃段
+     * 回不到 NONE → tickAction 每 tick 刷实体 → 刀光洪峰（实测成千/秒）。其余第三方
+     * （amazingshine/shinkubloodkatana 等）无 SE 前提，保留进池，维持全随机。
      */
     static boolean isSaAllowed(ResourceLocation rl) {
         try {
-            return SilentSunConfig.BOSS_SA_ALLOWED_NAMESPACES.get().contains(rl.getNamespace());
+            return !SilentSunConfig.BOSS_SA_EXCLUDED_NAMESPACES.get().contains(rl.getNamespace());
         } catch (Exception e) {
-            // 配置读取失败兜底：只保留 slashblade 内置
-            return "slashblade".equals(rl.getNamespace());
+            // 配置读取失败兜底：全放行
+            return true;
         }
     }
 
