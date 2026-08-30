@@ -2,6 +2,8 @@ package com.lydiath.silent_sun.config;
 
 import net.neoforged.neoforge.common.ModConfigSpec;
 
+import java.util.List;
+
 public final class SilentSunConfig {
     private static final ModConfigSpec.Builder BUILDER = new ModConfigSpec.Builder();
 
@@ -199,6 +201,21 @@ public final class SilentSunConfig {
             "true（默认）= 使用自制分段紫黑血条（对齐原版槽位，不遮挡其它 Boss）。",
             "false = 使用原版默认 Boss 血条。")
         .define("redios.customBossBarEnabled", true);
+
+    // 拔刀剑 Boss 随机 SA 池（2026-09-01）：第三方拔刀剑附属 mod（foxextra / slashbladeamazingshine /
+    // shinkubloodkatana 等）注册的特效密集型 SA 时间线每帧生成多条剑气+刀光，Boss(Mob) 驱动时
+    // combo 卡活跃段回不到 NONE → tickAction 每 tick 刷实体 → 刀光洪峰。故随机池默认只保留
+    // slashblade 内置 + 灭却之日（Boss 刀 miedao_duan 语义一致）。加某 mod 的 SA 即把其 namespace 加进来。
+    public static final ModConfigSpec.ConfigValue<List<? extends String>> BOSS_SA_ALLOWED_NAMESPACES = BUILDER
+        .comment("Boss 随机施放 SA 时允许的注册表 namespace 列表。",
+            "默认 [slashblade, extinction_day_mod_1784441698]：内置 9 SA + 灭却之日 SA。",
+            "第三方拔刀剑附属 mod（foxextra/amazingshine/shinkubloodkatana 等）的特效密集型 SA",
+            "时间线每帧生成多条剑气/刀光，Boss(Mob) 驱动时卡活跃段造成实体洪峰，默认排除。",
+            "如需加入某 mod 的 SA，把其 namespace 加入此列表（如 foxextra）。",
+            "修改后最迟 60 秒生效（SA 键集缓存 TTL 到期自动重建）。")
+        .defineList("redios.bossSaAllowedNamespaces",
+            List.of("slashblade", "extinction_day_mod_1784441698"),
+            o -> o instanceof String);
 
     public static final ModConfigSpec SPEC = BUILDER.build();
 
