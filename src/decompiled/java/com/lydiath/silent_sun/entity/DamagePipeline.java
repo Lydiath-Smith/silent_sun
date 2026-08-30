@@ -668,11 +668,17 @@ public final class DamagePipeline {
         }
         if (boss.bossState == BossState.PHASE1_COMBAT && !atLastTitle
             && boss.getHealth() - ctx.amount < low) {
-            // 非 x.9：伤害打穿当前头衔段底 → 钳到段底 + 立即推进头衔（+1 + 重设锁血）。
-            // 逐格推进保证中间头衔锁血段不被跳过（BossFlag 逐个授予），也不被大伤害打死。
+            // 非 x.9：伤害打穿当前头衔段底 → 钳到段底（血不掉穿段底）。
+            // 2026-09-01：推进尊重锁血节奏——原 9afc91d「立即推进」被前置模组 9pass 断魂
+            // 高频触发暴露（soul_sever 每 tick 结算一次，无视无敌帧）：每 tick 打穿 → 每 tick
+            // 推进 = 快速跳阶段。改钳段底后仅当锁血已归零（titleLockTicks ≤ 0）才 advanceTitleFromDamage，
+            // 锁血中只钳不推，锁血到期由 updateTitle/tryForceAdvanceOnLockEnd 自然推进一格
+            //（每段至少 15s/30s，符合设计稿 §2.2「每个头衔都有锁血」）。
             boss.setHealth(low);
             boss.anticheat.markLegalHealthChange(low);
-            boss.advanceTitleFromDamage();
+            if (boss.titleLockTicks <= 0) {
+                boss.advanceTitleFromDamage();
+            }
             return DamageResult.cancel();
         }
         return DamageResult.proceed();
@@ -717,10 +723,13 @@ public final class DamagePipeline {
         }
         if (boss.bossState.isPhase2Combat() && !atLastTitle
             && boss.getHealth() - ctx.amount < low) {
-            // 非 x.9：伤害打穿当前头衔段底 → 钳到段底 + 立即推进头衔（+1 + 重设锁血）。
+            // 非 x.9：同 stagePhase1Lock——钳段底 + 推进尊重锁血节奏（2026-09-01，
+            // 防 9pass 断魂每 tick 打穿 → 每 tick 推进跳阶段）。
             boss.setHealth(low);
             boss.anticheat.markLegalHealthChange(low);
-            boss.advanceTitleFromDamage();
+            if (boss.titleLockTicks <= 0) {
+                boss.advanceTitleFromDamage();
+            }
             return DamageResult.cancel();
         }
         return DamageResult.proceed();

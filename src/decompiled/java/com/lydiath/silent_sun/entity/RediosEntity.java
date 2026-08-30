@@ -216,7 +216,8 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     private final ServerBossEvent bossEvent = new ServerBossEvent(Component.empty(), BossEvent.BossBarColor.PURPLE, BossEvent.BossBarOverlay.PROGRESS);
     int phase = 1;
     int titleIndex = 0;
-    private int titleLockTicks = 0;
+    /** 头衔锁血剩余 tick；包可见供 DamagePipeline 判断「锁血中不推进非 x.9 头衔」（2026-09-01）。 */
+    int titleLockTicks = 0;
     /** P2 濒死锁血已到期解除：到期后回到 PHASE2_COMBAT 等待玩家补刀，不再锁血。 */
     boolean pendingLockReleased = false;
     private int titleLockGraceTicks = 0;
@@ -2192,6 +2193,25 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             || phase2Last || this.bossState == BossState.PHASE2_PENDING)
             && health < 1.0f) {
             health = 1.0f;
+        }
+        // 非 x.9 段底钳制（2026-09-01）：前置模组 9pass 断魂（soul_sever 无视无敌帧，每 tick
+        // 结算）的「差额 setHealth 直扣」绕过 DamagePipeline——这里兜底：COMBAT 非最后头衔且
+        // 血量下降时，若低于当前头衔段底则钳回段底（推进由管线/updateTitle 按锁血节奏负责，
+        // setHealth 只保底不推进）。回血（setHeal → setHealth 上调）与系统推进（tryForceAdvanceOnLockEnd
+        // 压血至新段内）不受影响；P2 解除锁血后（pendingLockReleased）不再钳，可被补刀击杀。
+        if (health < this.getHealth() && !phase1Last && !phase2Last
+            && !this.pendingLockReleased
+            && (this.bossState == BossState.PHASE1_COMBAT || this.bossState == BossState.PHASE2_COMBAT)) {
+            List<Component> titles = this.phase == 1 ? PHASE1_TITLES : PHASE2_TITLES;
+            float maxHealth = this.getMaxHealth();
+            float segment = maxHealth / (float) titles.size();
+            float low = maxHealth - (float) (this.titleIndex + 1) * segment;
+            if (low < 0.0f) {
+                low = 0.0f;
+            }
+            if (health < low) {
+                health = low;
+            }
         }
         super.setHealth(health);
     }
