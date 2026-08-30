@@ -2175,6 +2175,18 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             }
             return;
         }
+        // 濒死锁血保底（2026-08-30 用户规范）：封锁（生效期间）= COMBAT + PENDING
+        //（即 1.9/2.9 头衔锁血时间未结束前）；解除（失效条件）= 1.9/2.9 锁血时间结束
+        // → VOTE/TRANSITION（锁血已解除，不再钳底）。生效期间最低血量 1、不允许 ≤0——
+        // 即使前置模组（灭却之日）断魂 9pass 直接改血（非 hurt 链路），也钳制到 1 血。
+        // 锁血期间回血/改血到 >1 允许（保底不封顶）。
+        if ((this.bossState == BossState.PHASE1_COMBAT || this.bossState == BossState.PHASE1_PENDING)
+            && health < 1.0f) {
+            health = 1.0f;
+        } else if ((this.bossState == BossState.PHASE2_COMBAT || this.bossState == BossState.PHASE2_PENDING)
+            && !this.pendingLockReleased && health < 1.0f) {
+            health = 1.0f;
+        }
         super.setHealth(health);
     }
 
