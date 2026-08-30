@@ -88,15 +88,14 @@ public class BladeAttackGoal extends Goal {
         // lookAt(360,360) 立即把 yRot/xRot 指向目标，保证幻影剑等特效朝敌人发射。
         boss.lookAt(target, 360.0F, 360.0F);
 
-        // 斩击实体与拔刀剑攻击动作绑定（2026-08-30 用户裁决）：
-        // 研究文档《slashblade_boss_sa_research.md》§0/§2/§3 结论——
-        //   SlashArts.doArts(Success)+updateComboSeq 内部无条件调 clickAction（一次施放=一次
-        //   攻击动作=一次实体产出）；Boss 不需要 combo 状态机持续推进（tickAction 每 tick 驱动
-        //   是给玩家连段用的）。因此**不再驱动 tryTickBladeCombo（tickAction 独立刷实体）**——
-        //   它是「过多斩击实体」的来源（每 7 tick 与普攻直发叠加）。
-        // 斩击实体全部绑定攻击动作：
-        //   近身普攻 → trySpawnBossSlashEffect（刀光）+ tryProgressCombo（A1 clickAction）+ trySpawnBurstDrive（剑气）；
-        //   中距 SA  → tryInvokeRandomSA（doArts+updateComboSeq → clickAction 产出 SA 实体）。
+        // combo 状态机推进（恢复历史节奏，2026-08-30 对照 libs 历史 jar）：
+        // 历史版本每 tick 无条件调 tryTickBladeCombo 推进 slashblade combo 状态机
+        // （NONE/standby 时 tickAction 不产实体），且 comboCooldown = 10+rand(8)
+        // 限制普攻频率——当时无实体爆发问题。
+        // 后来把 comboCooldown 错改为攻速（3~6 tick）→ 普攻频率翻 3 倍 → 每次挥刀
+        // （clickAction→doSlash）生成 slash_effect 叠加 → 实体爆发。
+        // 修复：恢复历史节奏（comboCooldown=10+rand(8)）+ 恢复每 tick tryTickBladeCombo。
+        IntegrationContract.tryTickBladeCombo(boss);
 
         boss.getLookControl().setLookAt(target);
 
@@ -122,10 +121,11 @@ public class BladeAttackGoal extends Goal {
                 // 普攻挥刀刀光：复刻玩家左键 combo_a1 的斩击轨迹
                 //（EntitySlashEffect，damage=0 纯视觉，伤害仍由近战 doHurtTarget 结算）。
                 IntegrationContract.trySpawnBossSlashEffect(boss, target);
-                // 推进 combo：updateComboSeq 内部无条件调 clickAction（A1 段攻击动作，
-                // 飞行道具/伤害在此产出）——Boss 显式施放直达目标状态，无需 tickAction。
+                // 推进 combo：updateComboSeq 内部无条件调 clickAction（A1 段攻击动作）。
                 IntegrationContract.tryProgressCombo(boss);
-                comboCooldown = this.redios != null ? this.redios.getAttackCooldownTicks() : 10 + boss.getRandom().nextInt(8);
+                // 普攻频率（恢复历史）：10~18 tick（每秒约 1.1~1.4 次），不随攻速放大
+                //（历史 jar 对照：comboCooldown = 10 + rand(8)）。
+                comboCooldown = 10 + boss.getRandom().nextInt(8);
                 // 剑气跟随普通攻击：super_burst_drive 的剑气链路在灭却之日里被
                 // instanceof Player 检查挡掉（Boss 是 Mob），这里由 silent_sun 反射直发
                 // slashblade:drive 剑气，方向随 Boss 当前朝向（lookAt 已同步 yRot）。
@@ -137,7 +137,6 @@ public class BladeAttackGoal extends Goal {
         } else if (dist <= 15.0 && cooldown <= 0) {
             // 中距离（3~15 格）：从 slash_arts 注册表随机施放一个 SA
             if (this.redios != null) this.redios.markSoulSeverIfUnlocked(target);
-            // doArts(Success)+updateComboSeq → clickAction：SA 的攻击实体随施放动作一次产出。
             IntegrationContract.tryInvokeRandomSA(boss);
             cooldown = 80 + boss.getRandom().nextInt(40);
         }
