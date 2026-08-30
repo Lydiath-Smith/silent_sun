@@ -83,6 +83,10 @@ public final class IntegrationContract {
     static final String COMBO_STATE_REGISTRY_GET_METHOD = "get";
     static final String COMBO_STATE_CLASS = "mods.flammpfeil.slashblade.registry.combo.ComboState";
     static final String COMBO_STATE_TICK_ACTION_METHOD = "tickAction";
+    /** slashblade 模组 id（ModList 版本探测用）：重锋 2.0.3 / Refix 2.0.3-0.2.3 */
+    static final String SLASHBLADE_MOD_ID = "slashblade";
+    /** 重锋版 combo 卡死重置阈值：combo 状态连续停留超过该 tick 数（正常 SA 时间线 < 6s）视为卡死 */
+    static final int COMBO_STUCK_RESET_TICKS = 120;
     /** Boss 刀刃强化 setter 名（底层写入 NBT 键 killCount / proudSoul / RepairCounter） */
     static final String ISLASH_BLADE_STATE_SET_KILL_COUNT_METHOD = "setKillCount";
     static final String ISLASH_BLADE_STATE_SET_PROUD_SOUL_COUNT_METHOD = "setProudSoulCount";
@@ -169,6 +173,49 @@ public final class IntegrationContract {
     private static final long AVAILABILITY_CACHE_TTL_MS = 30_000L; // 30s TTL
     /** Boss 刀刃强化日志只打印一次，避免每次重装配（刀窗口逐 tick 触发）刷屏。 */
     private static volatile boolean bossBladeStatsLogged = false;
+
+    // ── slashblade 版本探测 + combo 卡死监控（重锋/Refix 运行时差异适配，2026-09-01）──
+
+    /** null=未探测；true=Refix 版（2.0.3-0.2.3，历史 jar 验证无卡死，不做卡死检测）；
+     *  false=重锋版/未知（默认带卡死检测，防御性）。 */
+    private static volatile Boolean refixRuntime;
+
+    /** combo 卡死监控（重锋版）：key=caster，value=当前 combo 停留状态。WeakHashMap 防实体泄漏。 */
+    private static final java.util.Map<LivingEntity, ComboStuckState> COMBO_STUCK_TRACKERS = new java.util.WeakHashMap<>();
+
+    /** 单个 caster 的 combo 停留状态 */
+    private static final class ComboStuckState {
+        ResourceLocation lastComboId;
+        int stuckTicks;
+    }
+
+    /**
+     * 探测 slashblade 运行时版本：Refix（2.0.3-0.2.3）返回 true，重锋（2.0.3）/未知返回 false。
+     * <p>
+     * 字节码对比结论（2026-09-01）：两版 progressCombo/getNext 逐指令一致，唯一实质差异是
+     * ComboState$TimeLineTickAction 的 lastProcessedTick 存储——Refix 存实体数据（实体独立），
+     * 重锋是实例字段（ComboState 注册表单例全实体共享），且重锋 combo 注册内容重写（238+ lambdas
+     * vs Refix 122+）——combo 对 Mob 可能卡活跃段回不到 NONE/standby，tickAction 每 tick 刷刀光。
+     * Refix 版历史 jar 验证无此问题，不做卡死检测。
+     */
+    private static boolean isRefixRuntime() {
+        Boolean cached = refixRuntime;
+        if (cached != null) return cached;
+        boolean refix = false;
+        try {
+            var container = net.neoforged.fml.ModList.get().getModContainerById(SLASHBLADE_MOD_ID);
+            if (container.isPresent()) {
+                String version = container.get().getModInfo().getVersion().toString();
+                // Refix 版本号形如 "2.0.3-0.2.3"（带补丁后缀），重锋形如 "2.0.3"
+                refix = version != null && version.contains("0.2.3");
+            }
+        } catch (Throwable t) {
+            // 探测失败默认重锋模式（带卡死检测，防御性）；Refix 正常流程永不触发检测
+            LOG.warn("Failed to detect slashblade version, default to 重锋 mode (combo stuck guard active): {}", t.toString());
+        }
+        refixRuntime = refix;
+        return refix;
+    }
 
     // ── Reflection cache ──
 
@@ -657,6 +704,30 @@ public final class IntegrationContract {
                 }
                 Object cs = comboStateRegistryGetMethod.invoke(comboStateRegistry, rl);
                 if (cs != null) {
+                    // 重锋版适配（2026-09-01）：combo 卡死检测。重锋版 combo 注册内容重写，
+                    // 对 Mob 可能卡在活跃段回不到 NONE/standby → tickAction 每 tick 刷刀光，
+                    // 无攻击动作也瞬爆。连续停留超阈值强制 updateComboSeq(none) 重置回 standby。
+                    // Refix 版（历史 jar 验证正常）不做检测，保持原驱动节奏。
+                    if (!isRefixRuntime()) {
+                        ComboStuckState st = COMBO_STUCK_TRACKERS.computeIfAbsent(caster, k -> new ComboStuckState());
+                        if (SLASH_ARTS_NONE_ID.equals(rl) || SLASH_BLADE_STANDBY_ID.equals(rl)) {
+                            st.lastComboId = null;
+                            st.stuckTicks = 0;
+                        } else if (!rl.equals(st.lastComboId)) {
+                            st.lastComboId = rl;
+                            st.stuckTicks = 0;
+                        } else {
+                            st.stuckTicks++;
+                            if (st.stuckTicks > COMBO_STUCK_RESET_TICKS) {
+                                LOG.warn("Slash blade combo stuck at {} for {} ticks (boss={}) — forcing reset to NONE",
+                                    rl, st.stuckTicks, caster.getName().getString());
+                                updateComboSeqMethod.invoke(state, caster, SLASH_ARTS_NONE_ID);
+                                st.lastComboId = null;
+                                st.stuckTicks = 0;
+                                return;
+                            }
+                        }
+                    }
                     comboStateTickActionMethod.invoke(cs, caster);
                 }
             }
@@ -1213,7 +1284,7 @@ public final class IntegrationContract {
      * damage=0 纯视觉（KnockBacks.cancel ordinal=0 无击退）。
      * <p>
      * 2026-08-30：刀光速率的源头限速在 BladeAttackGoal 的 combo 驱动间隔（≥7 tick），
-     * 本方法不额外丢弃；保留 isSlashEffectEntity 供存量护栏查询。
+     * 本方法不额外丢弃。
      */
     private static void spawnSlashEffect(LivingEntity owner, Vec3 pos, float roll, int color,
                                          boolean mute, boolean critical, double damage) {
