@@ -3894,16 +3894,16 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             low = 0.0f;
         }
         float epsilon = 0.001f;
-        float lockPoint = low + 1.0f;
-        // 退场秩序化（2026-08-30）：锁血期间回血不应被压回锁血点——Boss 自身回血继续生效，
-        // 血量在 [lockPoint, 当前头衔段顶) 之间自然回升（第 3/4 条规范：从当前血量从下往上回，
-        // 不回到区间满值、不越过头衔段边界）。clamp 下限仅防血量被外力压到锁血点以下
-        // （≤0 由 setHealth/锁血流程另行处理），上限固定为当前头衔段顶 - ε。
-        // 原实现 min=lockPoint 会把回血逐 tick 压回锁血点（回血被完全吃掉）；原实现
-        // ALLOW_TITLE_LOCK_HEAL_REGRESSION=true 时上限为 maxHealth 会越段回血（跳阶段回血）。
-        float min = lockPoint - 1.0f;
+        // 头衔回退理想场景（2026-08-30 用户规范）：
+        //   1.9/2.9 濒死锁血到期 → 自我恢复回血到 201（1.8/2.8 段）→ 回退头衔重新锁血，
+        //   血量应保持 201（不重置、不抬到段底）。
+        // clamp 职责仅「回血不越过头衔段顶」（防跳阶段回血）；**下限不抬段内血量**——
+        // 段内（如 201 在 [1600,1800) 段内？否——201 < 1600 实为「段底下方」，见下）：
+        // 血量低于当前段底（如回退后 201 低于 1.8 段底 1600）说明回退判定与段区间不一致，
+        // 此时保持原值，不强行抬到段底（伤害锁底由 stagePhase1Lock/stagePhase2Pending 与
+        // setHealth 钳底负责，clamp 只管回血上限）。
         float clampHigh = high - epsilon;
-        float clamped = Mth.clamp(this.getHealth(), min, clampHigh);
+        float clamped = Math.min(this.getHealth(), clampHigh);
         if (clamped != this.getHealth()) {
             this.setHealth(clamped);
         }
