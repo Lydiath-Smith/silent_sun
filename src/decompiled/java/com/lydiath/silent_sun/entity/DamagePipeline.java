@@ -121,7 +121,8 @@ public final class DamagePipeline {
     /**
      * 自伤豁免：Boss 被「自己的 slashblade 投射物」打到的伤害一律取消。
      * <p>
-     * 2026-08-30 实测：slashblade 内部 combo 时间轴（tryTickBladeCombo 驱动）生成的剑气/刀光
+     * 2026-08-30 实测：slashblade 内部 combo 时间轴（ItemSlashBlade.inventoryTick 对持刀 Mob
+     * 每 tick 驱动 tickAction，2026-09-01 确认）生成的剑气/刀光
      * 在生成瞬间 shooter/owner 为空，slashblade 的 onHitEntity 用「实体自身」作伤害源结算
      * （getShooter()==null → indirectMagic(实体, 实体)），密集命中时会把 Boss 自己「穿死」。
      * 判定：directEntity 是 slashblade 实体（包名 mods.flammpfeil.slashblade.entity.）且

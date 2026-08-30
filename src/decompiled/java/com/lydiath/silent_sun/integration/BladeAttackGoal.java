@@ -88,14 +88,14 @@ public class BladeAttackGoal extends Goal {
         // lookAt(360,360) 立即把 yRot/xRot 指向目标，保证幻影剑等特效朝敌人发射。
         boss.lookAt(target, 360.0F, 360.0F);
 
-        // combo 状态机推进（恢复历史节奏，2026-08-30 对照 libs 历史 jar）：
-        // 历史版本每 tick 无条件调 tryTickBladeCombo 推进 slashblade combo 状态机
-        // （NONE/standby 时 tickAction 不产实体），且 comboCooldown = 10+rand(8)
-        // 限制普攻频率——当时无实体爆发问题。
-        // 后来把 comboCooldown 错改为攻速（3~6 tick）→ 普攻频率翻 3 倍 → 每次挥刀
-        // （clickAction→doSlash）生成 slash_effect 叠加 → 实体爆发。
-        // 修复：恢复历史节奏（comboCooldown=10+rand(8)）+ 恢复每 tick tryTickBladeCombo。
-        IntegrationContract.tryTickBladeCombo(boss);
+        // combo 状态机驱动（2026-09-01 去重）：
+        // slashblade（重锋 2.0.3/2.0.7、Refix 三版一致）ItemSlashBlade.inventoryTick 对持刀的
+        // 任意 LivingEntity（含 Boss Mob）每 tick 自己驱动 resolvCurrentComboState + tickAction
+        //（反编译确认，isInMainhand 对 Mob 主手成立）——我们不再手动驱动 tickAction，否则
+        // 双重驱动 → tickAction 每 tick 两次 → 刀光翻倍（"刚切刀准备攻击就有刀光"）。
+        // 这里只保留 combo 卡死守卫：combo 距上次回 NONE/standby 超阈值（400 tick）强制重置，
+        // 防重锋版 combo 卡活跃段无限刷刀光。近身普攻频率仍由 comboCooldown = 10 + rand(8) 控制。
+        IntegrationContract.tryTickBladeComboStuckGuard(boss);
 
         boss.getLookControl().setLookAt(target);
 

@@ -226,10 +226,6 @@ public final class IntegrationContract {
 
     // ── Reflection cache ──
 
-    /** 2026-08-12：不兼容非玩家实体的 combo 黑名单（如 foxextra Thrust 强转 Player）。
-     *  Boss 每 tick 驱动 combo 时，命中黑名单直接跳过，避免每 tick 抛 ClassCastException 刷日志。 */
-    private static final java.util.Set<ResourceLocation> INCOMPATIBLE_COMBOS = java.util.concurrent.ConcurrentHashMap.newKeySet();
-
     private static volatile Object miedaoPrototype;
     private static volatile Method miedaoGetMethod;
     private static volatile Class<?> slashBladeItemClass;
@@ -553,7 +549,8 @@ public final class IntegrationContract {
      * 反射调用 {@code ISlashBladeState.progressCombo(LivingEntity)}：基于当前 combo 的
      * getNext() 推演下一段 → updateComboSeq → clickAction（实际攻击动作）。连击链走到尽头
      * 自动回到 NONE，下次调用从第一段重新开始——与玩家连打左键完全一致。
-     * A3/A4/A5 的 TimeLineTickAction 由 {@link #tryTickBladeCombo(LivingEntity)} 每 tick 驱动。
+     * A3/A4/A5 的 TimeLineTickAction 由 slashblade ItemSlashBlade.inventoryTick 对持刀 Mob
+     * 每 tick 驱动（2026-09-01 确认，详见 tryTickBladeComboStuckGuard 注释）。
      */
     public static void tryProgressCombo(LivingEntity caster) {
         if (!ensureReflectionReady()) return;
@@ -707,23 +704,19 @@ public final class IntegrationContract {
     }
 
     /**
-     * 每 tick 驱动拔刀剑 ComboState 生命周期（Boss 专用，每 tick 调用一次）。
+     * Boss 拔刀剑 combo 卡死守卫（每 tick 调用，2026-09-01 改版）。
      * <p>
-     * 玩家手里这条链由 {@code ItemSlashBlade.inventoryTick} 每 tick 驱动：
-     * {@code resolvCurrentComboState(living)}（处理超时迁移）→ {@code ComboState.tickAction(living)}
-     * （执行 TimeLineTickAction——剑气 EntityDrive / 斩击 EntitySlashEffect / 幻影剑 SummonedSword
-     * 等特效与攻击实体都在这里生成）。Mob 没有物品栏，inventoryTick 不会被调用，
-     * 因此 Boss 放 SA / 连击只有一次性 clickAction 和动画，剑气、斩击、幻影剑全部缺失——
-     * 这里手动补上同一条驱动链，与玩家完全一致。
+     * 原 {@code tryTickBladeCombo} 每 tick 手动驱动 {@code resolvCurrentComboState + tickAction}；
+     * 反编译确认 slashblade（重锋 2.0.3/2.0.7、Refix 三版一致）的 {@code ItemSlashBlade.inventoryTick}
+     * 对持刀 Mob 每 tick 自己驱动同一条链（resolvCurrentComboState 超时迁移 + isInMainhand 时
+     * tickAction 执行 TimeLineTickAction）——我们重复驱动 = 刀光翻倍（"刚切刀就有刀光"）。
+     * 故 tickAction 驱动交给 slashblade，这里只保留 combo 卡死守卫：
+     * combo 距上次回 NONE/standby 超阈值（400 tick = 20s）视为卡死（重锋版 combo 注册内容重写，
+     * 对 Mob 可能卡活跃段回不到 NONE → tickAction 每 tick 刷刀光），强制 updateComboSeq(none)
+     * 重置回 standby。Refix 版（历史 jar 验证正常）不做检测。
      */
-    public static void tryTickBladeCombo(LivingEntity caster) {
+    public static void tryTickBladeComboStuckGuard(LivingEntity caster) {
         if (!ensureReflectionReady()) return;
-        // 2026-08-15：与 trySpawnBurstDrive 一致——攻击力 ≤ 0 时不驱动 combo tickAction。
-        // ComboState.tickAction（TimeLineTickAction）会生成 isCritical=true 的 EntityDrive，
-        // 负伤害命中时其 onHitEntity 暴击分支 random.nextInt(ceil(负)/2+2) 抛
-        // "Bound must be positive" 直接崩服。虚弱期本就该削弱输出，这里直接跳过。
-        if (caster.getAttributeValue(Attributes.ATTACK_DAMAGE) <= 0.0) return;
-        ResourceLocation rl = null;
         try {
             ItemStack blade = caster.getMainHandItem();
             if (blade.isEmpty() || !isSlashBladeItem(blade.getItem())) return;
@@ -734,55 +727,30 @@ public final class IntegrationContract {
                 if (!(loc instanceof ResourceLocation r)) {
                     return;
                 }
-                rl = r;
-                // 2026-08-12：黑名单内 combo 直接跳过（已知不兼容非玩家实体的 SA）
-                if (INCOMPATIBLE_COMBOS.contains(rl)) {
-                    return;
-                }
-                Object cs = comboStateRegistryGetMethod.invoke(comboStateRegistry, rl);
-                if (cs != null) {
-                    // 重锋版适配（2026-09-01）：combo 卡死检测。重锋版 combo 注册内容重写，
-                    // 对 Mob 可能卡在活跃段回不到 NONE/standby → tickAction 每 tick 刷刀光，
-                    // 无攻击动作也瞬爆。改为「距上次回 NONE/standby 超阈值」判定：
-                    // 正常 combo（普攻连击 A1→…→A5、SA 时间线）总会回到 standby 刷新计时；
-                    // getNext 环 / 永久停留不回 NONE 则超阈值被强制 updateComboSeq(none) 重置。
-                    // 阈值 400 tick 覆盖合法长 SA（TimeoutNext 未超时 getNext 返回自己，见
-                    // 研究文档 §9），Refix 版（历史 jar 验证正常）不做检测，保持原驱动节奏。
-                    if (!isRefixRuntime()) {
-                        ComboStuckState st = COMBO_STUCK_TRACKERS.computeIfAbsent(caster, k -> new ComboStuckState());
-                        if (SLASH_ARTS_NONE_ID.equals(rl) || SLASH_BLADE_STANDBY_ID.equals(rl)) {
+                ResourceLocation rl = r;
+                // 重锋版适配（2026-09-01）：combo 卡死检测。「距上次回 NONE/standby 超阈值」判定：
+                // 正常 combo（普攻连击 A1→…→A5、SA 时间线）总会回到 standby 刷新计时；
+                // getNext 环 / 永久停留不回 NONE 则超阈值被强制 updateComboSeq(none) 重置。
+                // 阈值 400 tick 覆盖合法长 SA（TimeoutNext 未超时 getNext 返回自己，见研究文档 §9）。
+                if (!isRefixRuntime()) {
+                    ComboStuckState st = COMBO_STUCK_TRACKERS.computeIfAbsent(caster, k -> new ComboStuckState());
+                    if (SLASH_ARTS_NONE_ID.equals(rl) || SLASH_BLADE_STANDBY_ID.equals(rl)) {
+                        st.lastStandbyTick = caster.tickCount;
+                    } else {
+                        if (st.lastStandbyTick < 0) {
                             st.lastStandbyTick = caster.tickCount;
-                        } else {
-                            if (st.lastStandbyTick < 0) {
-                                st.lastStandbyTick = caster.tickCount;
-                            } else if (caster.tickCount - st.lastStandbyTick > COMBO_STUCK_RESET_TICKS) {
-                                LOG.warn("Slash blade combo not returning to NONE for {} ticks (boss={}, combo={}) — forcing reset",
-                                    caster.tickCount - st.lastStandbyTick, caster.getName().getString(), rl);
-                                updateComboSeqMethod.invoke(state, caster, SLASH_ARTS_NONE_ID);
-                                st.lastStandbyTick = caster.tickCount;
-                                return;
-                            }
+                        } else if (caster.tickCount - st.lastStandbyTick > COMBO_STUCK_RESET_TICKS) {
+                            LOG.warn("Slash blade combo not returning to NONE for {} ticks (boss={}, combo={}) — forcing reset",
+                                caster.tickCount - st.lastStandbyTick, caster.getName().getString(), rl);
+                            updateComboSeqMethod.invoke(state, caster, SLASH_ARTS_NONE_ID);
+                            st.lastStandbyTick = caster.tickCount;
+                            return;
                         }
                     }
-                    comboStateTickActionMethod.invoke(cs, caster);
                 }
             }
-        } catch (InvocationTargetException e) {
-            // InvocationTargetException 是 slashblade 内部逻辑抛出的真实异常的包装，
-            // 只打印外层 toString 看不到根因。这里打印 cause 完整堆栈，便于定位
-            // （例如某个 combo 的 TimeLineTickAction 在非玩家实体上触发的异常）。
-            Throwable cause = e.getCause() != null ? e.getCause() : e;
-            // 2026-08-12：个别第三方 SA（如 foxextra Thrust）在 TimeLineTickAction 里把
-            // LivingEntity 强转 Player——Boss（Mob）驱动该类 combo 会每 tick 抛
-            // ClassCastException 刷日志且该 combo 特效全部中断。记录后跳过，避免持续污染日志。
-            if (cause instanceof ClassCastException && rl != null) {
-                INCOMPATIBLE_COMBOS.add(rl);
-                LOG.warn("Disabled slash blade combo {} for non-player entity (incompatible SA): {}", rl, cause.toString());
-            } else {
-                LOG.warn("Failed to tick slash blade combo via reflection (cause):", cause);
-            }
         } catch (Exception e) {
-            LOG.warn("Failed to tick slash blade combo via reflection: {}", e.toString());
+            LOG.warn("Failed to check slash blade combo stuck via reflection: {}", e.toString());
         }
     }
 
