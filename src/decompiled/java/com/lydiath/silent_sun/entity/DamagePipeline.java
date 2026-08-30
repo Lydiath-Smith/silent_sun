@@ -633,23 +633,27 @@ public final class DamagePipeline {
         if (boss.level().isClientSide) {
             return DamageResult.proceed();
         }
-        // 一阶段濒死锁血（2026-08-30 用户规范）：
-        //   封锁（生效期间）：COMBAT 与 PENDING 全程生效——最低血量 1、允许 ≥1、不允许 ≤0；
-        //                    期间回血/改血到 >1 允许（保底不封顶，自我恢复照常）。
-        //   解除（失效条件）：phase1.9 头衔锁血时间结束（titleLockTicks 归零 → onPendingLockExpired
-        //                    → beginPhase2Choice 投票）。
-        //   非 x.9 大伤害处理（2026-08-30 用户裁决「头衔锁血优先」）：非 1.9 头衔时大伤害
-        //     **不得直接触发濒死锁血**（不 setHealth(1)、不进 PENDING）——交给 updateTitle
-        //     逐格 +1 推进（每次重设头衔锁血），保证中间头衔锁血段不被跳过（不跳阶段）。
-        //   x.9（1.9）濒死：才允许锁 1 血进 PENDING；PENDING 期间继续保底防 9pass 穿防。
+        // 一阶段锁血（2026-08-30 用户规范）：
+        //   x.9（1.9）濒死锁血：COMBAT 最后头衔 + PENDING 全程生效——最低血量 1、允许 ≥1、
+        //     不允许 ≤0；回血/改血到 >1 允许（保底不封顶）。解除 = 1.9 锁血时间结束。
+        //   非 x.9 头衔锁血（用户裁决「钳在头衔段底，逐格推进」）：大伤害打到段底以下 →
+        //     钳在当前头衔段底 + 立即推进头衔（titleIndex+1 + 重设锁血），不锁 1 血、不跳段，
+        //     保证中间头衔逐格走完（BossFlag 逐个授予），且不被一次大伤害直接打死。
+        if (!boss.bossState.isPhase1Combat() && boss.bossState != BossState.PHASE1_PENDING) {
+            return DamageResult.proceed();
+        }
         boolean atLastTitle = boss.titleIndex == RediosEntity.PHASE1_TITLES.size() - 1;
-        if (boss.bossState.isPhase1Combat() && atLastTitle
+        float segment = boss.getMaxHealth() / (float) RediosEntity.PHASE1_TITLES.size();
+        // 当前头衔段底（剩余血量下限）：index 段 = [maxHealth-(index+1)*seg, maxHealth-index*seg]
+        float low = boss.getMaxHealth() - (float)(boss.titleIndex + 1) * segment;
+        if (boss.titleIndex == RediosEntity.PHASE1_TITLES.size() - 1) {
+            low = 0.0f;
+        }
+        if (boss.bossState == BossState.PHASE1_COMBAT && atLastTitle
             && boss.getHealth() - ctx.amount <= 1.0f) {
+            // x.9 濒死：锁 1 血进 PENDING。
             boss.setHealth(1.0f);
-            // 合法推进：同步反作弊基线，避免跨 tick 低血量篡改误判
             boss.anticheat.markLegalHealthChange(1.0f);
-            // 一阶段濒死：进入 PHASE1_PENDING 冻结等待，
-            // 等当前头衔锁血倒计时归零后由 tick() 启动投票（beginPhase2Choice）。
             boss.transitionTo(BossState.PHASE1_PENDING);
             boss.enterPendingState();
             return DamageResult.cancel();
@@ -659,6 +663,15 @@ public final class DamagePipeline {
             // PENDING 保底：1.9 锁血时间未结束期间，防断魂/无妄之终 9pass 穿防打到 ≤0。
             boss.setHealth(1.0f);
             boss.anticheat.markLegalHealthChange(1.0f);
+            return DamageResult.cancel();
+        }
+        if (boss.bossState == BossState.PHASE1_COMBAT && !atLastTitle
+            && boss.getHealth() - ctx.amount < low) {
+            // 非 x.9：伤害打穿当前头衔段底 → 钳到段底 + 立即推进头衔（+1 + 重设锁血）。
+            // 逐格推进保证中间头衔锁血段不被跳过（BossFlag 逐个授予），也不被大伤害打死。
+            boss.setHealth(low);
+            boss.anticheat.markLegalHealthChange(low);
+            boss.advanceTitleFromDamage();
             return DamageResult.cancel();
         }
         return DamageResult.proceed();
@@ -675,8 +688,16 @@ public final class DamagePipeline {
         //   封锁（生效期间）：PHASE2_COMBAT 与 PHASE2_PENDING 全程锁 1 血（保底不封顶）；
         //   解除（失效条件）：phase2.9 头衔锁血时间结束 → pendingLockReleased=true 回 COMBAT
         //                    等玩家补刀自然击杀（die 设 CD）。
-        //   非 x.9 大伤害：不触发濒死（交 updateTitle 逐格推进）；仅 2.9 濒死锁 1 血。
+        //   非 x.9 大伤害（用户裁决「钳在段底，逐格推进」）：钳到当前头衔段底 + 立即推进头衔。
+        if (!boss.bossState.isPhase2Combat() && boss.bossState != BossState.PHASE2_PENDING) {
+            return DamageResult.proceed();
+        }
         boolean atLastTitle = boss.titleIndex == RediosEntity.PHASE2_TITLES.size() - 1;
+        float segment = boss.getMaxHealth() / (float) RediosEntity.PHASE2_TITLES.size();
+        float low = boss.getMaxHealth() - (float)(boss.titleIndex + 1) * segment;
+        if (atLastTitle) {
+            low = 0.0f;
+        }
         if (boss.bossState.isPhase2Combat() && atLastTitle && !boss.pendingLockReleased
             && boss.getHealth() - ctx.amount <= 1.0f) {
             boss.setHealth(1.0f);
@@ -691,6 +712,14 @@ public final class DamagePipeline {
             // PENDING 保底：2.9 锁血时间未结束期间，防 9pass 穿防打到 ≤0。
             boss.setHealth(1.0f);
             boss.anticheat.markLegalHealthChange(1.0f);
+            return DamageResult.cancel();
+        }
+        if (boss.bossState.isPhase2Combat() && !atLastTitle
+            && boss.getHealth() - ctx.amount < low) {
+            // 非 x.9：伤害打穿当前头衔段底 → 钳到段底 + 立即推进头衔（+1 + 重设锁血）。
+            boss.setHealth(low);
+            boss.anticheat.markLegalHealthChange(low);
+            boss.advanceTitleFromDamage();
             return DamageResult.cancel();
         }
         return DamageResult.proceed();

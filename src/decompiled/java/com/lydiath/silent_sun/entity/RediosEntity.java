@@ -2176,16 +2176,21 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             }
             return;
         }
-        // 濒死锁血保底（2026-08-30 用户规范）：封锁（生效期间）= COMBAT + PENDING
-        //（即 1.9/2.9 头衔锁血时间未结束前）；解除（失效条件）= 1.9/2.9 锁血时间结束
-        // → VOTE/TRANSITION（锁血已解除，不再钳底）。生效期间最低血量 1、不允许 ≤0——
-        // 即使前置模组（灭却之日）断魂 9pass 直接改血（非 hurt 链路），也钳制到 1 血。
-        // 锁血期间回血/改血到 >1 允许（保底不封顶）。
-        if ((this.bossState == BossState.PHASE1_COMBAT || this.bossState == BossState.PHASE1_PENDING)
+        // 濒死锁血保底（2026-08-30 用户规范）：
+        //   封锁（生效期间）= x.9（1.9/2.9）头衔锁血时间未结束前（COMBAT 最后头衔 + PENDING）；
+        //   解除（失效条件）= 1.9/2.9 锁血时间结束 → VOTE/TRANSITION（不再钳底）。
+        //   非 x.9 头衔（1.0~1.8/2.0~2.8）：**不钳 1 血**——大伤害交 updateTitle 逐格推进
+        //   （头衔锁血逐段生效，血量被段顶钳住），避免「卡死在 1 血 + 非 x.9 头衔」的脱节。
+        //   x.9 濒死锁血期间：最低血量 1、不允许 ≤0——即使前置模组断魂 9pass 直接改血
+        //   （非 hurt 链路）也钳到 1；回血/改血到 >1 允许（保底不封顶）。
+        boolean phase1Last = this.bossState == BossState.PHASE1_COMBAT
+            && this.titleIndex == RediosEntity.PHASE1_TITLES.size() - 1;
+        boolean phase2Last = this.bossState == BossState.PHASE2_COMBAT
+            && !this.pendingLockReleased
+            && this.titleIndex == RediosEntity.PHASE2_TITLES.size() - 1;
+        if ((phase1Last || this.bossState == BossState.PHASE1_PENDING
+            || phase2Last || this.bossState == BossState.PHASE2_PENDING)
             && health < 1.0f) {
-            health = 1.0f;
-        } else if ((this.bossState == BossState.PHASE2_COMBAT || this.bossState == BossState.PHASE2_PENDING)
-            && !this.pendingLockReleased && health < 1.0f) {
             health = 1.0f;
         }
         super.setHealth(health);
@@ -3837,6 +3842,24 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         } else {
             this.broadcastToParticipants(this.rediosSigned(msg));
         }
+    }
+
+    /**
+     * 大伤害打穿头衔段底时强制逐格推进（2026-08-30 用户裁决「钳在段底，逐格推进」）。
+     * 与 updateTitle 的「锁血结束才推进」不同：伤害已打穿当前段底即视为进入下一段，
+     * 立即 titleIndex+1 + 重设锁血 + onTitleChanged（BossFlag 逐个授予），不等待锁血计时。
+     * 非 x.9 头衔专用（x.9 走濒死锁血，不调此方法）。
+     */
+    void advanceTitleFromDamage() {
+        List<Component> titles = this.phase == 1 ? PHASE1_TITLES : PHASE2_TITLES;
+        if (this.titleIndex >= titles.size() - 1) {
+            return; // 已到最后头衔（x.9），由濒死锁血处理
+        }
+        int oldPhase = this.phase;
+        int oldTitleIndex = this.titleIndex;
+        this.titleIndex = this.titleIndex + 1;
+        this.titleLockTicks = this.titleLockDurationTicks();
+        this.onTitleChanged(oldPhase, oldTitleIndex, this.phase, this.titleIndex);
     }
 
     /**
