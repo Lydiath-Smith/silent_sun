@@ -637,22 +637,28 @@ public final class DamagePipeline {
         //   封锁（生效期间）：COMBAT 与 PENDING 全程生效——最低血量 1、允许 ≥1、不允许 ≤0；
         //                    期间回血/改血到 >1 允许（保底不封顶，自我恢复照常）。
         //   解除（失效条件）：phase1.9 头衔锁血时间结束（titleLockTicks 归零 → onPendingLockExpired
-        //                    → beginPhase2Choice 投票）。PENDING 状态即「1.9 锁血时间未结束」，
-        //                    因此 PENDING 期间必须继续锁血——否则断魂/无妄之终等 9pass 穿防伤害
-        //                    会在锁血窗口内把 Boss 打到 ≤0（此前只护 COMBAT 段，PENDING 段裸奔）。
-        //   非 1.9：按头衔锁血回血钳制在段顶-ε（clampHealthToCurrentTitle），不跳阶段。
-        if ((boss.bossState.isPhase1Combat() || boss.bossState == BossState.PHASE1_PENDING)
+        //                    → beginPhase2Choice 投票）。
+        //   非 x.9 大伤害处理（2026-08-30 用户裁决「头衔锁血优先」）：非 1.9 头衔时大伤害
+        //     **不得直接触发濒死锁血**（不 setHealth(1)、不进 PENDING）——交给 updateTitle
+        //     逐格 +1 推进（每次重设头衔锁血），保证中间头衔锁血段不被跳过（不跳阶段）。
+        //   x.9（1.9）濒死：才允许锁 1 血进 PENDING；PENDING 期间继续保底防 9pass 穿防。
+        boolean atLastTitle = boss.titleIndex == RediosEntity.PHASE1_TITLES.size() - 1;
+        if (boss.bossState.isPhase1Combat() && atLastTitle
             && boss.getHealth() - ctx.amount <= 1.0f) {
             boss.setHealth(1.0f);
             // 合法推进：同步反作弊基线，避免跨 tick 低血量篡改误判
             boss.anticheat.markLegalHealthChange(1.0f);
-            if (boss.bossState.isPhase1Combat()
-                && boss.titleIndex == RediosEntity.PHASE1_TITLES.size() - 1) {
-                // 一阶段濒死：进入 PHASE1_PENDING 冻结等待，
-                // 等当前头衔锁血倒计时归零后由 tick() 启动投票（beginPhase2Choice）。
-                boss.transitionTo(BossState.PHASE1_PENDING);
-                boss.enterPendingState();
-            }
+            // 一阶段濒死：进入 PHASE1_PENDING 冻结等待，
+            // 等当前头衔锁血倒计时归零后由 tick() 启动投票（beginPhase2Choice）。
+            boss.transitionTo(BossState.PHASE1_PENDING);
+            boss.enterPendingState();
+            return DamageResult.cancel();
+        }
+        if (boss.bossState == BossState.PHASE1_PENDING
+            && boss.getHealth() - ctx.amount <= 1.0f) {
+            // PENDING 保底：1.9 锁血时间未结束期间，防断魂/无妄之终 9pass 穿防打到 ≤0。
+            boss.setHealth(1.0f);
+            boss.anticheat.markLegalHealthChange(1.0f);
             return DamageResult.cancel();
         }
         return DamageResult.proceed();
@@ -669,16 +675,22 @@ public final class DamagePipeline {
         //   封锁（生效期间）：PHASE2_COMBAT 与 PHASE2_PENDING 全程锁 1 血（保底不封顶）；
         //   解除（失效条件）：phase2.9 头衔锁血时间结束 → pendingLockReleased=true 回 COMBAT
         //                    等玩家补刀自然击杀（die 设 CD）。
-        if ((boss.bossState.isPhase2Combat() || boss.bossState == BossState.PHASE2_PENDING)
-            && !boss.pendingLockReleased
+        //   非 x.9 大伤害：不触发濒死（交 updateTitle 逐格推进）；仅 2.9 濒死锁 1 血。
+        boolean atLastTitle = boss.titleIndex == RediosEntity.PHASE2_TITLES.size() - 1;
+        if (boss.bossState.isPhase2Combat() && atLastTitle && !boss.pendingLockReleased
             && boss.getHealth() - ctx.amount <= 1.0f) {
             boss.setHealth(1.0f);
             // 合法推进：同步反作弊基线，避免跨 tick 低血量篡改误判
             boss.anticheat.markLegalHealthChange(1.0f);
-            if (boss.bossState.isPhase2Combat()) {
-                boss.transitionTo(BossState.PHASE2_PENDING);
-                boss.enterPendingState();
-            }
+            boss.transitionTo(BossState.PHASE2_PENDING);
+            boss.enterPendingState();
+            return DamageResult.cancel();
+        }
+        if (boss.bossState == BossState.PHASE2_PENDING && !boss.pendingLockReleased
+            && boss.getHealth() - ctx.amount <= 1.0f) {
+            // PENDING 保底：2.9 锁血时间未结束期间，防 9pass 穿防打到 ≤0。
+            boss.setHealth(1.0f);
+            boss.anticheat.markLegalHealthChange(1.0f);
             return DamageResult.cancel();
         }
         return DamageResult.proceed();

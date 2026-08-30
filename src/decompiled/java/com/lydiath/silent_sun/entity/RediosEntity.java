@@ -198,7 +198,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     private static final float STAGE_BLOCK_BOMB_EXPLOSION_POWER = 2.5f;
     private static final List<Holder<MobEffect>> DUSTLESS_GOOD_BUFF_POOL = List.of(MobEffects.DAMAGE_BOOST, MobEffects.MOVEMENT_SPEED, MobEffects.DIG_SPEED, MobEffects.JUMP, MobEffects.REGENERATION, MobEffects.ABSORPTION, MobEffects.FIRE_RESISTANCE, MobEffects.WATER_BREATHING, MobEffects.NIGHT_VISION, MobEffects.HEALTH_BOOST);
     static final List<Component> PHASE1_TITLES = List.of(Component.translatable("title.silent_sun.redios.phase1.0"), Component.translatable("title.silent_sun.redios.phase1.1"), Component.translatable("title.silent_sun.redios.phase1.2"), Component.translatable("title.silent_sun.redios.phase1.3"), Component.translatable("title.silent_sun.redios.phase1.4"), Component.translatable("title.silent_sun.redios.phase1.5"), Component.translatable("title.silent_sun.redios.phase1.6"), Component.translatable("title.silent_sun.redios.phase1.7"), Component.translatable("title.silent_sun.redios.phase1.8"), Component.translatable("title.silent_sun.redios.phase1.9"));
-    private static final List<Component> PHASE2_TITLES = List.of(Component.translatable("title.silent_sun.redios.phase2.0"), Component.translatable("title.silent_sun.redios.phase2.1"), Component.translatable("title.silent_sun.redios.phase2.2"), Component.translatable("title.silent_sun.redios.phase2.3"), Component.translatable("title.silent_sun.redios.phase2.4"), Component.translatable("title.silent_sun.redios.phase2.5"), Component.translatable("title.silent_sun.redios.phase2.6"), Component.translatable("title.silent_sun.redios.phase2.7"), Component.translatable("title.silent_sun.redios.phase2.8"), Component.translatable("title.silent_sun.redios.phase2.9"));
+    static final List<Component> PHASE2_TITLES = List.of(Component.translatable("title.silent_sun.redios.phase2.0"), Component.translatable("title.silent_sun.redios.phase2.1"), Component.translatable("title.silent_sun.redios.phase2.2"), Component.translatable("title.silent_sun.redios.phase2.3"), Component.translatable("title.silent_sun.redios.phase2.4"), Component.translatable("title.silent_sun.redios.phase2.5"), Component.translatable("title.silent_sun.redios.phase2.6"), Component.translatable("title.silent_sun.redios.phase2.7"), Component.translatable("title.silent_sun.redios.phase2.8"), Component.translatable("title.silent_sun.redios.phase2.9"));
     static final TitleDef[] PHASE1_TITLE_DEFS = new TitleDef[]{TitleDef.p1(0, 15, new BossFlag[0]), TitleDef.p1(1, 15, new BossFlag[0]), TitleDef.p1(2, 15, BossFlag.WEAKNESS_CURSE, BossFlag.ENRAGE_STACKING), TitleDef.p1(3, 15, new BossFlag[0]), TitleDef.p1(4, 15, new BossFlag[0]), TitleDef.p1(5, 15, BossFlag.SOUL_SEVER_HARVEST), TitleDef.p1(6, 15, new BossFlag[0]), TitleDef.p1(7, 15, new BossFlag[0]), TitleDef.p1(8, 15, new BossFlag[0]), TitleDef.p1(9, 15, BossFlag.GUARD_BLOCK)};
     static final TitleDef[] PHASE2_TITLE_DEFS = new TitleDef[]{TitleDef.p2(0, 30, BossFlag.SEA_SKY_SOUL_SEVER), TitleDef.p2(1, 30, BossFlag.UNCONTROLLED_SPRINT), TitleDef.p2(2, 30, new BossFlag[0]), TitleDef.p2(3, 30, new BossFlag[0]), TitleDef.p2(4, 30, BossFlag.ASH_DAWN), TitleDef.p2(5, 30, new BossFlag[0]), TitleDef.p2(6, 30, new BossFlag[0]), TitleDef.p2(7, 30, BossFlag.BLACK_SUN), TitleDef.p2(8, 30, BossFlag.COLORLESS, BossFlag.ENRAGE_STACKING), TitleDef.p2(9, 30, new BossFlag[0])};
     private static final EntityDataAccessor<Integer> CLIENT_PHASE = SynchedEntityData.defineId(RediosEntity.class, EntityDataSerializers.INT);
@@ -1960,6 +1960,10 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         if (amount <= 0.0f || this.level().isClientSide) {
             return;
         }
+        // 头衔锁血结束后的 5 秒禁回血缓冲（titleLockGraceTicks）是**故意的削弱措施**
+        // （2026-08-30 用户确认保留）：防止锁血刚结束的瞬间回血越过段顶跳段/回血过猛。
+        // 锁血进行中（titleLockTicks > 0）不禁回血——自我恢复在锁血生效期间照常有用，
+        // 由下方 clamp/回归决定是否越段（先回退再锁血）。
         if (this.titleLockGraceTicks > 0) {
             return;
         }
@@ -1978,15 +1982,12 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             this.setHealth(newHealth);
             boolean pending = this.bossState == BossState.PHASE1_PENDING || this.bossState == BossState.PHASE2_PENDING;
             if (!pending) {
-                if (this.titleLockTicks > 0) {
-                    if ((SilentSunConfig.ALLOW_TITLE_LOCK_HEAL_REGRESSION.get()).booleanValue()) {
-                        this.checkHealTitleRegression();
-                    } else {
-                        this.clampHealthToCurrentTitle();
-                    }
-                } else {
-                    this.checkHealTitleRegression();
-                }
+                // 头衔回退顺序（2026-08-30 用户裁决「先回退再锁血」）：
+                //   回血越过当前头衔段顶 → 先完成头衔回退（checkHealTitleRegression：
+                //   titleIndex 回退 + 重新锁血计时），血量保持新值；
+                //   随后 clamp 用（可能已回退的）新段顶只拦回血越段顶、不抬段内血量。
+                this.checkHealTitleRegression();
+                this.clampHealthToCurrentTitle();
             }
             this.anticheat.markLegalHealthChange(this.getHealth());
         }
