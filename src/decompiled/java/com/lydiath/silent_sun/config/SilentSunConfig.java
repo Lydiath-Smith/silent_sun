@@ -197,14 +197,8 @@ public final class SilentSunConfig {
         .comment("damageZeroLog：同源伤害日志限频冷却（tick）。默认 40。")
         .defineInRange("redios.damageZeroLogCooldownTicks", 40, 0, Integer.MAX_VALUE);
 
-    // 莱德厄斯血条显示方式（客户端渲染）
-    // true（默认）= 使用自制分段紫黑血条（对齐原版槽位，不遮挡其它 Boss）；
-    // false = 使用原版默认 Boss 血条。
-    public static final ModConfigSpec.BooleanValue CUSTOM_BOSS_BAR_ENABLED = BUILDER
-        .comment("莱德厄斯血条显示方式。",
-            "true（默认）= 使用自制分段紫黑血条（对齐原版槽位，不遮挡其它 Boss）。",
-            "false = 使用原版默认 Boss 血条。")
-        .define("redios.customBossBarEnabled", true);
+    // 2026-09-02：自制血条 UI（RediosBossBarRenderer + CUSTOM_BOSS_BAR_ENABLED）已删除，
+    // Boss 血条只用原版默认渲染（服务端 ServerBossEvent 由原版 GUI 显示）。
 
     // 拔刀剑 Boss 随机 SA 池排除列表（2026-09-01）：默认排除狐月刀（foxextra）与天杀星刀
     // （tianshaxing）——两者 SA 有 SE 前提（Boss 刀 miedao_duan 无对应 SE 会放不出/异常），
