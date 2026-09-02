@@ -62,6 +62,10 @@ public final class SilentSunConfig {
     public static final ModConfigSpec.DoubleValue DAMAGE_HARD_CAP = BUILDER.defineInRange("redios.damageHardCap", 200.0, 0.0, Double.MAX_VALUE);
     public static final ModConfigSpec.DoubleValue DYNAMIC_REDUCTION_THRESHOLD = BUILDER.defineInRange("redios.dynamicReductionThreshold", 100.0, 0.0, Double.MAX_VALUE);
     public static final ModConfigSpec.DoubleValue DYNAMIC_REDUCTION_RATIO = BUILDER.defineInRange("redios.dynamicReductionRatio", 0.5, 0.0, 1.0);
+    // 灾变式动态减伤（2026-09-01 用户裁决：参考灾变模组——随时间递减的高额减伤，9bypass 打穿）：
+    // 初始减伤率（战斗开始时的最终减伤比例），随战斗进行按每秒衰减率下降，归零后不再减伤。
+    public static final ModConfigSpec.DoubleValue DYNAMIC_REDUCTION_INITIAL = BUILDER.defineInRange("redios.dynamicReductionInitial", 0.8, 0.0, 0.95);
+    public static final ModConfigSpec.DoubleValue DYNAMIC_REDUCTION_DECAY_PER_SEC = BUILDER.defineInRange("redios.dynamicReductionDecayPerSec", 0.02, 0.0, 1.0);
 
     // 友好生物限伤（模式一：仅玩家参战时，友好生物对Boss伤害上限）
     public static final ModConfigSpec.DoubleValue FRIENDLY_MOB_DAMAGE_CAP = BUILDER.defineInRange("redios.friendlyMobDamageCap", 25.0, 0.0, Double.MAX_VALUE);
@@ -80,7 +84,7 @@ public final class SilentSunConfig {
     // 断魂
     public static final ModConfigSpec.IntValue SOUL_SEVER_BASE_X = BUILDER.defineInRange("soulSever.baseX", 30, 0, Integer.MAX_VALUE);
     public static final ModConfigSpec.IntValue SOUL_SEVER_DURATION_SECONDS = BUILDER.defineInRange("soulSever.durationSeconds", 15, 1, Integer.MAX_VALUE);
-    public static final ModConfigSpec.IntValue SOUL_SEVER_MAX_AMPLIFIER = BUILDER.defineInRange("soulSever.maxAmplifier", 2, 0, 10);
+    public static final ModConfigSpec.IntValue SOUL_SEVER_MAX_AMPLIFIER = BUILDER.defineInRange("soulSever.maxAmplifier", 4, 0, 10);
     public static final ModConfigSpec.IntValue SOUL_SEVER_Y_WARNING_THRESHOLD = BUILDER.defineInRange("soulSever.yWarningThreshold", 5000, 0, Integer.MAX_VALUE);
 
     // 高度差飞行
@@ -140,7 +144,7 @@ public final class SilentSunConfig {
         .defineInRange("redios.starfallSalvoMaxCount", 16, 1, 64);
     public static final ModConfigSpec.IntValue STARFALL_SALVO_MAX_DELAY_TICKS = BUILDER
         .comment("繁星爆闪每颗星星开始下落的随机最大延迟（tick）。默认 20 = 1 秒。")
-        .defineInRange("redios.starfallSalvoMaxDelayTicks", 20, 0, 200);
+        .defineInRange("redios.starfallSalvoMaxDelayTicks", 10, 0, 200);
     public static final ModConfigSpec.DoubleValue STARFALL_SALVO_EXPLOSION_POWER = BUILDER
         .comment("繁星爆闪每颗星星爆炸的威力（大范围随机爆破半径，沿用 Level.explode 口径，",
             "破坏方块遵循 mobGriefing）。默认 6.0，约 6 格爆炸半径，逐星独立覆盖召唤半径内的大范围区域。")

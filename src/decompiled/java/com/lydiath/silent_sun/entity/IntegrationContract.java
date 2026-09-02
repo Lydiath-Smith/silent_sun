@@ -131,6 +131,10 @@ public final class IntegrationContract {
     static final String ENTITY_ABSTRACT_SUMMONED_SWORD_SET_IS_CRITICAL_METHOD = "setIsCritical";
     /** 手动碰撞已命中目标去重 NBT 键（存 int id 列表，随实体销毁自动清理） */
     static final String BOSS_BLADE_HIT_TARGETS_TAG = "SilentSunForceHitTargets";
+    /** 三连斩（triple_whammy 复刻）每目标每 tick 限频 NBT 键（2026-09-01 修复）：5 剑齐射
+     *  每把剑独立触发一次双斩三连 = 一波 5×2 次全额攻击，按（目标,tick）合并后每目标
+     *  每 tick 至多一次三连（与灭却之日同款「每目标每游戏 tick 至多结算一次」模式）。 */
+    static final String BOSS_TRIPLE_WHAMMY_TICK = "SilentSunLastTripleWhammyTick";
     /** AttackManager.doAttackWith(DamageSource,float,Entity,boolean,boolean)：刀光/次元斩无 doForceHitEntity，
      *  唯一可反射的「对单目标强制结算」入口（内部即 target.hurt(src, amount) + invulnerableTime 处理）。 */
     static final String ATTACK_MANAGER_CLASS = "mods.flammpfeil.slashblade.util.AttackManager";
@@ -644,6 +648,11 @@ public final class IntegrationContract {
     public static void tryApplyBossTripleWhammy(LivingEntity boss, LivingEntity target) {
         if (!ensureReflectionReady()) return;
         try {
+            // 每目标每 tick 至多一次三连（2026-09-01 修复）：5 剑齐射每把剑独立触发
+            // 双斩三连 = 一波 5×2 次全额攻击；限频后每目标每 tick 至多一次。
+            CompoundTag targetData = target.getPersistentData();
+            if (targetData.getInt(BOSS_TRIPLE_WHAMMY_TICK) == target.tickCount) return;
+            targetData.putInt(BOSS_TRIPLE_WHAMMY_TICK, target.tickCount);
             Level level = boss.level();
             if (level.isClientSide()) return;
             ItemStack blade = boss.getMainHandItem();
@@ -774,10 +783,11 @@ public final class IntegrationContract {
      * 的 getShooter()/setShooter() 均委托 getOwner()/setOwner()，因此这里统一按 IShootable 接口
      * 扫描无 owner 者并补 shooter=Boss，保证其永远非空。
      * <p>
-     * 半径收敛到 32 格：Boss 生成的孤儿投射物都在 Boss 本体位置产生，
-     * 且 BladeAttackGoal.tick 同 tick 收尾即调用本方法，32 格足以在「生成→被玩家扫描」的
-     * 空窗内补齐 owner。更大的半径会把远距离、可能属于玩家/第三方的无 owner
-     * 投射物一并劫持到 Boss，造成错误归属（用户所指「幻影剑做给玩家」的怀疑点之一）。
+     * 半径收敛到 16 格（2026-09-01 收紧，子代理审查发现）：Boss 生成的孤儿投射物都在
+     * Boss 本体位置产生，且 BladeAttackGoal.tick 同 tick 收尾即调用本方法，16 格足以在
+     * 「生成→被玩家扫描」的空窗内补齐 owner。更大的半径会把远距离、可能属于玩家/第三方的
+     * 无 owner 投射物（如玩家 SA 时间线暂缺 owner 的刀光/次元斩）一并劫持到 Boss，
+     * 造成错误归属（用户所指「幻影剑做给玩家」的怀疑点之一）。
      */
     public static void sanitizeBossSummonedSwordShooters(RediosEntity boss) {
         if (!ensureReflectionReady()) return;
@@ -785,7 +795,7 @@ public final class IntegrationContract {
         Level level = boss.level();
         if (level.isClientSide() || !(level instanceof net.minecraft.server.level.ServerLevel)) return;
 
-        List<Entity> swords = level.getEntitiesOfClass(Entity.class, boss.getBoundingBox().inflate(32.0),
+        List<Entity> swords = level.getEntitiesOfClass(Entity.class, boss.getBoundingBox().inflate(16.0),
             e -> iShootableClass.isInstance(e) && e.isAlive() && hasNullShooter(e));
         if (swords.isEmpty()) return;
 
@@ -883,8 +893,12 @@ public final class IntegrationContract {
         if (!(entity instanceof Projectile projectile) || !projectile.isAlive()) return;
         if (projectile.getOwner() != null) return;
         RediosEntity boss = null;
+        // 仅当实体在 Boss 附近（16 格）时才补归属（2026-09-01 收紧，子代理审查发现）：
+        // 原实现全维度找第一个在场 Redios，把远处玩家 SA 暂缺 owner 的刀光/次元斩也劫持
+        // 到 Boss，造成错误归属（getOwner()==boss 过滤反向结算到玩家身上）。
         for (Entity e : serverLevel.getEntities().getAll()) {
-            if (e instanceof RediosEntity r && r.isAlive()) {
+            if (e instanceof RediosEntity r && r.isAlive()
+                && r.distanceToSqr(projectile) <= 256.0) {
                 boss = r;
                 break;
             }
@@ -959,6 +973,26 @@ public final class IntegrationContract {
         if (blades.isEmpty()) return;
 
         for (Projectile blade : blades) {
+            // 幻影剑追踪（2026-09-01 用户裁决「SA幻影剑没索敌」）：
+            // 直线飞行（shoot 一次性方向）被走位轻易躲掉。已发射（脱离 Boss 8 格）的剑
+            // 每 tick 朝目标当前位置改向（EntityAbstractSummonedSword.tick 尊重 deltaMovement，
+            // 2.0.7 源码 L325 确认）→ 具备基础索敌；环绕/汇聚阶段（贴近 Boss）不追踪，保留演出。
+            if (blade.distanceToSqr(boss) > 64.0 && !targets.isEmpty()) {
+                LivingEntity track = targets.get(0);
+                Vec3 toTarget = track.getEyePosition().subtract(blade.position());
+                if (toTarget.lengthSqr() > 1.0E-6) {
+                    Vec3 dir = toTarget.normalize();
+                    double speed = blade.getDeltaMovement().length();
+                    if (speed < 0.5) {
+                        speed = 3.0; // 未发射/静止的剑给默认飞行速度
+                    }
+                    blade.setDeltaMovement(dir.scale(speed));
+                    // 同步朝向（部分渲染与命中判定读取 yRot/xRot）
+                    blade.setYRot((float) (net.minecraft.util.Mth.atan2(dir.x, dir.z) * 180.0 / Math.PI));
+                    blade.setXRot((float) (net.minecraft.util.Mth.atan2(dir.y,
+                        Math.sqrt(dir.x * dir.x + dir.z * dir.z)) * 180.0 / Math.PI));
+                }
+            }
             AABB bladeBB = blade.getBoundingBox().expandTowards(blade.getDeltaMovement()).inflate(0.5);
             for (ServerPlayer target : targets) {
                 if (!target.getBoundingBox().intersects(bladeBB)) continue;
@@ -976,13 +1010,20 @@ public final class IntegrationContract {
                 return; // 已命中过，跳过防重复结算
             }
         }
-        hitList.add(IntTag.valueOf(targetId));
-        data.put(BOSS_BLADE_HIT_TARGETS_TAG, hitList);
-        // 拔刀剑投射物（幻影剑/剑气）命中统一结算（对齐近战 doHurtTarget 的 SE 链路）：
-        // 1) 断魂：海天断魂解锁后叠加统一断魂（两个模组断魂一个设计，走 silent_sun 同一套）；
-        // 2) 两道斩击：triple_whammy SE 复刻（灭却之日监听 SlashBladeEvent.HitEvent 但带
-        //    instanceof Player 检查，Boss 进不来，这里手动补两道额外斩击）。
-        boss.markSoulSeverIfUnlocked(target);
+        // 命中结算（2026-09-01 修复，子代理审查发现）：
+        //  原实现「先写去重条目 + 先挂断魂，后结算命中」——目标 invulnerableTime 无敌帧内
+        //  doForceHitEntity 的 hurt 被吞（不掉血），但去重条目已消费、断魂/三连照常触发：
+        //  ① 该剑对该玩家永久漏结算（条目已消费、剑穿身无法再命中）；
+        //  ② 玩家在 20 tick 无敌窗口内被 5 剑齐射仍吃满 5×2 次三连斩 + 断魂 amplifier 秒满。
+        //  现改为：先结算命中，命中落地（血量下降 / 死亡）后才写去重条目并执行断魂/三连；
+        //  未命中（无敌帧吞 / 免疫 / 护甲全挡）不消费去重（剑可再尝试）、不断魂、不三连——
+        //  保持「玩家可用无敌帧躲避剑气/幻影剑」的 vanilla 语义。
+        float hpBefore = target.getHealth();
+        boolean deadBefore = target.isDeadOrDying();
+        // 反作弊惩罚窗口：强制命中（无视目标自定义无敌帧，2026-09-01 用户裁决）
+        if (boss.anticheat.isPunishWindowActive(boss.tickCount)) {
+            target.invulnerableTime = 0;
+        }
         try {
             if (entityAbstractSummonedSwordClass != null
                 && summonedSwordDoForceHitEntityMethod != null
@@ -999,6 +1040,17 @@ public final class IntegrationContract {
         } catch (Exception e) {
             LOG.warn("Failed to force blade hit on player via reflection: {}", e.toString());
         }
+        boolean hit = !target.isDeadOrDying() ? target.getHealth() < hpBefore - 0.001f : !deadBefore;
+        if (!hit) {
+            return; // 未造成伤害（无敌帧吞 / 免疫）：不写去重、不断魂、不三连
+        }
+        hitList.add(IntTag.valueOf(targetId));
+        data.put(BOSS_BLADE_HIT_TARGETS_TAG, hitList);
+        // 拔刀剑投射物（幻影剑/剑气）命中统一结算（对齐近战 doHurtTarget 的 SE 链路）：
+        // 1) 断魂：海天断魂解锁后叠加统一断魂（两个模组断魂一个设计，走 silent_sun 同一套）；
+        // 2) 两道斩击：triple_whammy SE 复刻（灭却之日监听 SlashBladeEvent.HitEvent 但带
+        //    instanceof Player 检查，Boss 进不来，这里手动补两道额外斩击，内部按目标/tick 限频）。
+        boss.markSoulSeverIfUnlocked(target);
         if (target.isAlive()) {
             tryApplyBossTripleWhammy(boss, target);
         }

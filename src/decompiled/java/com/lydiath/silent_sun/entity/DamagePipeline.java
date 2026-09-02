@@ -267,7 +267,10 @@ public final class DamagePipeline {
         if (boss.level().isClientSide) {
             return DamageResult.proceed();
         }
-        if (boss.noResurrection && boss.bossState.isPhase1()
+        // 收紧为 COMBAT（2026-09-01 修复）：原用 isPhase1()（含 VOTE/PENDING/TRANSITION），
+        // 冻结态血量恒 1 → `health - amount <= 1` 恒真 → 幻影攻击即触发
+        // enterNoResurrectionPhase2（满血 P2），废掉投票与 1.9 锁血。
+        if (boss.noResurrection && boss.bossState.isPhase1Combat()
             && boss.getHealth() - ctx.amount <= 1.0f) {
             boss.setHealth(1.0f);
             // 合法推进：同步反作弊基线，避免跨 tick 低血量篡改误判
@@ -286,8 +289,11 @@ public final class DamagePipeline {
         if (boss.level().isClientSide) {
             return DamageResult.proceed();
         }
+        // 200.0f 原为「段长」魔法数（maxHealth 2000 / 10 头衔）；phaseMaxHealth 可配置，
+        // 必须按实际段长计算，否则改最大血量后 1.9 濒死判定错位（2026-09-01 修复）。
+        float segment = boss.getMaxHealth() / (float) RediosEntity.PHASE1_TITLES.size();
         if (boss.bossState.isPhase1() && boss.titleIndex == RediosEntity.PHASE1_TITLES.size() - 1
-            && boss.getHealth() < 200.0f && ctx.amount > 0.0f
+            && boss.getHealth() < segment && ctx.amount > 0.0f
             && boss.getHealth() - ctx.amount <= 1.0f) {
             boss.setHealth(1.0f);
             // 合法推进：同步反作弊基线，避免跨 tick 低血量篡改误判
@@ -362,7 +368,7 @@ public final class DamagePipeline {
             return DamageResult.proceed();
         }
         if (ctx.amount > 0.0f) {
-            ctx.amount = boss.applyDamageCap(ctx.amount);
+            ctx.amount = boss.applyDamageCap(ctx.amount, ctx.source);
         }
         return DamageResult.proceed();
     }
@@ -518,7 +524,7 @@ public final class DamagePipeline {
             // 混沌之墟是内部设计路径，需自行施加并同步合法伤害累计，防低血量篡改误判。
             // applyDamageCap 只减不增（超额部分按比例削减 + 硬上限），因此 finalDamage
             // 必然 ≤ ctx.amount；voidAllThings 激活时打穿到 ≤1 锁 1 血不推进（无敌语义）。
-            float finalDamage = boss.applyDamageCap(ctx.amount);
+            float finalDamage = boss.applyDamageCap(ctx.amount, ctx.source);
             float next = boss.getHealth() - finalDamage;
             if (next <= 1.0f) {
                 boss.setHealth(1.0f);
@@ -539,6 +545,15 @@ public final class DamagePipeline {
         RediosEntity boss = ctx.boss;
         if (boss.level().isClientSide || boss.reflectApplying
             || !(boss.reflectRatio > 0.0)) {
+            return DamageResult.proceed();
+        }
+        // 冻结态跳过反射（2026-09-01 修复）：投票/转阶段/濒死锁血期血量恒 1，
+        // 伤害随后被锁血阶段 setHealth(1)+cancel 吞掉——原实现在此之前先全额反伤，
+        // 攻击者被「零伤害命中」白嫖反伤；无敌帧短路（hurt 入口）后普通攻击
+        // 已不再进入管线，此处再拦冻结态确保反射只在正常战斗放行的伤害上触发。
+        if (boss.bossState.isVoteOrTransition()
+            || boss.bossState == BossState.PHASE1_PENDING
+            || boss.bossState == BossState.PHASE2_PENDING) {
             return DamageResult.proceed();
         }
 
@@ -659,11 +674,12 @@ public final class DamagePipeline {
             boss.enterPendingState();
             return DamageResult.cancel();
         }
-        if (boss.bossState == BossState.PHASE1_PENDING
-            && boss.getHealth() - ctx.amount <= 1.0f) {
-            // PENDING 保底：1.9 锁血时间未结束期间，防断魂/无妄之终 9pass 穿防打到 ≤0。
-            boss.setHealth(1.0f);
-            boss.anticheat.markLegalHealthChange(1.0f);
+        if (boss.bossState == BossState.PHASE1_PENDING) {
+            // PENDING = 濒死锁血无敌期（2026-09-01 用户裁决「9bypass 级打不穿」）：
+            // 伤害一律取消——原「仅 health-amount≤1 才钳 1、>1 放行掉血」被前置 9pass 断魂
+            // （每 tick 结算、无视无敌帧）钻空子：每 tick 掉血把自我恢复（tickNaturalRegen）
+            // 打回 1，观感"锁在 1 一动不动"。现全 cancel：Boss 只自我恢复回血，伤害打不穿，
+            // 锁血到期才收口（P1 投票 / P2 解除后补刀）。系统自身扣血（直接 setHealth）不受影响。
             return DamageResult.cancel();
         }
         if (boss.bossState == BossState.PHASE1_COMBAT && !atLastTitle
@@ -694,7 +710,7 @@ public final class DamagePipeline {
         // 二阶段濒死锁血（2026-08-30 用户规范）：同 stagePhase1Lock——
         //   封锁（生效期间）：PHASE2_COMBAT 与 PHASE2_PENDING 全程锁 1 血（保底不封顶）；
         //   解除（失效条件）：phase2.9 头衔锁血时间结束 → pendingLockReleased=true 回 COMBAT
-        //                    等玩家补刀自然击杀（die 设 CD）。
+        //                    允许击杀（die 设 CD）。
         //   非 x.9 大伤害（用户裁决「钳在段底，逐格推进」）：钳到当前头衔段底 + 立即推进头衔。
         if (!boss.bossState.isPhase2Combat() && boss.bossState != BossState.PHASE2_PENDING) {
             return DamageResult.proceed();
@@ -714,11 +730,10 @@ public final class DamagePipeline {
             boss.enterPendingState();
             return DamageResult.cancel();
         }
-        if (boss.bossState == BossState.PHASE2_PENDING && !boss.pendingLockReleased
-            && boss.getHealth() - ctx.amount <= 1.0f) {
-            // PENDING 保底：2.9 锁血时间未结束期间，防 9pass 穿防打到 ≤0。
-            boss.setHealth(1.0f);
-            boss.anticheat.markLegalHealthChange(1.0f);
+        if (boss.bossState == BossState.PHASE2_PENDING && !boss.pendingLockReleased) {
+            // PENDING = 濒死锁血无敌期（2026-09-01 用户裁决「9bypass 级打不穿」）：伤害一律取消，
+            // Boss 只自我恢复回血；锁血到期 pendingLockReleased=true 解除后（onPendingLockExpired）
+            // 玩家补刀才可击杀。原「health-amount≤1 才钳 1」被 9pass 每 tick 掉血钻空子（自我恢复失效）。
             return DamageResult.cancel();
         }
         if (boss.bossState.isPhase2Combat() && !atLastTitle

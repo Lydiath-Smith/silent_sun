@@ -212,8 +212,10 @@ extends SavedData {
                 continue;
             }
             long since = now - r.lastSeenGameTime;
-            if (since >= 12000L) {
-                // 原逻辑：卸载超时兜底结算（未加载区块中的 Boss 被卸载，实体缺失属正常）
+            // 2026-09-01 用户裁决（区块/离场语义）：玩家走远 → Boss 离场，不再重建。
+            // 5s（100 tick）内区块未重新加载（实体未恢复）即合法离场结算；
+            // 原 10 分钟（12000）超时窗口与 rebuildFromRecord 重建分支删除。
+            if (since >= 100L) {
                 level.getChunkAt(r.pos);
                 Entity entity = level.getEntity(r.bossId);
                 if (entity instanceof RediosEntity) {
@@ -223,27 +225,8 @@ extends SavedData {
                 this.remove(r.bossId);
                 continue;
             }
-            // 暴力清除反制：未到卸载超时但实体缺失。若所在 chunk 已加载（战斗区域仍活跃）→
-            // 判定为被外部删除（在线清实体 / 停服删 entities 存档后重启加载）→ 用记录重建 Boss。
-            // chunk 未加载 → 正常卸载，不强制加载，留待超时结算。
-            // 退场秩序化（2026-08-30）：合法离场（settled 标记）一律不重建——结算路径
-            // （settleBattle/leaveBattle/die）现在都先 clearBattleRecord（markSettled+remove），
-            // 残留只会是结算竞态且带 settled 标记，上方 L210 分支已清理。此处保持原重建窗口。
-            if (!scanNow || since < 400L || r.rebuildCount >= 3) {
-                continue;
-            }
-            ChunkPos cp = new ChunkPos(r.pos);
-            if (!level.getChunkSource().hasChunk(cp.x, cp.z)) {
-                continue;
-            }
-            level.getChunkAt(r.pos);
-            if (level.getEntity(r.bossId) != null) {
-                continue; // 卸载后强制加载恢复，无需重建
-            }
-            if (RediosEntity.rebuildFromRecord(level, r)) {
-                r.rebuildCount++;
-                this.setDirty();
-            }
+            // 不再重建：实体缺失（卸载 / 被外部删除）一律等待 5s 超时离场。
+            // 5s 内区块重载且实体恢复（level.getEntity 非空）→ 上方 L205 continue，战斗继续。
         }
     }
 

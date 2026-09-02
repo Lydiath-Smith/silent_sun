@@ -66,7 +66,6 @@
   "quote.silent_sun.redios.phase2.7": "Let every fallacy burn to ashes.",
   "quote.silent_sun.redios.phase2.8": "Let every suffering be extinguished.",
   "quote.silent_sun.redios.phase2.9": "All that remains is the unrecognizable void of all things.",
-  "effect.silent_sun.soul_sever": "Soul Sever",
   "effect.silent_sun.enrage": "Enrage",
   "effect.silent_sun.fragile": "Fragile",
   "message.silent_sun.redios.soul_sever_overflow": "What are you doing... damage is maxed out...",
@@ -113,8 +112,6 @@
   "advancement.silent_sun.phase2_countdown.desc": "How can anything be this hard to kill?",
   "advancement.silent_sun.phase2_win.title": "Your First Nonlinear Movement",
   "advancement.silent_sun.phase2_win.desc": "Please, no horror movie.",
-  "death.attack.soul_sever": "\"Ugh!\" %s ... down for the count.",
-  "death.attack.soul_sever.player": "\"Ugh!\" %s ... down for the count.",
   "death.attack.redios_attack": "Put your back into it! Can't fight with zero effort!",
   "death.attack.redios_attack.item": "Put your back into it! Can't fight with zero effort!",
   "subtitles.silent_sun.starfall_salvo_pre_explosion": "Shattered Mirror Shadow: Finger Snap"

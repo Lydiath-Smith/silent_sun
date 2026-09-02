@@ -53,6 +53,12 @@ final class AntiCheatLayer {
      */
     private float damageSinceExpectedHealthRefresh = 0.0f;
     boolean antiCheatNoLoot = false;
+    /**
+     * 反作弊惩罚窗口截止 tick（2026-09-01 用户裁决）：篡改响应后 5s（100 tick）内，
+     * Boss 全攻击无视目标自定义无敌帧（强制命中，无论是谁；异常离场返场也算——
+     * 窗口按 Boss 实体记录，被惩罚玩家返场仍生效）。
+     */
+    int punishUntilTick = 0;
     int deathCheatStrikeCount = 0;
     /** 反破解：被拦截的强制移除/归零/强杀尝试次数（onRemove清除/isdead强死等）。 */
     int removalAttemptCount = 0;
@@ -320,10 +326,20 @@ final class AntiCheatLayer {
         }
         this.antiCheatPunishGlobalCooldownTicks = 600;
         this.attributeTamperFlagTicks = 60;
+        // 惩罚窗口：反作弊生效后 5s 内全攻击重置目标自定义无敌帧（用户裁决）
+        this.punishUntilTick = boss.tickCount + 100;
         boss.level().playSound(null, boss.blockPosition(),
             SoundEvents.WARDEN_SONIC_BOOM, SoundSource.HOSTILE, 1.0f, 1.0f);
         boss.clearAllExternalEffects();
         boss.reapplySelfBuffs();
+    }
+
+    /**
+     * 惩罚窗口是否生效：反作弊响应后 5s（100 tick）内返回 true，
+     * Boss 全攻击应重置目标自定义无敌帧（用户裁决：异常离场返场也算）。
+     */
+    boolean isPunishWindowActive(int nowTick) {
+        return nowTick < this.punishUntilTick;
     }
 
     /**
@@ -425,35 +441,8 @@ final class AntiCheatLayer {
     }
 
     // ── G4: creative gained-item tracking ──
-
-    /** 物品聚合键：item + 完整 NBT（CompoundTag 具备内容 equals/hashCode）。 */
-    static final class StackKey {
-        final Item item;
-        final CompoundTag tag;
-
-        StackKey(ItemStack stack) {
-            this.item = stack.getItem();
-            CustomData customData = stack.get(DataComponents.CUSTOM_DATA);
-            this.tag = customData == null ? null : customData.copyTag();
-        }
-
-        StackKey(Item item, CompoundTag tag) {
-            this.item = item;
-            this.tag = tag;
-        }
-
-        @Override
-        public boolean equals(Object o) {
-            if (this == o) return true;
-            if (!(o instanceof StackKey other)) return false;
-            return this.item == other.item && Objects.equals(this.tag, other.tag);
-        }
-
-        @Override
-        public int hashCode() {
-            return Objects.hash(this.item, this.tag);
-        }
-    }
+    // StackKey 已提升为顶层类（2026-09-01）：Connector 转换 jar 丢失嵌套类 nest 信息，
+    // 原内部类 AntiCheatLayer$StackKey 会 ClassNotFoundException（创造玩家攻击 Boss 崩溃）。
 
     private static void addStackToAggregate(Map<StackKey, Integer> agg, ItemStack stack) {
         if (stack == null || stack.isEmpty()) return;

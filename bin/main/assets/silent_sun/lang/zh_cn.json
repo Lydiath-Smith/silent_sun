@@ -66,7 +66,6 @@
   "quote.silent_sun.redios.phase2.7": "让一切谬误，彻底燃尽。",
   "quote.silent_sun.redios.phase2.8": "让所有苦厄，尽数灭亡。",
   "quote.silent_sun.redios.phase2.9": "一切只剩下这一切都难以辨识的，空无万象",
-  "effect.silent_sun.soul_sever": "断魂",
   "effect.silent_sun.enrage": "激怒",
   "effect.silent_sun.fragile": "脆弱",
   "message.silent_sun.redios.soul_sever_overflow": "你们在干嘛……伤害拉满了……",
@@ -113,8 +112,6 @@
   "advancement.silent_sun.phase2_countdown.desc": "怎么会有这么能活的家伙",
   "advancement.silent_sun.phase2_win.title": "这是玩家第一次面对非线性移动",
   "advancement.silent_sun.phase2_win.desc": "不要演恐怖片好吗",
-  "death.attack.soul_sever": "\"呃啊！\"%s……再起不能。",
-  "death.attack.soul_sever.player": "\"呃啊！\"%s……再起不能。",
   "death.attack.redios_attack": "你发力啊！你不发力怎么打？",
   "death.attack.redios_attack.item": "你发力啊！你不发力怎么打？",
   "subtitles.silent_sun.starfall_salvo_pre_explosion": "碎镜之影：响指"

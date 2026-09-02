@@ -18,9 +18,16 @@ import net.minecraft.world.level.Level;
  */
 public final class ModDamageTypes {
 
+    /**
+     * 断魂伤害类型统一到灭却之日（2026-09-01 用户裁决：效果与伤害类型应为同一个，走我们 9 bypass）：
+     * 使用 {@code extinction_day_mod_1784441698:soul_sever}——带 9 个 bypass tag
+     * （bypasses_armor/cooldown/effects/enchantments/invulnerability/resistance/shield/wolf_armor
+     * + no_knockback），无视护甲/护盾/无敌帧/创造/保护魔咒，与灭却之日 SoulSeverMobEffect
+     * 结算共用同一伤害类型（真伤通道）。
+     */
     public static final ResourceKey<DamageType> SOUL_SEVER = ResourceKey.create(
             Registries.DAMAGE_TYPE,
-            ResourceLocation.fromNamespaceAndPath("silent_sun", "soul_sever"));
+            ResourceLocation.fromNamespaceAndPath("extinction_day_mod_1784441698", "soul_sever"));
 
     /**
      * 莱德厄斯主攻击 / 技能的统一伤害类型。

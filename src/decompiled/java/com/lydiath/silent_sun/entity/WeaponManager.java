@@ -397,8 +397,7 @@ final class WeaponManager {
         this.uncontrolledSprintExtraCooldownTicks = RediosRules.uncontrolledSprintExtraCooldownTicks();
         for (int i = 0; i < hits; i++) {
             AbsoluteDamageUtil.damage(target, boss.damageSources().mobAttack(boss), damage);
-            // D-断魂：失控疾驰额外连击 AbsoluteDamage 路径统一补挂 + 手动结算断魂追伤
-            boss.settleSoulSeverPostDamage(target);
+            // D-断魂：失控疾驰额外连击 AbsoluteDamage 路径统一补挂（结算由灭却之日 Post 统一触发）
             boss.markSoulSeverIfUnlocked(target);
         }
     }

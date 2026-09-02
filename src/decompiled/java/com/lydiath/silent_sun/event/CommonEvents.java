@@ -359,32 +359,11 @@ public final class CommonEvents {
     @SubscribeEvent
     public static void onLivingDamagePost(LivingDamageEvent.Post event) {
         LivingEntity target = event.getEntity();
-        CompoundTag data = target.getPersistentData();
-        MobEffectInstance effect = target.getEffect(ModEffects.SOUL_SEVER);
-        if (effect == null) {
-            data.remove(SOUL_SEVER_BONUS_KEY);
-            data.remove(SOUL_SEVER_APPLYING_KEY);
-            // EG2: FragileEffect damage amplification (continues even without Soul Sever)
-            applyFragileDamage(event, target);
-            return;
-        }
-        if (data.getBoolean(SOUL_SEVER_APPLYING_KEY)) {
-            return;
-        }
-        long bonus = data.getLong(SOUL_SEVER_BONUS_KEY);
-        if (bonus <= 0L) {
-            // EG2: Even if no Soul Sever bonus, still check Fragile
-            applyFragileDamage(event, target);
-            return;
-        }
-        float appliedBonus = bonus >= 1000000000L ? 1.0E9f : (float)bonus;
-        data.putBoolean(SOUL_SEVER_APPLYING_KEY, true);
-        try {
-            AbsoluteDamageUtil.soulSeverDamage(target, ModDamageTypes.soulSever(target.level()), appliedBonus);
-        } finally {
-            data.putBoolean(SOUL_SEVER_APPLYING_KEY, false);
-        }
-        // EG2: Apply Fragile amplification after Soul Sever bonus
+        // 断魂结算已统一到灭却之日（2026-09-01 用户裁决）：Boss 侧只负责挂账本
+        //（recordSoulSeverLedgerBoss，层值 = 头衔依赖值），结算由灭却之日 SoulSeverMobEffect
+        // 的受击 Post 事件统一触发（玩家账本 + Boss 账本双轨求和 + 9 bypass + 每 tick 去重）。
+        // 本侧原 bonus 结算（trySettleSoulSever）与常量已移除，不再参与断魂伤害计算。
+        // EG2: FragileEffect damage amplification (continues even without Soul Sever)
         applyFragileDamage(event, target);
     }
 

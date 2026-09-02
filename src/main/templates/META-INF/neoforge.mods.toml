@@ -71,8 +71,11 @@ Redios（碎镜之影）Boss 战与相关系统。
 # 2026-08-13 落地为 B：拔刀剑联动改为硬依赖。
 # 断魂 SE（extinction_day_mod_1784441698:soul_sever）与 silent_sun:soul_sever MobEffect 原本为同一设计，
 # 作者为同一人，为避免两命名空间割裂，此处不再走可选反射降级，而是直接声明灭却之日为必需前置。
-# 同时补上拔刀剑本体（slashblade）与 mrqx 拔刀剑核心（sbr_core）作为前置，
-# 使 Boss 的拔刀剑攻击（连击 / SA / 剑气 / 三连 / 断魂）依赖的运行时类始终可用。
+# 拔刀剑本体（slashblade）为必需前置，使 Boss 的拔刀剑攻击（连击 / SA / 剑气 / 三连 / 断魂）
+# 依赖的运行时类始终可用。
+# 2026-09-01 前置化简：sbr_core 从必需前置移除——silent_sun 全工程经 IntegrationContract 反射
+# 访问 slashblade/灭却之日，源码零直接引用 net.mrqx.sbr_core（全库 import 核对），slashblade 本身
+# 也不要求 sbr_core；整合包若装 sbr_core 仅作 slashblade 生态增强，不再是 silent_sun 的加载门槛。
 [[dependencies.silent_sun]]
     modId="slashblade"
     type="required"
@@ -82,13 +85,6 @@ Redios（碎镜之影）Boss 战与相关系统。
 
 [[dependencies.silent_sun]]
     modId="extinction_day_mod_1784441698"
-    type="required"
-    versionRange="*"
-    ordering="NONE"
-    side="BOTH"
-
-[[dependencies.silent_sun]]
-    modId="sbr_core"
     type="required"
     versionRange="*"
     ordering="NONE"

@@ -18,15 +18,25 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.level.Level;
 
 public final class StarfallSalvoEntity extends Entity {
-    /** 每 tick 下落高度（约 70 格/秒，28 格落差约 0.4 秒落地）。 */
+    /** 每 tick 下落高度（2026-09-01 用户实测「瞬爆」：5.0 太快看不见下落过程 → 回退 3.5，
+     *  约 70 格/秒，30 格落差约 0.43 秒，配合随机延迟有层次感）。 */
     private static final double FALL_SPEED_PER_TICK = 3.5;
     /** 硬上限：超出此 tick 仍未引爆则自行消失（兜底，防止 Boss 转阶段时残留）。 */
     private static final int MAX_LIFETIME_TICKS = 240;
 
     private UUID ownerUuid = null;
+    /** 跟踪目标（2026-09-01 用户裁决：星星下落/悬停期间跟随目标当前位置，
+     *  解决「目标移动 → 引爆落空」；目标消失则回落跟随 Boss）。
+     *  2026-09-01 修订：保持生成时的水平偏移（星星群整体平移跟随，间距不变）→
+     *  分散感保留（否则星星全聚向目标中心，视觉上一坨）。 */
+    private UUID targetUuid = null;
+    /** 生成时相对目标中心的水平偏移（跟踪时保持，星星群随目标平移而间距不变）。 */
+    private double offsetX = 0.0;
+    private double offsetZ = 0.0;
     private double hoverY = 0.0;
     private int delayTicks = 0;
     private boolean falling = false;
@@ -44,10 +54,14 @@ public final class StarfallSalvoEntity extends Entity {
         this.noCulling = true;
     }
 
-    public void initSalvo(UUID ownerUuid, double hoverY, int delayTicks) {
+    public void initSalvo(UUID ownerUuid, double hoverY, int delayTicks, UUID targetUuid,
+                          double offsetX, double offsetZ) {
         this.ownerUuid = ownerUuid;
         this.hoverY = hoverY;
         this.delayTicks = delayTicks;
+        this.targetUuid = targetUuid;
+        this.offsetX = offsetX;
+        this.offsetZ = offsetZ;
     }
 
     /** Boss 引爆时调用：标记为合法移除，防止被误判为作弊清除而误伤。 */
@@ -82,6 +96,9 @@ public final class StarfallSalvoEntity extends Entity {
             this.discard();
             return;
         }
+        // 水平跟随目标（2026-09-01 用户裁决）：delay/下落/悬停全程朝目标当前位置缓动，
+        // 目标消失则跟随 Boss——解决「目标移动 → 引爆落空」。
+        this.trackTargetHorizontally();
         if (!this.falling) {
             if (this.delayTicks > 0) {
                 this.delayTicks--;
@@ -98,6 +115,38 @@ public final class StarfallSalvoEntity extends Entity {
             } else {
                 this.setPos(this.getX(), nextY, this.getZ());
             }
+        }
+    }
+
+    /** 水平跟随目标（保持生成时的水平偏移：目标存活 → 目标当前位置+偏移；目标消失 → Boss；
+     *  均不可用 → 原地）。偏移保持使星星群整体平移跟随、互相间距不变 → 分散感保留。 */
+    private void trackTargetHorizontally() {
+        if (!(this.level() instanceof net.minecraft.server.level.ServerLevel sl)) {
+            return;
+        }
+        Entity track = null;
+        if (this.targetUuid != null) {
+            Entity t = sl.getEntity(this.targetUuid);
+            if (t instanceof LivingEntity le && le.isAlive()) {
+                track = le;
+            }
+        }
+        if (track == null && this.ownerUuid != null) {
+            Entity o = sl.getEntity(this.ownerUuid);
+            if (o instanceof LivingEntity le && le.isAlive()) {
+                track = le;
+            }
+        }
+        if (track == null) {
+            return;
+        }
+        double dx = (track.getX() + this.offsetX) - this.getX();
+        double dz = (track.getZ() + this.offsetZ) - this.getZ();
+        double dist = Math.sqrt(dx * dx + dz * dz);
+        if (dist > 0.1) {
+            // 每 tick 移动 0.8 格（不超过剩余距离），平滑追踪不瞬移
+            double step = Math.min(dist, 0.8);
+            this.setPos(this.getX() + dx / dist * step, this.getY(), this.getZ() + dz / dist * step);
         }
     }
 

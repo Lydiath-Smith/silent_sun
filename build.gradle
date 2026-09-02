@@ -166,12 +166,16 @@ dependencies {
 
     implementation "software.bernie.geckolib:geckolib-neoforge-${minecraft_version}:${geckolib_version}"
 
+    // 编译期依赖灭却之日（2026-09-01 断魂统一）：断魂效果（ModEffects.SOUL_SEVER 别名）与
+    // Boss 账本（SoulSeverMobEffect.recordSoulSeverLedgerBoss）直接引用我们模组类；
+    // 仅编译用（compileOnly），运行时仍需前置 jar（mods.toml 已声明 extinction_day required）。
+    compileOnly files("libs/extinction_day_mod_1784441698-1.12.2.jar")
+
     // 硬依赖（mods.toml 声明 required）以本地 jar 挂开发运行时：
     // runData / runClient / runServer 的 mod 加载器会校验依赖，缺失则启动失败。
     // 不发布到依赖方（localRuntime 不随 publish），仅本地开发运行时生效。
-    localRuntime files("libs/extinction_day_mod_1784441698-1.9.62.jar")
-    localRuntime files("libs/mrqxs_Slashblade_Core-1.21.1-1.4.3.jar")
-    localRuntime files("libs/SlashBladeResharpedRefix-2.0.3-0.2.3-1.21.1.jar")
+    localRuntime files("libs/extinction_day_mod_1784441698-1.12.0.jar")
+    localRuntime files("libs/SlashBladeResharped-2.0.7-1.21.1.jar")
 
     cfr "org.benf:cfr:0.152"
 }
