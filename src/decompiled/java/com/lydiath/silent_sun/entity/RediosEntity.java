@@ -244,6 +244,8 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     private boolean blackSunTriggered = false;
     private boolean colorlessUnlocked = false;
     private int colorlessChallengeTicks = -1;
+    /** 2.9 空无万象永久解锁（2026-09-02）：进入 2.9 后传送攻击能力正推/逆推均保持，直至 Boss 死亡。 */
+    private boolean voidAllThingsUnlocked = false;
     BossState bossState = BossState.PHASE1_COMBAT;
     final EnumSet<BossFlag> unlockedFlags = EnumSet.noneOf(BossFlag.class);
     boolean noResurrection = false;
@@ -1225,9 +1227,24 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         // 无条件清除所有非自身效果：仅保留莱德厄斯自身的"激怒"状态，
         // 其余无论是有益/有害药水效果，还是被 removeEffect 覆写锁定的效果，一律移除。
         MobEffectInstance enrage = this.getEffect((Holder<MobEffect>)ModEffects.ENRAGE);
+        // 2026-09-02：2.8/2.9 永久效果豁免（直至 Boss 死亡）——colorlessUnlocked 解锁后，
+        // 力量V/迅捷II/恢复V（无限时长）在清除时保留并重挂，onTitleChanged/反作弊不再移除
+        //（正推/逆推/状态切换效果保持；重复效果以永久版本为主）。
+        MobEffectInstance permanentBoost = this.colorlessUnlocked ? this.getEffect(MobEffects.DAMAGE_BOOST) : null;
+        MobEffectInstance permanentSpeed = this.colorlessUnlocked ? this.getEffect(MobEffects.MOVEMENT_SPEED) : null;
+        MobEffectInstance permanentRegen = this.colorlessUnlocked ? this.getEffect(MobEffects.REGENERATION) : null;
         this.removeAllEffects();
         if (enrage != null) {
             super.addEffect(enrage, this);
+        }
+        if (permanentBoost != null) {
+            super.addEffect(permanentBoost, this);
+        }
+        if (permanentSpeed != null) {
+            super.addEffect(permanentSpeed, this);
+        }
+        if (permanentRegen != null) {
+            super.addEffect(permanentRegen, this);
         }
     }
 
@@ -2719,7 +2736,8 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         if (livingTarget.isAlive() && this.isBladeAttackAllowed() && this.isBladeModeActive()) {
             IntegrationContract.tryApplyBossTripleWhammy((LivingEntity)this, livingTarget);
         }
-        if (this.isVoidAllThingsActive()) {
+        if (this.voidAllThingsUnlocked) {
+            // 2026-09-02：2.9 命中推离能力永久化（逆推/状态切换保持，直至 Boss 死亡）
             dir = livingTarget.position().subtract(this.position());
             if (dir.lengthSqr() < 1.0E-6) {
                 dir = new Vec3(1.0, 0.0, 0.0);
@@ -2853,7 +2871,8 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             this.multiPartAttackIndex = (this.multiPartAttackIndex + 1) % attempts;
             this.multiPartDropStreak.put(part.getId(), 0);
         }
-        if (this.isVoidAllThingsActive()) {
+        if (this.voidAllThingsUnlocked) {
+            // 2026-09-02：2.9 命中推离能力永久化（逆推/状态切换保持，直至 Boss 死亡）
             Vec3 dir = mainTarget.position().subtract(this.position());
             if (dir.lengthSqr() < 1.0E-6) {
                 dir = new Vec3(1.0, 0.0, 0.0);
@@ -3143,7 +3162,8 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
                 this.tickPhase1Resistance();
             }
         }
-        if (this.isColorlessActive()) {
+        if (this.colorlessUnlocked) {
+            // 2026-09-02：1.2 护甲提升（抗性）作为 2.8 调用效果永久化——colorlessUnlocked 后持续至 Boss 死亡
             this.tickResistanceBoost();
         }
         if (!this.isWishGrantActive()) {
@@ -3286,7 +3306,9 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     }
 
     boolean isSorrowToilActive() {
-        return this.phase == 1 && this.titleIndex == 6 || this.isColorlessActive();
+        // 2026-09-02：1.6 虚空光环作为 2.8 调用效果永久化——colorlessUnlocked（2.8 解锁，
+        // 永久标志）后持续至 Boss 死亡（正推 2.9/逆推均生效）；原 P1 1.6 自身分支不动。
+        return this.phase == 1 && this.titleIndex == 6 || this.colorlessUnlocked;
     }
 
     private void tickSorrowToilAura(ServerLevel serverLevel) {
@@ -3593,6 +3615,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         }
         this.blackSunTriggered = tag.getBoolean("SilentSunBlackSunTriggered");
         this.colorlessUnlocked = tag.getBoolean("SilentSunColorlessUnlocked");
+        this.voidAllThingsUnlocked = tag.getBoolean("SilentSunVoidAllThingsUnlocked");
         this.colorlessChallengeTicks = tag.getInt("SilentSunColorlessChallengeTicks");
         this.noResurrection = tag.getBoolean("SilentSunNoResurrection");
         this.awaitingNoResurrectionPhase2 = tag.getBoolean("SilentSunAwaitingNoResurrectionPhase2");
@@ -3716,6 +3739,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         tag.put("SilentSunDarkStarRestore", (Tag)darkStarRestoreList);
         tag.putBoolean("SilentSunBlackSunTriggered", this.blackSunTriggered);
         tag.putBoolean("SilentSunColorlessUnlocked", this.colorlessUnlocked);
+        tag.putBoolean("SilentSunVoidAllThingsUnlocked", this.voidAllThingsUnlocked);
         tag.putInt("SilentSunColorlessChallengeTicks", this.colorlessChallengeTicks);
         tag.putBoolean("SilentSunNoResurrection", this.noResurrection);
         tag.putBoolean("SilentSunPendingLockReleased", this.pendingLockReleased);
@@ -4307,7 +4331,10 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     }
 
     private void tickColorlessSuper(ServerLevel serverLevel) {
-        if (!this.colorlessUnlocked || !this.bossState.isCombat()) {
+        // 2026-09-02：2.8/2.9 效果永久化——colorlessUnlocked 解锁后（正推/逆推/状态切换）
+        // 均保持：buff 已无限时长（applyColorlessPermanentBuffs），此处不再依赖 isCombat
+        // 限制（VOTE/PENDING 也保持）；仅保留 2.8 新效果（每 100 tick 激怒 +1）。
+        if (!this.colorlessUnlocked) {
             return;
         }
         this.applyColorlessPermanentBuffs();
@@ -4316,11 +4343,14 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         }
     }
 
+    /** 2.8 无光失色永久效果（2026-09-02 起无限时长 = 直至 Boss 死亡；healBoostTicks 每 tick 重置永续）。
+     *  调用效果（力量V/迅捷II/恢复V）+ 永久机制标志。重复效果以本永久版本为主
+     * （vanilla addEffect 对同效果保留更长 duration，无限不被 40 tick 覆盖）。 */
     private void applyColorlessPermanentBuffs() {
         this.healBoostTicks = 600;
-        this.addEffect(new MobEffectInstance(MobEffects.DAMAGE_BOOST, 40, 4, true, false), this);
-        this.addEffect(new MobEffectInstance(MobEffects.MOVEMENT_SPEED, 40, 1, true, false), this);
-        this.addEffect(new MobEffectInstance(MobEffects.REGENERATION, 40, 4, true, false), this);
+        this.addEffect(new MobEffectInstance(MobEffects.DAMAGE_BOOST, MobEffectInstance.INFINITE_DURATION, 4, true, false), this);
+        this.addEffect(new MobEffectInstance(MobEffects.MOVEMENT_SPEED, MobEffectInstance.INFINITE_DURATION, 1, true, false), this);
+        this.addEffect(new MobEffectInstance(MobEffects.REGENERATION, MobEffectInstance.INFINITE_DURATION, 4, true, false), this);
         this.ashDawnUnlocked = true;
         this.dodgeChance = Math.max(this.dodgeChance, 0.15);
         this.chaosRuinAbsoluteAttacks = true;
@@ -5277,7 +5307,9 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     }
 
     private void tickVoidAllThings() {
-        if (!this.isVoidAllThingsActive()) {
+        // 2026-09-02：2.9 传送攻击能力永久化——进入 2.9 解锁 voidAllThingsUnlocked 后，
+        // 逆推回 2.8/更早头衔（COMBAT 期间）也保持传送/黑暗/反应式避让，直至 Boss 死亡。
+        if (!this.voidAllThingsUnlocked && !this.isVoidAllThingsActive()) {
             return;
         }
         Level level = this.level();
@@ -5373,8 +5405,9 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
                 serverLevel.setBlock(head, Blocks.AIR.defaultBlockState(), 3);
             }
             Vec3 dest = Vec3.atBottomCenterOf((Vec3i)feet);
-            // 轨道 A：phase2.9 主动避让玩家立体锁定球体（无妄之终），相交则抬升到球顶+1。
-            if (this.isVoidAllThingsActive()) {
+            // 轨道 A：2.9 主动避让玩家立体锁定球体（无妄之终）——2026-09-02 永久化
+            //（voidAllThingsUnlocked，逆推保持），相交则抬升到球顶+1。
+            if (this.voidAllThingsUnlocked) {
                 Vec3 avoided = this.avoidVoidSphere(dest);
                 if (avoided != null) {
                     if (avoided.y - (double)feet.getY() <= 32.0) {
@@ -5466,7 +5499,8 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     }
 
     public boolean teleportTo(ServerLevel level, double x, double y, double z, Set<RelativeMovement> movements, float yRot, float xRot) {
-        if (!this.allowSelfTeleport && this.isVoidAllThingsActive()) {
+        if (!this.allowSelfTeleport && this.voidAllThingsUnlocked) {
+            // 2026-09-02：2.9 阻止外部传送能力永久化（逆推保持，直至 Boss 死亡）
             return false;
         }
         return super.teleportTo(level, x, y, z, movements, yRot, xRot);
@@ -5865,15 +5899,16 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             this.blackSunTriggered = false;
         }
         if (newPhase == 2 && newTitleIndex == 9) {
-            this.healBoostTicks = 600;
-            this.addEffect(new MobEffectInstance(MobEffects.DAMAGE_BOOST, 40, 4, true, false), this);
-            this.addEffect(new MobEffectInstance(MobEffects.MOVEMENT_SPEED, 40, 1, true, false), this);
-            this.addEffect(new MobEffectInstance(MobEffects.REGENERATION, 40, 4, true, false), this);
+            // 2.9 空无万象：永久解锁（2026-09-02）——2.8 效果 + 传送攻击能力，正推/逆推/
+            // 状态切换直至 Boss 死亡均保持（逆推不削效果）。buff 由 applyColorlessPermanentBuffs
+            // 无限时长统一挂（40 tick 版本会与永久版重复且可能干扰，不再单独挂）。
+            this.voidAllThingsUnlocked = true;
             this.ashDawnUnlocked = true;
             this.dodgeChance = Math.max(this.dodgeChance, 0.15);
             this.chaosRuinAbsoluteAttacks = true;
             this.enrageStackingUnlocked = true;
             this.colorlessUnlocked = true;
+            this.applyColorlessPermanentBuffs();
         }
     }
 
