@@ -511,6 +511,14 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             return;
         }
         ServerLevel serverLevel = (ServerLevel)this.level();
+        // 结算保底（2026-09-02，最后的补救手段，希望尽量用不到）：结算已标记
+        //（settlementDone=true，掉落实已发放）但实体仍未移除（结算链路异常中断/竞态残留）→
+        // 立即合法离场。正常结算 safeDiscard 与 settlementDone 同 tick 完成，本分支不触发；
+        // 触发即代表"结算信息已发但 Boss 赖着"——最后手段兜底移除（legitRemoval + discard）。
+        if (this.settlementDone && !this.isRemoved()) {
+            this.safeDiscard();
+            return;
+        }
         if (this.tickFailsafe(serverLevel)) {
             return;
         }
@@ -2236,6 +2244,10 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         this.setTarget(null);
         this.setNoAi(true);
         this.grantAdvancementToParticipants(serverLevel, "phase2_countdown");
+        // 计时胜利广播（2026-09-02 补上 lang 已有文案 message.silent_sun.redios.challenge_success：
+        // 「打爽了。可能让你觉得头疼也抱歉了。」——此前结算全程无玩家可见文本）。
+        this.broadcastToParticipants(this.rediosSigned(
+            Component.translatable("message.silent_sun.redios.challenge_success").withStyle(ChatFormatting.DARK_PURPLE)));
         // 计时胜利（无色挑战成功）也掉二阶段奖励（2026-09-01 用户裁决：phase2.8 数值难办，
         // 计时胜利给掉落，而非原 antiCheatNoLoot 无掉落）——走 settleBattle 结算
         //（settlementDone 幂等 + 账本先标 settled + phase==2 时 dropPhase2Reward + 召唤冷却）。
