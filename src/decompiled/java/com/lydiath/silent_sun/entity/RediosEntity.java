@@ -5601,10 +5601,12 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         if (!hasBook) {
             loot.add(this.createOutcomeBook(outcome));
         }
+        // 信标一组（64）：两阶段都掉（2026-09-04 用户裁决「两个阶段信标数量都改成一组」——
+        // 原实现仅 P2 补 1 个、P1 无）。缺则补 64，已有（override 含）不重复。
+        if (!hasBeacon) {
+            loot.add(new ItemStack(Items.BEACON, 64));
+        }
         if (outcome == RediosBookOutcome.PHASE2_WIN) {
-            if (!hasBeacon) {
-                loot.add(new ItemStack(Items.BEACON));
-            }
             if (!hasDiamondBlocks) {
                 loot.add(new ItemStack(Items.DIAMOND_BLOCK, 64));
             }
@@ -5662,6 +5664,10 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         ArrayList<ItemStack> loot = new ArrayList<ItemStack>(RediosRewardOverrideConfig.getOverrideStacks(2, this.titleIndex));
         boolean hasOverride = !loot.isEmpty();
         loot.add(new ItemStack(ModItems.REDIOS_DISC_PHASE2.get()));
+        // 二阶段额外掉落（2026-09-04 用户裁决）：龙蛋 ×2 + 耀魂方块（slashblade）一组 64。
+        loot.add(new ItemStack(Items.DRAGON_EGG, 2));
+        BuiltInRegistries.ITEM.getOptional(ResourceLocation.fromNamespaceAndPath("slashblade", "proudsoul_trapezohedron"))
+            .ifPresent(trapezohedron -> loot.add(new ItemStack(trapezohedron, 64)));
         if (!hasOverride) {
             loot.addAll(RediosLootConfig.roll(serverLevel.random));
             if (doubleRollOnEmpty) {
