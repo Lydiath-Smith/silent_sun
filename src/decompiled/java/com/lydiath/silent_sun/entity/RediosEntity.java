@@ -2235,10 +2235,12 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             return;
         }
         if (phase2) {
-            // P2 濒死锁血到期：解除锁血/无敌，回到 P2 战斗等待玩家补刀自然击杀。
-            // 2026-09-01：不再压回 1 血——PENDING 无敌期自我恢复（只回不扣）的成果保留，
-            // 补刀需打掉回血后的当前血量；不自杀、不在此设 CD（CD 由 die() 在玩家真正
-            // 击杀时设置）。反作弊基线保持 PENDING 期最后一次 setHeal 的 mark 值。
+            // P2 濒死锁血到期：解除锁血/无敌 → Boss 变为【可击杀】。
+            // pending 唯一目的 = 防止击杀误判（锁 1 血防伤害打到 ≤0 被误判死亡/提前结算），
+            // 到期后 pendingLockReleased=true 回 COMBAT，Boss 恢复可被正常击杀（die 设 CD），
+            // 无其他设计目的。2026-09-01：不再压回 1 血——PENDING 无敌期自我恢复（只回不扣）
+            // 的成果保留，击杀需打掉回血后的当前血量；不自杀、不在此设 CD（CD 由 die() 在
+            // 玩家真正击杀时设置）。反作弊基线保持 PENDING 期最后一次 setHeal 的 mark 值。
             this.pendingLockReleased = true;
             this.transitionTo(BossState.PHASE2_COMBAT);
             this.setPose(Pose.STANDING);
