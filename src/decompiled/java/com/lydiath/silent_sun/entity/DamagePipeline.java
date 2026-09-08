@@ -674,12 +674,13 @@ public final class DamagePipeline {
             boss.enterPendingState();
             return DamageResult.cancel();
         }
-        if (boss.bossState == BossState.PHASE1_PENDING) {
-            // PENDING = 濒死锁血无敌期（2026-09-01 用户裁决「9bypass 级打不穿」）：
-            // 伤害一律取消——原「仅 health-amount≤1 才钳 1、>1 放行掉血」被前置 9pass 断魂
-            // （每 tick 结算、无视无敌帧）钻空子：每 tick 掉血把自我恢复（tickNaturalRegen）
-            // 打回 1，观感"锁在 1 一动不动"。现全 cancel：Boss 只自我恢复回血，伤害打不穿，
-            // 锁血到期才收口（P1 投票 / P2 解除后补刀）。系统自身扣血（直接 setHealth）不受影响。
+        if (boss.bossState == BossState.PHASE1_PENDING
+            && boss.getHealth() - ctx.amount < 1.0f) {
+            // pending 唯一目的 = 防止击杀误判（2026-09-04 最终口径）：仅当本次伤害会把血量
+            // 扣到 <1 时钳 1 并取消该伤害（防死）；血量 >1 的伤害一律正常结算（不做任何改动）。
+            // Boss 在 pending 期间可攻击/可回血/可移动/可切武器，仅锁 1 血防误判死亡。
+            boss.setHealth(1.0f);
+            boss.anticheat.markLegalHealthChange(1.0f);
             return DamageResult.cancel();
         }
         if (boss.bossState == BossState.PHASE1_COMBAT && !atLastTitle
@@ -730,10 +731,13 @@ public final class DamagePipeline {
             boss.enterPendingState();
             return DamageResult.cancel();
         }
-        if (boss.bossState == BossState.PHASE2_PENDING && !boss.pendingLockReleased) {
-            // PENDING = 濒死锁血无敌期（2026-09-01 用户裁决「9bypass 级打不穿」）：伤害一律取消，
-            // Boss 只自我恢复回血；锁血到期 pendingLockReleased=true 解除后（onPendingLockExpired）
-            // 玩家补刀才可击杀。原「health-amount≤1 才钳 1」被 9pass 每 tick 掉血钻空子（自我恢复失效）。
+        if (boss.bossState == BossState.PHASE2_PENDING && !boss.pendingLockReleased
+            && boss.getHealth() - ctx.amount < 1.0f) {
+            // pending 唯一目的 = 防止击杀误判（2026-09-04 最终口径）：仅当本次伤害会把血量扣到
+            // <1 时钳 1 并取消（防死）；>1 伤害正常结算。pendingLockReleased=true（可击杀）后
+            // 不再拦截，伤害可正常致死（die 设 CD）。
+            boss.setHealth(1.0f);
+            boss.anticheat.markLegalHealthChange(1.0f);
             return DamageResult.cancel();
         }
         if (boss.bossState.isPhase2Combat() && !atLastTitle
