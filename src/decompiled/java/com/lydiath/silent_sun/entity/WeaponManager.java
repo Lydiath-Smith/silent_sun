@@ -135,8 +135,12 @@ final class WeaponManager {
     /** 拔刀剑攻击窗口状态机：战斗阶段内概率进入刀窗口，窗口结束进冷却。 */
     private void tickBladeMode() {
         if (!IntegrationContract.isSlashBladeIntegrationAvailable()) return;
-        // 脱离战斗阶段（过渡/投票/濒死等）时强制收回刀，并重置热身标记
-        if (!boss.bossState.isCombat()) {
+        // 脱离战斗阶段（过渡/投票等）时强制收回刀，并重置热身标记。
+        // 2026-09-04：pending（濒死锁血）不在此列——pending 期间 Boss 照常战斗（拔刀剑攻击
+        // 不中断），仅锁 1 血防击杀误判，刀窗口维持。
+        if (!boss.bossState.isCombat()
+            && boss.bossState != BossState.PHASE1_PENDING
+            && boss.bossState != BossState.PHASE2_PENDING) {
             this.bladeModeTicks = 0;
             this.bladeModeCooldownTicks = 0;
             this.bladeModeWarmupDone = false;

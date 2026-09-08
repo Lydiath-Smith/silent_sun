@@ -3930,7 +3930,11 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         if (this.isWhoseWishActive()) {
             return false;
         }
-        return this.bossState.isCombat();
+        // 2026-09-04：pending 期间 Boss 照常战斗（拔刀剑攻击不中断）——pending 唯一目的只是
+        // 锁 1 血防击杀误判，故 COMBAT 与两个 PENDING 状态均允许拔刀剑攻击。
+        return this.bossState.isCombat()
+            || this.bossState == BossState.PHASE1_PENDING
+            || this.bossState == BossState.PHASE2_PENDING;
     }
 
     public boolean isBladeModeActive() {
