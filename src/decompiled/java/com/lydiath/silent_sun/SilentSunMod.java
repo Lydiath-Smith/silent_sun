@@ -7,6 +7,8 @@ import com.lydiath.silent_sun.config.SilentSunConfig;
 import com.lydiath.silent_sun.entity.RediosEntity;
 import com.lydiath.silent_sun.network.BlackSunDefeatPayload;
 import com.lydiath.silent_sun.network.BlackSunRespawnPayload;
+import com.lydiath.silent_sun.registry.ModBlockEntities;
+import com.lydiath.silent_sun.registry.ModBlocks;
 import com.lydiath.silent_sun.registry.ModEffects;
 import com.lydiath.silent_sun.registry.ModEntities;
 import com.lydiath.silent_sun.registry.ModItems;
@@ -40,6 +42,8 @@ public final class SilentSunMod {
         ModEntities.ENTITY_TYPES.register(modEventBus);
         ModEffects.MOB_EFFECTS.register(modEventBus);
         ModItems.ITEMS.register(modEventBus);
+        ModBlocks.BLOCKS.register(modEventBus);
+        ModBlockEntities.BLOCK_ENTITIES.register(modEventBus);
         ModSounds.SOUND_EVENTS.register(modEventBus);
         ModTabs.CREATIVE_MODE_TABS.register(modEventBus);
         modEventBus.addListener(this::onEntityAttributes);

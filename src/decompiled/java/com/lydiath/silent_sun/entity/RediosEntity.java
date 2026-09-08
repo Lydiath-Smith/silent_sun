@@ -209,6 +209,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     private static final EntityDataAccessor<Integer> CLIENT_TWILIGHT_ACTIVE = SynchedEntityData.defineId(RediosEntity.class, EntityDataSerializers.INT);
     private static final EntityDataAccessor<Integer> CLIENT_TITLE_LOCK_TICKS = SynchedEntityData.defineId(RediosEntity.class, EntityDataSerializers.INT);
     private static final EntityDataAccessor<Integer> CLIENT_INTRO_ACTIVE = SynchedEntityData.defineId(RediosEntity.class, EntityDataSerializers.INT);
+    private static final EntityDataAccessor<Integer> CLIENT_SUMMON_INTRO_TICKS = SynchedEntityData.defineId(RediosEntity.class, EntityDataSerializers.INT);
     private static final int INTRO_TOTAL_TICKS = 80;
     private static final int INTRO_STAR_COUNT = 6;
     private static final RawAnimation TRANSITION_ANIM = RawAnimation.begin().thenPlay("transition");
@@ -358,6 +359,10 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     private boolean inHurtProcessing = false;
     /** 入场演出剩余 tick（0 表示无演出）：演出期 Boss 冻结、无敌、不索敌。 */
     private int introTicks = 0;
+    /** 召唤演出剩余 tick（2026-09-04）：裂解之痛召唤时播放切阶段立方体动画，烟圈收缩帧散射繁星爆闪；0=无。 */
+    private int summonIntroTicks = 0;
+    /** 召唤演出已释放散射爆闪标记（防收缩帧多 tick 重复触发）。 */
+    private boolean summonScatterFired = false;
     /** 重建自战斗账本记录的标记：仅作语义区分，不影响结算 CD（照常设 CD）。 */
     private boolean rebuiltAsSettled = false;
     private LeaveReason leaveReason = LeaveReason.NONE;
@@ -397,6 +402,11 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         builder.define(CLIENT_TWILIGHT_ACTIVE, 0);
         builder.define(CLIENT_TITLE_LOCK_TICKS, 0);
         builder.define(CLIENT_INTRO_ACTIVE, 0);
+        builder.define(CLIENT_SUMMON_INTRO_TICKS, 0);
+    }
+
+    public int getClientSummonIntroTicks() {
+        return this.entityData.get(CLIENT_SUMMON_INTRO_TICKS);
     }
 
     public int getClientPhase() {
@@ -445,6 +455,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         this.entityData.set(CLIENT_TWILIGHT_ACTIVE, this.isTwilightMomentActive() ? 1 : 0);
         this.entityData.set(CLIENT_TITLE_LOCK_TICKS, this.titleLockTicks);
         this.entityData.set(CLIENT_INTRO_ACTIVE, this.introTicks > 0 ? 1 : 0);
+        this.entityData.set(CLIENT_SUMMON_INTRO_TICKS, this.summonIntroTicks);
     }
 
     protected void registerGoals() {
@@ -567,6 +578,11 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             RuntimeInjectionGuard.scanIfNeeded(RediosEntity.class);
         }
         this.syncClientRenderData();
+        // 召唤演出（2026-09-04）：裂解之痛召唤时播放切阶段立方体动画，烟圈收缩帧释放散射繁星爆闪。
+        // 递减与散射触发独立于 intro（intro 冻结 Boss 响指演出并行）；引爆交给战斗 tick 的 tickStarfallSalvo。
+        if (this.summonIntroTicks > 0) {
+            this.tickSummonCinematic(serverLevel);
+        }
         if (this.introTicks > 0) {
             this.tickIntro(serverLevel);
             return;
@@ -648,9 +664,11 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             if (this.checkBattleAreaUnloaded(serverLevel)) {
                 return;
             }
-            this.getNavigation().stop();
-            this.setDeltaMovement(0.0, this.getDeltaMovement().y, 0.0);
-            this.setPose(Pose.SITTING);
+            // 2026-09-04：pending 不代表 Boss 被眩晕（设计遗留问题修复）——移除
+            // navigation.stop / setDeltaMovement(0) / SITTING 冻结：Boss 正常站立、移动、
+            // 切武器（weapons.tick 在前已跑）、近战攻击（goalSelector 驱动）。仅保留锁血计时 +
+            // 自我恢复 + 到期收口。
+            this.setPose(Pose.STANDING);
             if (this.titleLockTicks > 0) {
                 --this.titleLockTicks;
             }
@@ -741,6 +759,48 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         this.tickIntroStarfallDetonation(serverLevel);
         if (this.introTicks <= 0) {
             this.setPose(Pose.STANDING);
+        }
+    }
+
+    /** 召唤演出开始（2026-09-04）：播放切阶段立方体动画 + 烟圈收缩帧散射繁星爆闪。不冻结 Boss。 */
+    public void beginSummonCinematic() {
+        this.summonIntroTicks = Math.max(1, SilentSunConfig.PHASE_TRANSITION_SECONDS.get() * 20);
+        this.summonScatterFired = false;
+    }
+
+    /** 召唤演出每 tick：递减；烟圈收缩帧释放一次纯视觉散射繁星爆闪；引爆纯视觉星星（幂等）。 */
+    private void tickSummonCinematic(ServerLevel serverLevel) {
+        int total = Math.max(1, SilentSunConfig.PHASE_TRANSITION_SECONDS.get() * 20);
+        int elapsed = total - this.summonIntroTicks;
+        // 烟圈收缩帧：立方体 fieldT=0.5 → elapsed = impactTick(6) + (total-6)/2
+        int contractTick = 6 + (total - 6) / 2;
+        if (!this.summonScatterFired && elapsed >= contractTick) {
+            this.summonScatterFired = true;
+            this.spawnSummonScatterStars(serverLevel);
+        }
+        this.tickIntroStarfallDetonation(serverLevel);
+        --this.summonIntroTicks;
+    }
+
+    /** 召唤散射繁星爆闪（纯视觉、无伤害、不破坏方块）：散射 20 格，复用 intro 星星引爆链（explode NONE）。 */
+    private void spawnSummonScatterStars(ServerLevel serverLevel) {
+        this.introStarfallStars.clear();
+        this.introStarfallDetonated = false;
+        for (int i = 0; i < INTRO_STAR_COUNT; ++i) {
+            double angle = this.random.nextDouble() * Math.PI * 2.0;
+            double dist = 20.0 * (0.25 + 0.75 * Math.sqrt(this.random.nextDouble()));
+            double x = this.getX() + Math.cos(angle) * dist;
+            double z = this.getZ() + Math.sin(angle) * dist;
+            double hoverY = this.getY() + 2.0;
+            double spawnY = this.getY() + 30.0;
+            int delay = this.random.nextInt(20);
+            StarfallSalvoEntity star = ModEntities.STARFALL_SALVO.get().create(serverLevel);
+            if (star == null) continue;
+            star.initSalvo(this.getUUID(), hoverY, delay, null, 0.0, 0.0);
+            star.markDisplayExempt();
+            star.setPos(x, spawnY, z);
+            serverLevel.addFreshEntity(star);
+            this.introStarfallStars.add(star.getUUID());
         }
     }
 

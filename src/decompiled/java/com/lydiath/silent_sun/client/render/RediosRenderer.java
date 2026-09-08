@@ -79,6 +79,13 @@ extends HumanoidMobRenderer<RediosEntity, HumanoidModel<RediosEntity>> {
             this.renderTransitionEffects(entity, transitionTicks, partialTick, poseStack, bufferSource, packedLight);
             poseStack.popPose();
         }
+        // 召唤演出（2026-09-04）：裂解之痛召唤时复用切阶段立方体动画（烟圈收缩帧服务端触发散射爆闪）。
+        int summonTicks = entity.getClientSummonIntroTicks();
+        if (summonTicks > 0 && transitionTicks <= 0) {
+            poseStack.pushPose();
+            this.renderTransitionEffects(entity, summonTicks, partialTick, poseStack, bufferSource, packedLight);
+            poseStack.popPose();
+        }
         super.render(entity, entityYaw, partialTick, poseStack, bufferSource, packedLight);
     }
 

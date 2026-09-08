@@ -12,6 +12,7 @@ import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.entity.EquipmentSlotGroup;
 import net.minecraft.world.entity.ai.attributes.AttributeModifier;
 import net.minecraft.world.entity.ai.attributes.Attributes;
+import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.EitherHolder;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.JukeboxPlayable;
@@ -22,6 +23,12 @@ import net.neoforged.neoforge.registries.DeferredRegister;
 public final class ModItems {
     public static final DeferredRegister.Items ITEMS = DeferredRegister.createItems("silent_sun");
     public static final DeferredHolder<Item, Item> REDIOS_SIGIL = ITEMS.register("redios_sigil", () -> new RediosSigilItem(new Item.Properties().stacksTo(1)));
+    /** 裂解之痛（召唤祭坛）方块物品（2026-09-04）。 */
+    public static final DeferredHolder<Item, Item> CLEAVING_PAIN = ITEMS.register("cleaving_pain",
+        () -> new BlockItem(ModBlocks.CLEAVING_PAIN.get(), new Item.Properties()));
+    /** 莱德厄斯召唤器（裂解之痛祭坛产出，持其右键祭坛召唤/追击 Boss，2026-09-04）。 */
+    public static final DeferredHolder<Item, Item> REDIOS_SUMMONER = ITEMS.register("redios_summoner",
+        () -> new Item(new Item.Properties().stacksTo(1)));
     /**
      * 一阶段战斗曲唱片：掉落于一阶段奖励，音频复用 redios_battle_music_phase1。
      * 封面贴图来自用户提供的 image (1).png（转为圆形唱片贴图）。
