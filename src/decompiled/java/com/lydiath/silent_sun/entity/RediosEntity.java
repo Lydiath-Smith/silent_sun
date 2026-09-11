@@ -2857,6 +2857,16 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         if (this.leaveReason != LeaveReason.NONE) {
             SilentSunMod.LOGGER.warn("Redios leaving (leaveReason={}) at {}", this.leaveReason, this.blockPosition());
         }
+        // 2026-09-11（代码审计 G15 #4 修复·收口）：在此统一还原 2.6 暗星爆破摧毁/替换掉的
+        // 白名单方块（命令方块 / 结构方块 / 屏障 / 末地传送门框架等）。
+        // 原实现只在 die() 里还原（且 antiCheatNoLoot 分支还提前 return 跳过它），
+        // 而 leaveBattle 覆盖的「无掉落退场 / 创造离场 / 管理员清理 / 全灭 / 脱战 / 区块卸载 /
+        // 极限模式区块保留」等出口**全都不还原** ⇒ 2.6 期间走这些出口即不可逆的世界改动。
+        // safeDiscard 是所有这些出口的共同终点，在此收口可一次覆盖全部路径；
+        // restoreDarkStarSpecialBlocks 自身幂等（末尾 clear 映射、空表直接返回），重复调用安全。
+        if (this.level() instanceof ServerLevel sl) {
+            this.restoreDarkStarSpecialBlocks(sl);
+        }
         this.discard();
     }
 
@@ -3335,11 +3345,16 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         DamageSource src = ModDamageTypes.rediosAttack(this.level(), this);
         Holder<DamageType> dmgHolder = this.resolveAttackDamageHolder();
         if (dmgHolder != null) {
-            // 2026-09-11（代码审计 G15 #3 修复）：单参构造 `new DamageSource(holder)` 不带
-            // causingEntity / directEntity，会把上一行刚带上的 this（Boss）丢掉 ⇒
-            // isFinalKillerPlayer(damageSource) 恒返回 false（击杀时不设召唤冷却），
-            // 死亡/受击事件与第三方模组的 attacker 判定同样拿不到 Boss。
-            // 与本文件 randomAttackSource() 的 `new DamageSource(holder, this, this)` 口径统一。
+            // 2026-09-11（代码审计 G15 #3 修复）：单参构造 `new DamageSource(holder)` 的
+            // directEntity / causingEntity **都是 null**，会把上一行刚带上的 this（Boss）丢掉。
+            // 补回后实际会改变行为的是两处：
+            //   · 受击目标的仇恨归因 —— 原版 `hurt` 对带实体的来源会 `setLastHurtByMob(攻击者)`；
+            //   · `DamagePipeline` 中以 `ctx.source.getEntity() instanceof LivingEntity` 为判据的
+            //     闪避分支（2.1 范围闪避 / 2.2 落空）—— 原先在随机化 / 特化攻击源上恒为 false，
+            //     即这两段闪避**从未生效**；补回后开始按设计稿 §7.1 A4 生效。
+            // 注：`DamageSource(Holder, Entity directEntity, Entity causingEntity)` 的参数顺序是
+            // (holder, direct, causing)；此处两处都传 this，故顺序无差别。
+            // 与本文件 randomAttackSource() 的口径统一。
             src = new DamageSource(dmgHolder, this, this);
         }
         float mainHealthBefore = mainTarget.getHealth();
@@ -4601,7 +4616,8 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         DamageSource src = ModDamageTypes.rediosAttack(this.level(), this);
         Holder<DamageType> dmgHolder = this.resolveAttackDamageHolder();
         if (dmgHolder != null) {
-            // 2026-09-11（代码审计 G15 #3 修复）：同上 —— 补回攻击者，避免该来源无 getEntity()。
+            // 2026-09-11（代码审计 G15 #3 修复）：同上 —— 补回攻击者实体
+            // （影响仇恨归因与以 source.getEntity() 为判据的闪避分支，详见 doHurtMultiPartTarget 处）。
             src = new DamageSource(dmgHolder, this, this);
         }
         return src;
