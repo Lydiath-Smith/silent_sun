@@ -1033,6 +1033,10 @@ public final class IntegrationContract {
             }
         }
         if (targets.isEmpty()) return;
+        // 2026-09-11（代码审计 G19 #3 修复）：battleParticipants 是 HashSet，迭代序不稳定 ——
+        // 而下方「飞行追踪」按 targets 的下标取目标，顺序一变目标就漂移。
+        // 按实体 id 排序得到会话内稳定的顺序（实体 id 在同一会话内不变）。
+        targets.sort(java.util.Comparator.comparingInt(Entity::getId));
 
         // 覆盖全部 IShootable 拔刀剑投射物：剑气 EntityDrive / 幻影剑 SummonedSword
         // （均 extends EntityAbstractSummonedSword）/ 刀光 EntitySlashEffect / 次元斩
@@ -1048,7 +1052,11 @@ public final class IntegrationContract {
             // 每 tick 朝目标当前位置改向（EntityAbstractSummonedSword.tick 尊重 deltaMovement，
             // 2.0.7 源码 L325 确认）→ 具备基础索敌；环绕/汇聚阶段（贴近 Boss）不追踪，保留演出。
             if (blade.distanceToSqr(boss) > 64.0 && !targets.isEmpty()) {
-                LivingEntity track = targets.get(0);
+                // 2026-09-11（代码审计 G19 #3 修复）：原先**所有**剑统一拉向 targets.get(0)，
+                // 而发射方向是按 index % targets.size() 分散的 —— 分散每 tick 被抹掉，全部剑汇聚到同一目标。
+                // 现改为按「剑自身实体 id」取模选目标：既保持分散，又保证同一把剑在整个飞行过程中
+                // 目标稳定（不随循环顺序或 HashSet 迭代序漂移）。
+                LivingEntity track = targets.get(Math.floorMod(blade.getId(), targets.size()));
                 Vec3 toTarget = track.getEyePosition().subtract(blade.position());
                 if (toTarget.lengthSqr() > 1.0E-6) {
                     Vec3 dir = toTarget.normalize();
