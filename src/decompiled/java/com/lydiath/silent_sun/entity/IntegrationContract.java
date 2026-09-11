@@ -342,12 +342,18 @@ public final class IntegrationContract {
                 // 2026-08-30 修正：getBlade 实际定义在 SlashBladeDefinition（命名刀注册表 value 类），
                 // 而非 ItemSlashBlade（其上只有 getBladeId）——原断言查错类导致两版 jar 均误报 WARN。
                 // 实测重锋版 2.0.3 与 Refix 版该签名一致，断言通过即代表装备链路可用。
+                // 2026-09-11（代码审计 G18 #2 修复）：内层原先只 catch NoSuchMethodException，而
+                // Class.forName(SLASH_BLADE_DEFINITION_CLASS) 抛的是 ClassNotFoundException ——
+                // 它会穿透内层、被**外层**的 catch 捕获，把 cachedAvailable 置 false，于是
+                // 「slashblade 已加载、只是该内部类名/位置与预期不同」被误判为「前置缺失」，
+                // **整段拔刀剑集成判死**。版本断言只用于告警，不应参与可用性判定 ⇒ 改捕公共父类。
                 try {
                     Class<?> definitionClass = Class.forName(SLASH_BLADE_DEFINITION_CLASS);
                     definitionClass.getMethod(GET_BLADE_METHOD, Item.class, HolderLookup.Provider.class);
-                } catch (NoSuchMethodException apiErr) {
-                    LOG.warn("[版本断言] SlashBlade 已加载但 getBlade({}, HolderLookup.Provider) 签名不匹配 —— " +
-                        "slashblade 版本可能升级过 API，Boss 拔刀剑装备/SA 可能异常。请核对 slashblade 版本。", Item.class.getSimpleName());
+                } catch (ReflectiveOperationException apiErr) {
+                    LOG.warn("[版本断言] SlashBlade 已加载，但 {} 或其 getBlade({}, HolderLookup.Provider) 不可用 —— " +
+                        "slashblade 版本可能升级过 API，Boss 拔刀剑装备/SA 可能异常。请核对 slashblade 版本。",
+                        SLASH_BLADE_DEFINITION_CLASS, Item.class.getSimpleName());
                 }
             } catch (ClassNotFoundException e) {
                 cachedAvailable = false;
@@ -1252,6 +1258,11 @@ public final class IntegrationContract {
             if (summonedSwordShootMethod != null) {
                 summonedSwordShootMethod.invoke(blade, dir.x, dir.y, dir.z, 3.0f, 0.0f);
             }
+            // 2026-09-11（代码审计 G19 #1 修复）：本模块已按扇面索引（index % targets.size()）定好
+            // 方向并 shoot，此处补打「已定向」标记，让同 tick 的 retargetSummonedSword 跳过 ——
+            // 否则它会重算方向并再次 shoot，把刚摆好的扇面覆盖成多把同向重叠的剑
+            // （即「扇面齐射」从未真正生效）。
+            data.putBoolean(PHANTOM_SWORD_RETARGET_TAG, true);
         } catch (Exception e) {
             LOG.warn("Failed to fire boss phantom sword via reflection: {}", e.toString());
         }

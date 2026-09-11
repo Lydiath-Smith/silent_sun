@@ -104,6 +104,13 @@ public final class AbsoluteDamageUtil {
      * 与 {@link #damage} 的区别：不做 {@link #adjustAbsoluteDamage}（无 200 上限、无 5% 保底减免），
      * 伤害值（baseX + soulSeverY）原样锁定，保证断魂按设计值全额命中。
      * 仍走 hurt() 完整死亡链路，图腾 / 掉落 / 死亡信息正常触发。
+     * <p>
+     * ⚠️ 2026-09-11（代码审计 G04 #1）：本方法**全库零调用者**，属未接线能力。连带后果是
+     * {@code CommonEvents.onSoulSeverDamageLockPre} / {@code ...Fallback} 两条监听器里的
+     * {@code isSoulSeverDamageMarked} 分支恒不执行（断魂伤害目前走 {@link #damage} 的绝对伤害链）。
+     * 是「接线（让断魂加点改走本通道，复活独立的『断魂限伤 + 硬核 1 血锁』锁定链）」还是
+     * 「删除本方法 + 两条监听器（会使该链彻底消失）」，需作者裁决 —— 已登记在
+     * {@code docs/实现计划-2026-09-11-E-1剩余中危批次.md} §三，本次不动逻辑。
      */
     public static boolean soulSeverDamage(LivingEntity target, DamageSource source, float amount) {
         if (amount <= 0.0f) {
