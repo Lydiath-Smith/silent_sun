@@ -36,9 +36,8 @@ public class BladeAttackGoal extends Goal {
     private double lastPathX;
     private double lastPathZ;
 
-    public static boolean isAvailable() {
-        return IntegrationContract.isSlashBladeIntegrationAvailable();
-    }
+    // 2026-09-11（代码审计 G09 #5 修复）：原 isAvailable() 全库零调用 ——
+    // 可用性判断统一走 IntegrationContract.isSlashBladeIntegrationAvailable()（见下方构造器）—— 已删除。
 
     public BladeAttackGoal(Mob boss) {
         this.boss = boss;

@@ -6272,16 +6272,10 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
                         || participant.level() != this.level()) continue;
                 EnrageEffect.applyFragile(participant, desiredAmp);
             }
-        } else {
-            // 2026-09-11（B-02 依设计 §3.9「持续时间与激怒绑定——激怒结束则脆弱结束」）：
-            // 激怒未达阈值（或已被清除/掉回）时，把参战者身上的脆弱一并撤掉。
-            // 原先只靠战后清理，导致"激怒没了、脆弱还在且无限时长"的残留（今日已先补战后退场清理）。
-            for (UUID id : new HashSet<UUID>(this.battleParticipants)) {
-                ServerPlayer participant = this.getServerPlayer(id);
-                if (participant == null) continue;
-                participant.removeEffect(ModEffects.FRAGILE);
-            }
         }
+        // 2026-09-11（代码审计 G17 #9 修复）：原 else 分支在此重复清理参战者的脆弱，
+        // 但 tickFragileBinding（每 tick 调用、过滤条件更完整：判 expelled / 旁观 / 创造 /
+        // 存活 / 维度）做的是同一件事且判据一致，同一 tick 内会覆盖此处 —— 属冗余路径。已删除。
     }
 
     /**

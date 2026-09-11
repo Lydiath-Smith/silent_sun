@@ -1,6 +1,0 @@
-{
-  "parent": "item/generated",
-  "textures": {
-    "layer0": "silent_sun:block/cleaving_pain"
-  }
-}

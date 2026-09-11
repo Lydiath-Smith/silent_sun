@@ -728,9 +728,10 @@ public final class DamagePipeline {
         float segment = boss.getMaxHealth() / (float) RediosEntity.PHASE1_TITLES.size();
         // 当前头衔段底（剩余血量下限）：index 段 = [maxHealth-(index+1)*seg, maxHealth-index*seg]
         float low = boss.getMaxHealth() - (float)(boss.titleIndex + 1) * segment;
-        if (boss.titleIndex == RediosEntity.PHASE1_TITLES.size() - 1) {
-            low = 0.0f;
-        }
+        // 2026-09-11（代码审计 G07 #4 修复）：原此处还有 `if (titleIndex == size-1) low = 0.0f;`，
+        // 但 low 的唯一读取点（下方）带 `!atLastTitle` 守卫，而 atLastTitle 与
+        // `titleIndex == size-1` 恒等价 ⇒ 该赋值与唯一读取分支**互斥、永不生效**，
+        // 只会误导维护者以为「最后头衔段底 = 0」（实际由下面的 1 血锁血分支独立处理）。已删除。
         if (boss.bossState == BossState.PHASE1_COMBAT && atLastTitle
             && boss.getHealth() - ctx.amount <= 1.0f) {
             // x.9 濒死：锁 1 血进 PENDING。
@@ -776,9 +777,8 @@ public final class DamagePipeline {
         boolean atLastTitle = boss.titleIndex == RediosEntity.PHASE2_TITLES.size() - 1;
         float segment = boss.getMaxHealth() / (float) RediosEntity.PHASE2_TITLES.size();
         float low = boss.getMaxHealth() - (float)(boss.titleIndex + 1) * segment;
-        if (atLastTitle) {
-            low = 0.0f;
-        }
+        // 2026-09-11（代码审计 G07 #4 修复）：同 stagePhase1Lock —— 该 `low = 0.0f` 与唯一读取分支
+        //（带 `!atLastTitle` 守卫）互斥，永不生效，已删除。
         if (boss.bossState.isPhase2Combat() && atLastTitle && !boss.pendingLockReleased
             && boss.getHealth() - ctx.amount <= 1.0f) {
             boss.setHealth(1.0f);

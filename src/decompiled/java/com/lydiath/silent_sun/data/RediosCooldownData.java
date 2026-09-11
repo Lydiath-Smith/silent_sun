@@ -34,9 +34,8 @@ extends SavedData {
         return data;
     }
 
-    public long getNextAllowedGameTime() {
-        return this.nextAllowedGameTime;
-    }
+    // 2026-09-11（代码审计 G05 #7 修复）：原 getNextAllowedGameTime() 全库零调用者 ——
+    // 冷却判定走 isOnCooldown() / remainingTicks()，字段与 setCooldown 保留。
 
     public void setCooldown(ServerLevel level, long durationTicks) {
         // J1: 冷却以游戏内时间（DayTime）为基准，受睡觉跳过夜晚与 /time 加速影响。
@@ -71,9 +70,8 @@ extends SavedData {
         return this.summonAttemptCount;
     }
 
-    public int getSummonAttemptCount() {
-        return this.summonAttemptCount;
-    }
+    // 2026-09-11（代码审计 G05 #7 修复）：原 getSummonAttemptCount() 全库零调用者 ——
+    // 计数语义由 recordSummonAttempt() 的返回值覆盖，字段与 resetSummonAttempt() 保留。
 
     /** 冷却到期时清零连点计数（否则计数跨冷却周期累积，下一周期首次连点即触发额外提示）。 */
     public void resetSummonAttempt() {

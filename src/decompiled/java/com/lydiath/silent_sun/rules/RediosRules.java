@@ -132,7 +132,8 @@ public final class RediosRules {
     // ================================================================
     public static TwilightMomentMode twilightMomentMode() { return twilightMomentMode; }
     public static void setTwilightMomentMode(TwilightMomentMode mode) { twilightMomentMode = mode == null ? TwilightMomentMode.REFRESH : mode; }
-    public static TwilightMomentPunishmentMode twilightMomentPunishment() { return twilightMomentPunishment; }
+    // 2026-09-11（代码审计 G02 #4 修复）：原 twilightMomentPunishment() getter 全库零调用者 ——
+    // 消费全部走 twilightMomentExpelMode()；字段与 setter 保留（后者仍被 reload 使用）。
     public static void setTwilightMomentPunishment(TwilightMomentPunishmentMode v) { twilightMomentPunishment = v == null ? TwilightMomentPunishmentMode.VISUAL : v; }
     /** E1: 是否启用逐出惩罚（EXPEL 模式）。 */
     public static boolean twilightMomentExpelMode() { return twilightMomentPunishment == TwilightMomentPunishmentMode.EXPEL; }
