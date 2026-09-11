@@ -208,8 +208,8 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     private static final List<Holder<MobEffect>> DUSTLESS_GOOD_BUFF_POOL = List.of(MobEffects.DAMAGE_BOOST, MobEffects.MOVEMENT_SPEED, MobEffects.DIG_SPEED, MobEffects.JUMP, MobEffects.REGENERATION, MobEffects.ABSORPTION, MobEffects.FIRE_RESISTANCE, MobEffects.WATER_BREATHING, MobEffects.NIGHT_VISION, MobEffects.HEALTH_BOOST);
     static final List<Component> PHASE1_TITLES = List.of(Component.translatable("title.silent_sun.redios.phase1.0"), Component.translatable("title.silent_sun.redios.phase1.1"), Component.translatable("title.silent_sun.redios.phase1.2"), Component.translatable("title.silent_sun.redios.phase1.3"), Component.translatable("title.silent_sun.redios.phase1.4"), Component.translatable("title.silent_sun.redios.phase1.5"), Component.translatable("title.silent_sun.redios.phase1.6"), Component.translatable("title.silent_sun.redios.phase1.7"), Component.translatable("title.silent_sun.redios.phase1.8"), Component.translatable("title.silent_sun.redios.phase1.9"));
     static final List<Component> PHASE2_TITLES = List.of(Component.translatable("title.silent_sun.redios.phase2.0"), Component.translatable("title.silent_sun.redios.phase2.1"), Component.translatable("title.silent_sun.redios.phase2.2"), Component.translatable("title.silent_sun.redios.phase2.3"), Component.translatable("title.silent_sun.redios.phase2.4"), Component.translatable("title.silent_sun.redios.phase2.5"), Component.translatable("title.silent_sun.redios.phase2.6"), Component.translatable("title.silent_sun.redios.phase2.7"), Component.translatable("title.silent_sun.redios.phase2.8"), Component.translatable("title.silent_sun.redios.phase2.9"));
-    static final TitleDef[] PHASE1_TITLE_DEFS = new TitleDef[]{TitleDef.p1(0, 15, new BossFlag[0]), TitleDef.p1(1, 15, new BossFlag[0]), TitleDef.p1(2, 15, BossFlag.WEAKNESS_CURSE, BossFlag.ENRAGE_STACKING), TitleDef.p1(3, 15, new BossFlag[0]), TitleDef.p1(4, 15, new BossFlag[0]), TitleDef.p1(5, 15, BossFlag.SOUL_SEVER_HARVEST), TitleDef.p1(6, 15, new BossFlag[0]), TitleDef.p1(7, 15, new BossFlag[0]), TitleDef.p1(8, 15, new BossFlag[0]), TitleDef.p1(9, 15, BossFlag.GUARD_BLOCK)};
-    static final TitleDef[] PHASE2_TITLE_DEFS = new TitleDef[]{TitleDef.p2(0, 30, BossFlag.SEA_SKY_SOUL_SEVER), TitleDef.p2(1, 30, BossFlag.UNCONTROLLED_SPRINT), TitleDef.p2(2, 30, new BossFlag[0]), TitleDef.p2(3, 30, new BossFlag[0]), TitleDef.p2(4, 30, BossFlag.ASH_DAWN), TitleDef.p2(5, 30, new BossFlag[0]), TitleDef.p2(6, 30, new BossFlag[0]), TitleDef.p2(7, 30, BossFlag.BLACK_SUN), TitleDef.p2(8, 30, BossFlag.COLORLESS, BossFlag.ENRAGE_STACKING), TitleDef.p2(9, 30, new BossFlag[0])};
+    static final TitleDef[] PHASE1_TITLE_DEFS = new TitleDef[]{TitleDef.of(new BossFlag[0]), TitleDef.of(new BossFlag[0]), TitleDef.of(BossFlag.WEAKNESS_CURSE, BossFlag.ENRAGE_STACKING), TitleDef.of(new BossFlag[0]), TitleDef.of(new BossFlag[0]), TitleDef.of(BossFlag.SOUL_SEVER_HARVEST), TitleDef.of(new BossFlag[0]), TitleDef.of(new BossFlag[0]), TitleDef.of(new BossFlag[0]), TitleDef.of(BossFlag.GUARD_BLOCK)};
+    static final TitleDef[] PHASE2_TITLE_DEFS = new TitleDef[]{TitleDef.of(BossFlag.SEA_SKY_SOUL_SEVER), TitleDef.of(BossFlag.UNCONTROLLED_SPRINT), TitleDef.of(new BossFlag[0]), TitleDef.of(new BossFlag[0]), TitleDef.of(BossFlag.ASH_DAWN), TitleDef.of(new BossFlag[0]), TitleDef.of(new BossFlag[0]), TitleDef.of(BossFlag.BLACK_SUN), TitleDef.of(BossFlag.COLORLESS, BossFlag.ENRAGE_STACKING), TitleDef.of(new BossFlag[0])};
     private static final EntityDataAccessor<Integer> CLIENT_TRANSITION_TICKS = SynchedEntityData.defineId(RediosEntity.class, EntityDataSerializers.INT);
     private static final EntityDataAccessor<Integer> CLIENT_BOSS_STATE = SynchedEntityData.defineId(RediosEntity.class, EntityDataSerializers.INT);
     private static final EntityDataAccessor<Integer> CLIENT_TWILIGHT_ACTIVE = SynchedEntityData.defineId(RediosEntity.class, EntityDataSerializers.INT);
@@ -397,7 +397,13 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     //（即 G13 #9 登记的「三份重复实现」）—— 已删除。
     /** 集中轰炸目标的星星散布半径（设计稿 §7.3：集中轰炸保持 5.0，非集中才用配置的散射半径）。 */
     private static final double STARFALL_SALVO_CONCENTRATED_RADIUS = 5.0;
-    private int starfallSalvoCooldownTicks = 900;
+    /**
+     * 星爆齐射冷却（tick）。初值 {@code -1} = 未初始化，由 {@code finalizeSpawn} 按配置
+     * {@code redios.starfallSalvoIntervalTicks} 赋值（2026-09-11 代码审计 G13 #11 修复：
+     * 原初值写死 900，整合包把该配置调小后，**新召唤 Boss 的首发大招仍固定等 45 秒**）。
+     * 读档路径见 {@code readAdditionalSaveData} 里同配置的兜底。
+     */
+    private int starfallSalvoCooldownTicks = -1;
     private boolean starfallSalvoPending = false;
     private final Set<UUID> starfallSalvoStars = new HashSet<UUID>();
     private final Set<UUID> introStarfallStars = new HashSet<UUID>();
@@ -2819,6 +2825,8 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         this.battleAnchorPos = this.blockPosition();
         this.battleAnchorDim = this.level().dimension().location();
         this.introTicks = INTRO_TOTAL_TICKS;
+        // 2026-09-11（代码审计 G13 #11 修复）：首发齐射冷却按配置初始化（详见字段注释）。
+        this.starfallSalvoCooldownTicks = SilentSunConfig.STARFALL_SALVO_INTERVAL_TICKS.get();
         return super.finalizeSpawn(level, difficulty, spawnType, spawnData);
     }
 
