@@ -3101,7 +3101,6 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         float bypass = 0.0f;
         float normal = 0.0f;
         boolean hit = false;
-        boolean v0 = false;
         Vec3 dir = null;
         Vec3 push = null;
         block28: {
@@ -3183,7 +3182,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
                     normal = totalDamage - bypass;
                     hit = false;
                     if (normal > 0.0f) {
-                        v0 = hit = playerTarget.hurt(ModDamageTypes.rediosAttack(this.level(), this), normal) != false || hit != false;
+                        hit = playerTarget.hurt(ModDamageTypes.rediosAttack(this.level(), this), normal) != false || hit != false;
                     }
                     if (bypass > 0.0f) {
                         hit = AbsoluteDamageUtil.damage((LivingEntity)playerTarget, ModDamageTypes.rediosAttack(this.level(), this), bypass, SilentSunConfig.BOSS_DAMAGE_CREATIVE.get()) != false || hit != false;
@@ -7391,6 +7390,22 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         UUID id = entity.getUUID();
         if (this.expelledPlayers.contains(id)) {
             return;
+        }
+        // 2026-09-11（代码审计 G15 #2 第二阶段 / 作者裁定）：极限模式玩家**预标记**硬核保 1 血。
+        // <p>
+        // 根因：hardcoreProtectedPlayers 原先只在玩家**第一次被打到 0 血之后**才由 notifyHardcoreSpare
+        // 写入 → 首次致命一击时 CommonEvents.hasHardcoreProtector 为 false →
+        // onLivingDeathHardcoreProtected 不取消死亡 → 玩家走完整 ServerPlayer.die()：
+        // 死亡界面包（L693）、死亡消息广播（L709）、dropAllDeathLoot 掉光物品（L725）、
+        // 死亡计数/统计递增（L728/L737）—— 之后汇合点的 setHealth(1f) 已无法撤回这些副作用。
+        // <p>
+        // 现改为「参战登记时即写入标记」：doHurtTarget 开头（L3118）就会对本方法的攻击目标调用本方法，
+        // 即**同 tick 内、伤害结算之前**玩家已在集合里，首次致命一击立即被
+        // CommonEvents.onLivingDamagePre 钳到 health-1。该判据用的是 LivingDamageEvent 的 newDamage
+        // （= 已过护甲/吸收的**实际**伤害），正合设计稿 §3.5 L354「若伤害导致玩家生命值降至 0 以下」
+        // 的实际伤害语义；也避免了「钳名义伤害 → 削弱护甲作用」的副作用。
+        if (sp != null && sp.level().getLevelData().isHardcore()) {
+            this.hardcoreProtectedPlayers.add(id);
         }
         if (this.battleStartGameTime < 0L && (level2 = this.level()) instanceof ServerLevel) {
             ServerLevel serverLevel2 = (ServerLevel)level2;

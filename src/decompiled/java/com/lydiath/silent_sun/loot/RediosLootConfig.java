@@ -93,7 +93,24 @@ public final class RediosLootConfig {
                 SilentSunMod.LOGGER.warn("redios_loot.json 条目物品未注册，已跳过：{}", entry.item);
                 continue;
             }
-            double chance = entry.chance <= 0.0 ? 1.0 : Math.min(1.0, entry.chance);
+            // 2026-09-11（代码审计 G11 #4 修复 / 作者裁决=方案 C）：区分「字段缺失」与「显式 0」。
+            // 原实现 `entry.chance <= 0.0 ? 1.0 : min(1.0, chance)` 让三种写法全变成「必掉」：
+            //   · "chance": 0   → 管理员本意「永不掉落」→ 实际 100% 掉
+            //   · 键缺失        → record 的 double 默认 0.0 → 同样 100% 掉
+            //   · "chance": NaN → NaN<=0 为 false、min(1.0,NaN)=NaN、nextDouble()>NaN 恒 false → 100% 掉
+            // 现口径（字段类型改为 Double 以区分 null）：
+            //   · 键缺失(null) = 必掉（兼容存量配置，零破坏）
+            //   · 显式 0 / 负数 = 不掉（与姊妹配置 RediosRewardOverrideConfig 的 count「0 = 不给」对齐）
+            //   · NaN = 非法值，跳过并告警
+            Double rawChance = entry.chance;
+            if (rawChance == null) {
+                rawChance = Double.valueOf(1.0);
+            } else if (rawChance.isNaN()) {
+                SilentSunMod.LOGGER.warn("redios_loot.json 条目 chance 非法（NaN），已跳过：{}", entry.item);
+                continue;
+            }
+            double chance = Math.max(0.0, Math.min(1.0, rawChance.doubleValue()));
+            if (chance <= 0.0) continue;
             if (random.nextDouble() > chance) continue;
             int min = Math.max(0, entry.min);
             int max = Math.max(min, entry.max);
@@ -111,6 +128,14 @@ public final class RediosLootConfig {
     private RediosLootConfig() {
     }
 
-    public record LootEntry(String item, int min, int max, double chance) {
+    /**
+     * 掉落条目。
+     * <p>
+     * 2026-09-11（代码审计 G11 #4 / 作者裁决）：{@code chance} 由 {@code double} 改为 {@link Double}，
+     * 以便区分「JSON 省略该键」（Gson 反射构造 → null）与「显式写 0」（不掉）。
+     * 若仍是基本类型 double，省略键会被填成 0.0，与显式 0 无法区分，
+     * 于是「0 = 不掉」与「省略 = 必掉」这两个语义不可能同时成立。
+     */
+    public record LootEntry(String item, int min, int max, Double chance) {
     }
 }
