@@ -39,10 +39,15 @@ import java.util.UUID;
 /**
  * 裂解之痛（莱德厄斯召唤器基底）方块实体：
  * <ul>
- *   <li>{@code fluid}：0=无 / 1=岩浆 / 2=水（类似炼药锅的装液）；</li>
- *   <li>{@code hasDiamond}：是否已投入钻石。</li>
+ *   <li>{@code fluid}：0=无 / 1=岩浆 / 2=水（类似炼药锅的装液）。</li>
  * </ul>
  * 岩浆 + 钻石到位后自动引发雷击、清除并掉落「莱德厄斯召唤器」；倒水后用召唤器右键触发 Boss 召唤。
+ * <p>
+ * 2026-09-11（代码审计 G10 #4）：删除 {@code hasDiamond} 字段（含 NBT 键与 update-tag 键）。
+ * 其 3 处赋值全是 {@code = false}、{@code placeDiamond} 从不置 true、全库零消费者；
+ * git 全历史 {@code -S "hasDiamond = true"} 零命中（旧版用它做 tick 守卫时同样不可达），
+ * 真值来源早已迁移到 {@code diamondCountdown}。客户端也不需要它——漂浮钻石是真
+ * {@code ItemEntity}，由原版实体同步承担。旧存档里残留的 {@code hasDiamond} 键会被静默忽略。
  */
 public class CleavingPainBlockEntity extends BlockEntity {
 
@@ -51,7 +56,6 @@ public class CleavingPainBlockEntity extends BlockEntity {
     public static final int FLUID_WATER = 2;
 
     public int fluid = FLUID_NONE;
-    public boolean hasDiamond = false;
 
     /** 钻石放置倒计时：>=0 表示已放置钻石、正在等待雷击（每 tick 递减）；<0 表示未放置。 */
     public int diamondCountdown = -1;
@@ -77,7 +81,6 @@ public class CleavingPainBlockEntity extends BlockEntity {
     protected void saveAdditional(CompoundTag tag, HolderLookup.Provider provider) {
         super.saveAdditional(tag, provider);
         tag.putInt("fluid", fluid);
-        tag.putBoolean("hasDiamond", hasDiamond);
         tag.putInt("diamondCountdown", diamondCountdown);
         tag.putInt("summonerDropCountdown", summonerDropCountdown);
         if (diamondEntityUuid != null) {
@@ -93,7 +96,6 @@ public class CleavingPainBlockEntity extends BlockEntity {
     protected void loadAdditional(CompoundTag tag, HolderLookup.Provider provider) {
         super.loadAdditional(tag, provider);
         fluid = tag.getInt("fluid");
-        hasDiamond = tag.getBoolean("hasDiamond");
         diamondCountdown = tag.contains("diamondCountdown") ? tag.getInt("diamondCountdown") : -1;
         summonerDropCountdown = tag.contains("summonerDropCountdown") ? tag.getInt("summonerDropCountdown") : -1;
         diamondEntityUuid = tag.contains("diamondEntityUuid") ? tag.getUUID("diamondEntityUuid") : null;
@@ -106,7 +108,6 @@ public class CleavingPainBlockEntity extends BlockEntity {
     public CompoundTag getUpdateTag(HolderLookup.Provider provider) {
         CompoundTag tag = new CompoundTag();
         tag.putInt("fluid", fluid);
-        tag.putBoolean("hasDiamond", hasDiamond);
         tag.putInt("diamondCountdown", diamondCountdown);
         return tag;
     }
@@ -114,7 +115,6 @@ public class CleavingPainBlockEntity extends BlockEntity {
     @Override
     public void handleUpdateTag(CompoundTag tag, HolderLookup.Provider provider) {
         fluid = tag.getInt("fluid");
-        hasDiamond = tag.getBoolean("hasDiamond");
         diamondCountdown = tag.getInt("diamondCountdown");
     }
 
@@ -148,7 +148,6 @@ public class CleavingPainBlockEntity extends BlockEntity {
             be.diamondCountdown = -1;
             be.removePlacedDiamond(level);
             be.fluid = FLUID_NONE;
-            be.hasDiamond = false;
             be.setChanged();
             be.syncFluidState(level, pos);
             // 雷击（真实落雷）
@@ -271,7 +270,6 @@ public class CleavingPainBlockEntity extends BlockEntity {
             return ItemInteractionResult.SUCCESS;
         }
         fluid = targetFluid;
-        hasDiamond = false;
         setChanged();
         syncFluidState(level, pos);
         if (!player.getAbilities().instabuild) {
@@ -319,7 +317,6 @@ public class CleavingPainBlockEntity extends BlockEntity {
         }
         cooldown.resetSummonAttempt();
         fluid = FLUID_NONE;
-        hasDiamond = false;
         summonTicks = 0;
         summoningPlayerUuid = player.getUUID();
         setChanged();

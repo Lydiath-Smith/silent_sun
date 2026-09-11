@@ -6,6 +6,7 @@ package com.lydiath.silent_sun.event;
 import com.lydiath.silent_sun.data.RediosBattleData;
 import com.lydiath.silent_sun.data.RediosCooldownData;
 import com.lydiath.silent_sun.data.RediosCooldownData;
+import com.lydiath.silent_sun.entity.BossTargeting;
 import com.lydiath.silent_sun.entity.IntegrationContract;
 import com.lydiath.silent_sun.entity.RediosEntity;
 import com.lydiath.silent_sun.loot.RediosLocalConfigReloadListener;
@@ -675,28 +676,35 @@ public final class CommonEvents {
     }
 
     // PH1: Track player healing to increment Soul Sever Y
+    // 2026-09-11（代码审计 G12 #3 修复）：补参战者门槛。原实现只要「同维度存在存活 Boss」
+    // 就把**任何**玩家的治疗量计入断魂 Y（局外玩家、被驱逐者、创造/旁观、投票期照算），
+    // 使 getSoulSeverValue() = baseX + soulSeverY 被无关玩家抬高。
+    // 采用「仅 Mode 1 加门槛」口径（作者裁决 D3）：Mode 2（斗蛐蛐）下 markBattleParticipant
+    // 在 !playerOnly 时直接 return ⇒ battleParticipants 恒为空，若无条件套用本门槛，
+    // Mode 2 的断魂 Y 会完全停止累加（二阶段断魂伤害退回 baseX）。
     @SubscribeEvent
     public static void onLivingHeal(LivingHealEvent event) {
         if (!(event.getEntity() instanceof ServerPlayer player)) return;
         float amount = event.getAmount();
         if (amount <= 0.0f) return;
         RediosEntity redios = CommonEvents.findActiveRedios(player.serverLevel());
-        if (redios != null) {
-            redios.addSoulSeverY(Math.max(0L, (long) Math.ceil(amount)));
-        }
+        if (redios == null) return;
+        if (BossTargeting.playerOnlyMode() && !redios.battleParticipants().contains(player.getUUID())) return;
+        redios.addSoulSeverY(Math.max(0L, (long) Math.ceil(amount)));
     }
 
     // PH1: Track anvil repair to increment Soul Sever Y (repaired / 10)
     // (NeoForge 1.21 has no mending event; anvil repair is the only hook)
+    // 2026-09-11（代码审计 G12 #3）：同上补参战者门槛。
     @SubscribeEvent
     public static void onAnvilRepair(AnvilRepairEvent event) {
         if (!(event.getEntity() instanceof ServerPlayer player)) return;
         int repaired = event.getLeft().getDamageValue() - event.getOutput().getDamageValue();
         if (repaired <= 0) return;
         RediosEntity redios = CommonEvents.findActiveRedios(player.serverLevel());
-        if (redios != null) {
-            redios.addSoulSeverY(Math.max(0L, repaired / 10L));
-        }
+        if (redios == null) return;
+        if (BossTargeting.playerOnlyMode() && !redios.battleParticipants().contains(player.getUUID())) return;
+        redios.addSoulSeverY(Math.max(0L, repaired / 10L));
     }
 
     private CommonEvents() {

@@ -1574,6 +1574,15 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
      */
     private void tickBattleMusic(ServerLevel serverLevel) {
         if (!RediosRules.rediosBattleMusicEnabled() || this.battleParticipants.isEmpty()) {
+            // 2026-09-11（代码审计 G14 #8 修复）：先判「是否已经停过」再发包。
+            // 该分支的触发条件在「音乐被规则关掉」后每 tick 恒真，而 stopAllBattleMusic() 逐玩家
+            // 发包时完全不判重（不看 battleMusicPlaying）⇒ 原先 ≈20 包/秒/人，并持续打断 MUSIC
+            // 音源上的其它声音（唱片 / 其它模组音乐）。这里用「段标识 + 已下发表」的空状态作为
+            // 天然收敛信号：首 tick 段/表非空 ⇒ 照旧停一次并复位；次 tick 起段=NONE、表为空 ⇒ 直接返回。
+            // battleMusicStamp 不能直接复用（它只是正向下发的世代号，停止路径没有 per-player 记录）。
+            if (this.battleMusicSegment == MUSIC_SEG_NONE && this.battleMusicPlaying.isEmpty()) {
+                return;
+            }
             this.stopAllBattleMusic();
             this.battleMusicPhase = 0;
             this.battleMusicSegment = MUSIC_SEG_NONE;
@@ -1643,6 +1652,13 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             }
             Integer playing = this.battleMusicPlaying.get(id);
             if (playing != null && playing == stamp) continue;
+            // 2026-09-11（代码审计 G14 #10）：补 connection 判空，照抄本文件既有口径
+            // （:1720 / :1729 / :4052 三处同类调用都判了）。
+            // 注：这是**防御性一致性**修复，不是修可复现 NPE —— 查原版 1.21.1 源码，ServerPlayer.connection
+            // 只有两处赋值（ServerGamePacketListenerImpl 构造器内、PlayerList respawn），全树无
+            // `connection = null`；唯一空窗口是「已构造但未被 Listener 赋值」，那一刻玩家尚未进
+            // PlayerList，而 getServerPlayer = PlayerList.getPlayer 取不到。改的是四处口径不一致。
+            if (player.connection == null) continue;
             this.stopBattleMusicFor(player);
             player.connection.send(new ClientboundSoundPacket(music, SoundSource.MUSIC, this.getX(), this.getY(), this.getZ(), volume, 1.0f, this.random.nextLong()));
             this.battleMusicPlaying.put(id, stamp);
@@ -3425,7 +3441,12 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     }
 
     void applySoulSeverToTarget(LivingEntity livingTarget) {
-        int durationTicks = SilentSunConfig.SOUL_SEVER_DURATION_SECONDS.get() * 20;
+        // 2026-09-11（代码审计 G02 #5 修复）：乘前饱和化。
+        // 该键上限是 Integer.MAX_VALUE，而 ×20 在 int 下会回绕（Integer.MAX_VALUE*20 == -20）
+        // ⇒ 管理员填超大值时反而拿到负时长（效果立刻过期）。先钳到 Integer.MAX_VALUE/20 = 107374182，
+        // 再乘 20 得 2147483640，仍在 int 范围内。对 ≤107374183 的配置零行为变更。
+        int durationTicks = (int) Math.min(Integer.MAX_VALUE / 20L,
+            (long) SilentSunConfig.SOUL_SEVER_DURATION_SECONDS.get()) * 20;
         int maxAmplifier = SilentSunConfig.SOUL_SEVER_MAX_AMPLIFIER.get();
         int newAmplifier = 0;
         MobEffectInstance current = livingTarget.getEffect(ModEffects.SOUL_SEVER);
@@ -4783,7 +4804,12 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     private void startTransition() {
         int ticks;
         this.transitionTo(BossState.PHASE1_TRANSITION);
-        this.transitionTicks = ticks = SilentSunConfig.PHASE_TRANSITION_SECONDS.get() * 20;
+        // 2026-09-11（代码审计 G02 #5 修复）：补 Math.max(1, …)，与同键的另外 4 处消费点统一。
+        // 该键（PHASE_TRANSITION_SECONDS）原先共 5 处消费：L892 / L898 / L2395 / RediosRenderer:95
+        // 都有 Math.max(1,…)，只有这里没有 ⇒ phaseTransitionSeconds=0 时本处得 0，转场会在
+        // 第一 tick 立刻 enterPhase2Combat()、立方体特效被跳过、transitionTotal()-6 的冲击帧永不命中。
+        // 默认值 6 不受影响；0 的语义统一为「1 tick」。
+        this.transitionTicks = ticks = Math.max(1, SilentSunConfig.PHASE_TRANSITION_SECONDS.get() * 20);
         this.transitionTotalTicks = ticks;
         this.bossEvent.setVisible(true);
         this.triggerAnim("main", "transition");
@@ -6870,7 +6896,12 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     }
 
     private int colorlessChallengeDurationTicks() {
-        int configured = Math.max(0, SilentSunConfig.COLORLESS_CHALLENGE_SECONDS.get()) * 20;
+        // 2026-09-11（代码审计 G02 #5 修复）：乘前饱和化。
+        // 原写法 Math.max(0, MAX).get() * 20 回绕成 -20，而下一行 Math.max(configured, minimum)
+        // 会因此取到**最小下限** —— 与 Math.max(1,…) 系的良性兜底方向相反：管理员「填超大值」
+        // 反而拿到最短时限（默认 60 秒）。钳到 Integer.MAX_VALUE/20 后再乘，语义单调。
+        int configured = (int) Math.min(Integer.MAX_VALUE / 20L,
+            Math.max(0L, (long) SilentSunConfig.COLORLESS_CHALLENGE_SECONDS.get())) * 20;
         int minimum = this.getMinTitleSeconds() * 2 * 20;
         return Math.max(configured, minimum);
     }
@@ -7490,6 +7521,20 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         this.twilightTimedMissingTicks.remove(id);
         this.twilightTimedMissingFromApply.remove(id);
         this.hardcoreProtectedPlayers.remove(id);
+        // 2026-09-11（代码审计 G15 #9 + G16 #2 + G16 #4）：三张「只增不减的玩家 UUID 表」在此统一回收。
+        // 三者都是 Map<UUID,Integer>，原先全库无任何 remove / clear：
+        //   wallAttackLastNotifyTick      —— 穿墙近战提示限频（G15 #9，本批 ★）
+        //   playerAreaDamageTick          —— 范围伤害限频（原「高危 #5」，复核后降级为中，一直未修）
+        //   twilightFailureLastNotifyTick —— 断光之刻失败提示限频（G16 #4，中，此前漏登记）
+        // 数量级 = 本场次出现过的玩家数 × 常数条，不随 tick 增长，Boss 销毁即随对象 GC，
+        // 故严重度不高；一并收口是为了消除同文件口径不一致，并非因为有实际内存压力。
+        // 值是 Boss 的 tickCount、不入 NBT，实体重载即空。
+        // 已知取舍（作者裁决 D13）：本入口覆盖「超范围脱战 / 断光之刻失败逐出 / 2.9 超距逐出」三条
+        // 退场路径，**不含下线**——下线玩家不走任何 expel 路径；为「几条第 ~80 字节的条目」新增
+        // 下线挂点不划算（且 onPlayerLoggedOut 是 static 事件、拿不到 Boss 实例）。
+        this.wallAttackLastNotifyTick.remove(id);
+        this.playerAreaDamageTick.remove(id);
+        this.twilightFailureLastNotifyTick.remove(id);
         if (this.getTarget() != null && this.getTarget().getUUID().equals(id)) {
             this.setTarget(null);
         }

@@ -119,10 +119,18 @@ final class WeaponManager {
         if (this.stageBlockBombCooldownTicks > 0) {
             --this.stageBlockBombCooldownTicks;
         }
+        // 2026-09-11（代码审计 G09 #7 修复）：疾跑置位 / 复位成对。
+        // 原实现把 setSprinting(true) 放在 if (isPhase1()) 内：进 P2 后连置位语句都不再执行，
+        // 自然也不会复位 ⇒ 一旦「P1 战斗且有目标」发生过，该标志**终生为 true**
+        // （永久 +30% 移速、每次起跳追加 0.2 水平前冲、入水被原版切成游泳态）。
+        // 全库原先只有这一处置位，无任何 setSprinting(false)、也无 isSprinting() 读取。
+        // 口径（作者裁决 D1）：疾跑范围 =「战斗全程且有目标」—— P2 战斗行为不变，
+        // 只修「无目标 / 转场 / 投票 / 两种濒死锁血期仍在疾跑」。
+        boolean wantSprint = boss.bossState.isCombat() && boss.getTarget() != null;
+        if (boss.isSprinting() != wantSprint) {
+            boss.setSprinting(wantSprint);
+        }
         if (boss.bossState.isPhase1()) {
-            if (boss.bossState.isPhase1Combat() && boss.getTarget() != null) {
-                boss.setSprinting(true);
-            }
             tryDigBlockingBlocks(serverLevel);
         }
         if (boss.bossState.isPhase1() || boss.bossState.isPhase2()) {
@@ -219,6 +227,16 @@ final class WeaponManager {
         }
         if (this.guardActiveTicks > 0) {
             --this.guardActiveTicks;
+            // 2026-09-11（代码审计 G09 #8 修复）：格挡窗口关闭的那一 tick 清掉命中节拍锚点。
+            // 窗口期内（guardActiveTicks > 0）来袭攻击在 DamagePipeline:373 就被跳过滤，根本不进
+            // tryGuardBlock 的采样 ⇒ 窗口后第一个被采样的攻击其 diff = 窗口剩余 + 真实间隔，
+            // 每次成功格挡都往 EMA 灌一个被抬高最多约 20 tick 的样本，avg 很快越过
+            // triggerThreshold * 2.5 ⇒ 0.85 档实际不可达、长期停在 0.55。
+            // 清掉锚点后，窗口后第一个样本因 last == null 而不产生（丢一次采样），后续采样恢复正常。
+            // 口径（作者裁决 D2）：只消除污染、不新增采样 —— 不改动格挡率 / 难度。
+            if (this.guardActiveTicks == 0) {
+                this.guardLastHitTick.clear();
+            }
         }
     }
 
@@ -318,6 +336,9 @@ final class WeaponManager {
 
     private void tryThrowBlockBomb(ServerLevel serverLevel) {
         if (this.stageBlockBombCooldownTicks > 0) return;
+        // 2026-09-11（代码审计 G09 #3）：覆盖「运行期把 stageMinedBlockQueueMax 改成 0 之后
+        // 队列仍非空」的情形 —— 否则 0（"关闭"）只对新挖矿生效，已有队列照旧每 35 tick 投掷。
+        if (SilentSunConfig.STAGE_MINED_BLOCK_QUEUE_MAX.get() <= 0) return;
         if (this.stageMinedBlocks.isEmpty()) return;
 
         double reach = boss.getCurrentAttackReach();
@@ -438,8 +459,16 @@ final class WeaponManager {
         this.uncontrolledSprintExtraCooldownTicks = tag.getInt("SilentSunSprintExtraCooldown");
 
         this.stageMinedBlocks.clear();
+        // 2026-09-11（代码审计 G09 #3 修复）：读档路径原先完全不套用 STAGE_MINED_BLOCK_QUEUE_MAX。
+        // 后果：① stageMinedBlockQueueMax=0（"关闭"）只对新挖矿生效，旧存档读入的队列照旧每 35 tick
+        // 投掷一次并继续落盘，不会自行收敛；② 把 max 调小后，超限队列要等到下一次挖矿
+        // （recordMinedBlock）才被裁剪，P2 无目标期间会一直保留超限；
+        // ③ 外部工具往 NBT 里塞超长列表时这里会逐条 tryParse + 查注册表，属无界迭代。
+        // 循环条件同时挡住 ③；max<=0 时队列直接为空，恢复「0 = 关闭」语义。
+        // 截断语义与 recordMinedBlock 的 FIFO 一致：保留最新挖到的方块。
+        int max = Math.max(0, SilentSunConfig.STAGE_MINED_BLOCK_QUEUE_MAX.get());
         ListTag minedList = tag.getList("SilentSunMinedBlocks", 8);
-        for (int i = 0; i < minedList.size(); i++) {
+        for (int i = 0; i < minedList.size() && this.stageMinedBlocks.size() < max; i++) {
             String name = minedList.getString(i);
             try {
                 net.minecraft.resources.ResourceLocation rl = net.minecraft.resources.ResourceLocation.tryParse(name);

@@ -5,6 +5,7 @@ import java.lang.management.ManagementFactory;
 import java.security.CodeSource;
 import java.util.List;
 import java.util.Locale;
+import net.neoforged.fml.loading.FMLEnvironment;
 
 /**
  * 运行时注入 / 反调试轻量探测（对应攻击者手段：虚拟机注入修改、虚拟机内存层覆写、注入阶段剔除）。
@@ -76,6 +77,19 @@ public final class RuntimeInjectionGuard {
     }
 
     private static void scanClassSource(Class<?> guardClass) {
+        // 2026-09-11（代码审计 G04 #6 修复）：开发环境跳过整条加载来源校验。
+        // 原白名单是三个 contains（silent_sun / mod_classes / bin/main），不含 Gradle 的
+        // build/classes/java/main ⇒ 开发环境每次启动必打一条「核心类被覆盖」的误导性 WARN
+        // （实测该目录确实是标准 compileJava 输出，且本项检测结果全库无任何消费者，纯噪音）。
+        // dev 的类路径形态（IDE 输出 / Gradle 输出 / 热重载）永远追不上字符串白名单；而本检测的
+        // 攻防意义只在正式服与整合包（攻击者把改造后的 class 塞进其他 jar 抢 classpath 前端）。
+        // 故 dev 直接跳过来源校验，scanAgentFlags() 不受影响，生产判据完全不变。
+        // 注：不采用「把 build/classes/java/main 加进白名单」的写法——contains 匹配下加宽泛子串
+        // （classes / java / build）会实质削弱防护，而该条目本身就是 Eclipse 时代的遗留
+        // （bin/main 在本 Gradle 工程只是资源源目录，作为类加载来源几乎不可能命中）。
+        if (!FMLEnvironment.production) {
+            return;
+        }
         CodeSource cs = guardClass.getProtectionDomain().getCodeSource();
         if (cs == null || cs.getLocation() == null) {
             classSourceSuspicious = true;

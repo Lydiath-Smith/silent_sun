@@ -51,6 +51,13 @@ public final class TwilightVisualEvents {
 
     /** 缓存的白天天空盘网格（懒加载，仅在渲染线程创建）。 */
     private static VertexBuffer daySkyBuffer = null;
+    /**
+     * 天空盘构建失败后熔断（渲染线程独占，无需 volatile）。
+     * <p>
+     * 2026-09-11（代码审计 G20 #4）：原实现失败后把 {@code daySkyBuffer} 置 null 就返回，
+     * 而调用方每帧都会重试 ⇒ 断光之刻期间**每帧**重走一次完整构建并打一条 warn（≈60+ 条/秒）。
+     */
+    private static boolean daySkyBuildFailed = false;
 
     @SubscribeEvent
     public static void onComputeFogColor(ViewportEvent.ComputeFogColor event) {
@@ -110,28 +117,63 @@ public final class TwilightVisualEvents {
         RenderSystem.depthMask(true);
     }
 
+    /**
+     * 懒构建白天天空盘；失败后熔断，不再每帧重试。
+     * <p>
+     * 2026-09-11（代码审计 G20 #4）：三处修复 ——
+     * ① <b>失败熔断</b>：原实现失败即 {@code daySkyBuffer = null} 返回，调用方每帧重试 ⇒ 日志刷屏；
+     * ② <b>失败路径释放 GL 对象</b>：{@code VertexBuffer} 在 1.21.1 构造时即分配 2 个 buffer + 1 个 VAO
+     *    （{@code _glGenBuffers} ×2 + {@code _glGenVertexArrays}），原 catch 分支既不 close 也不 unbind，
+     *    若异常抛自 {@code upload}（此时已 bind 成功）⇒ 每次失败泄漏一组 GL 对象并把 VAO 留在绑定态；
+     * ③ {@code MeshData} 归属：{@code upload} 内部会自行 close 它（成功与异常两条路径都关），
+     *    故只有「{@code buildOrThrow} 之后、{@code upload} 之前」抛异常时才需我们兜底 close，
+     *    用 {@code mesh = null} 标记「已交给 upload」，避免双重 close。
+     * <p>
+     * 正常路径行为不变：{@code daySkyBuffer} 只在首次构建时创建一次，随客户端进程存活（设计上的常驻缓存）。
+     */
     private static VertexBuffer getDaySkyBuffer() {
-        if (daySkyBuffer == null) {
-            try {
-                Tesselator tesselator = Tesselator.getInstance();
-                float y = 16.0F;
-                float radius = 512.0F;
-                BufferBuilder builder = tesselator.begin(VertexFormat.Mode.TRIANGLE_FAN, DefaultVertexFormat.POSITION);
-                builder.addVertex(0.0F, y, 0.0F);
-                for (int i = -180; i <= 180; i += 45) {
-                    double rad = Math.toRadians(i);
-                    builder.addVertex(radius * (float) Math.cos(rad), y, radius * (float) Math.sin(rad));
-                }
-                MeshData mesh = builder.buildOrThrow();
-                VertexBuffer buffer = new VertexBuffer(VertexBuffer.Usage.STATIC);
-                buffer.bind();
-                buffer.upload(mesh);
-                VertexBuffer.unbind();
-                daySkyBuffer = buffer;
-            } catch (Exception e) {
-                SilentSunMod.LOGGER.warn("Failed to build twilight daytime sky disc: {}", e.getMessage());
-                daySkyBuffer = null;
+        if (daySkyBuffer != null || daySkyBuildFailed) {
+            return daySkyBuffer;
+        }
+        VertexBuffer buffer = null;
+        MeshData mesh = null;
+        try {
+            Tesselator tesselator = Tesselator.getInstance();
+            float y = 16.0F;
+            float radius = 512.0F;
+            BufferBuilder builder = tesselator.begin(VertexFormat.Mode.TRIANGLE_FAN, DefaultVertexFormat.POSITION);
+            builder.addVertex(0.0F, y, 0.0F);
+            for (int i = -180; i <= 180; i += 45) {
+                double rad = Math.toRadians(i);
+                builder.addVertex(radius * (float) Math.cos(rad), y, radius * (float) Math.sin(rad));
             }
+            mesh = builder.buildOrThrow();
+            buffer = new VertexBuffer(VertexBuffer.Usage.STATIC);
+            buffer.bind();
+            buffer.upload(mesh);
+            mesh = null;
+            daySkyBuffer = buffer;
+        } catch (Exception e) {
+            if (mesh != null) {
+                try {
+                    mesh.close();
+                } catch (Exception ignored) {
+                    // 兜底释放失败不影响熔断语义
+                }
+            }
+            if (buffer != null) {
+                try {
+                    buffer.close();
+                } catch (Exception ignored) {
+                    // 同上
+                }
+            }
+            daySkyBuildFailed = true;
+            SilentSunMod.LOGGER.warn("Failed to build twilight daytime sky disc: {}", e.getMessage());
+            return null;
+        } finally {
+            // 成功与失败都恢复 VAO 0：覆盖「bind 之后才抛异常」的路径（原实现在成功路径上单独 unbind）
+            VertexBuffer.unbind();
         }
         return daySkyBuffer;
     }

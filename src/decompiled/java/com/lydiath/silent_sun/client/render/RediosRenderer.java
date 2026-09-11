@@ -86,6 +86,14 @@ extends HumanoidMobRenderer<RediosEntity, HumanoidModel<RediosEntity>> {
             this.renderTransitionEffects(entity, summonTicks, partialTick, poseStack, bufferSource, packedLight);
             poseStack.popPose();
         }
+        // 2026-09-11（代码审计 G20 #2）：两种演出都未进行 ⇒ 回收本实体的去重条目。
+        // LAST_TRANSITION_IMPACT_TICK 是 static 表（客户端 JVM 内跨世界/跨重连存活），原先只 put 不 remove：
+        // 每次召唤都是新 UUID ⇒ 旧条目永久变垃圾并被静态表强引用。
+        // 此处每帧 O(1) 一次 remove，与 114 行 getOrDefault 同级开销，不引入任何扫描；
+        // 去重窗口（elapsed == impactTick 且效果仍在进行）此时早已关闭，不会误删正在使用的条目。
+        if (transitionTicks <= 0 && summonTicks <= 0) {
+            LAST_TRANSITION_IMPACT_TICK.remove(entity.getUUID());
+        }
         super.render(entity, entityYaw, partialTick, poseStack, bufferSource, packedLight);
     }
 

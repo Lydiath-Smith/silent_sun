@@ -647,9 +647,14 @@ public final class IntegrationContract {
         try {
             // 每目标每 tick 至多一次三连（2026-09-01 修复）：5 剑齐射每把剑独立触发
             // 双斩三连 = 一波 5×2 次全额攻击；限频后每目标每 tick 至多一次。
+            // 2026-09-11（代码审计 G18 #4 修复）：写标记从「校验之前」下移到「六道校验全过之后」。
+            // 原顺序下失败的调用同样吃掉本 tick 配额（主手临时非拔刀剑 / 无 triple_whammy SE /
+            // refine<30 / ATTACK_DAMAGE≤0 都会先写标记再 return）⇒ 同 tick 内后续合法调用被静默吞掉。
+            // 现在只在真正产生效果前消费配额；读判据与写入位置无关，故「同 tick 至多一次」的
+            // 防重复语义不变（第一次成功写标记后，其余调用仍被上面的 getInt 判据拦下）。
+            // 口径与本文件 :1120 的「命中落地后才写去重条目」一致。
             CompoundTag targetData = target.getPersistentData();
             if (targetData.getInt(BOSS_TRIPLE_WHAMMY_TICK) == target.tickCount) return;
-            targetData.putInt(BOSS_TRIPLE_WHAMMY_TICK, target.tickCount);
             Level level = boss.level();
             if (level.isClientSide()) return;
             ItemStack blade = boss.getMainHandItem();
@@ -662,6 +667,8 @@ public final class IntegrationContract {
             if (refine < 30) return;
             float damage = (float) boss.getAttributeValue(Attributes.ATTACK_DAMAGE);
             if (damage <= 0.0f) return;
+            // 六道校验全过 —— 此刻才消费本 tick 配额
+            targetData.putInt(BOSS_TRIPLE_WHAMMY_TICK, target.tickCount);
             int color = bladeColorCode(blade);
             Vec3 targetPos = target.position().add(0.0, target.getBbHeight() * 0.5, 0.0);
             for (int i = 0; i < 2; ++i) {

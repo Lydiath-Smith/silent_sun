@@ -38,6 +38,15 @@ package com.lydiath.silent_sun.entity;
  *
  *   PHASE2_PENDING ──(titleLockTicks=0)──► die() → DEFEATED
  * </pre>
+ * <p>
+ * <b>序号契约（2026-09-11 代码审计 G06 #9）：只能在末尾追加新状态，禁止中间插入或调序。</b>
+ * 本枚举以 {@code ordinal()} 落盘，共三个持久化面：① 实体 NBT {@code SilentSunBossState}；
+ * ② 战场账本 {@code RediosBattleData} 的 {@code "BossState"} int 键；③ 反序列化 / 回场重建的写回。
+ * 读取侧只有<b>越界保护</b>（{@code RediosEntity.restoreBossState}、
+ * {@code RediosBattleData.rebuildOrDrop}），挡不住「插入」—— 序号仍落在 [0,6) 内时会被
+ * {@code values()[n]} 静默映射成相邻状态：不越界、不报错、行为静默错档。
+ * ⇒ 新状态一律追加在末尾；若确需插入，必须同时提供旧存档迁移（例如把状态一并写成 name 键）。
+ * {@link #ORDINAL_CONTRACT} 是该契约的可执行形式，装载期逐项比对，不一致即抛异常。
  */
 public enum BossState {
 
@@ -58,6 +67,36 @@ public enum BossState {
 
     /** Phase 2 HP clamped at 1, waiting for current title lock to expire before releasing to player kill. */
     PHASE2_PENDING;
+
+    /**
+     * 序号契约的可执行形式：常量名必须与 ordinal 逐位对应。
+     * <p>
+     * 2026-09-11（代码审计 G06 #9）：本表的唯一用途是把「序号即存档格式」变成<b>装载期硬约束</b>——
+     * 有人往枚举中间插入 / 调整顺序时，这份代码在任何环境都会立刻抛 {@link IllegalStateException}，
+     * 而不是等旧存档被静默读成相邻状态。改枚举就必须改本表，而改本表就会看到上面那条契约。
+     * <p>
+     * 注：这里故意抛异常而非仅告警 —— 表与 {@code values()} 的一致性只由源码决定，与运行环境无关；
+     * 一旦不一致，说明「改了枚举没改表」，那份代码在任何环境都是错的，崩掉比静默错档安全。
+     */
+    private static final String[] ORDINAL_CONTRACT = {
+        "PHASE1_COMBAT", "PHASE1_VOTE", "PHASE1_PENDING", "PHASE1_TRANSITION", "PHASE2_COMBAT", "PHASE2_PENDING"
+    };
+
+    static {
+        BossState[] all = values();
+        if (all.length != ORDINAL_CONTRACT.length) {
+            throw new IllegalStateException("BossState 常量数已变（" + all.length + " != " + ORDINAL_CONTRACT.length
+                + "）。本枚举以 ordinal() 落盘（NBT SilentSunBossState / 账本 BossState 键），"
+                + "只能在末尾追加；若必须插入，须同时提供旧存档迁移。");
+        }
+        for (int i = 0; i < all.length; i++) {
+            if (!all[i].name().equals(ORDINAL_CONTRACT[i])) {
+                throw new IllegalStateException("BossState 序号契约被破坏：ordinal " + i + " 期望 "
+                    + ORDINAL_CONTRACT[i] + "，实际 " + all[i].name()
+                    + "。中间插入 / 调序会让旧存档静默错档，禁止；只能在末尾追加。");
+            }
+        }
+    }
 
     // ────────── Phase helpers (replaces int phase field queries) ──────────
 

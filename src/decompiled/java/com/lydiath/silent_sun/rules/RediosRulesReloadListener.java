@@ -639,13 +639,18 @@ extends SimpleJsonResourceReloadListener {
                 voteTieAsYes = false;
             }
         }
-        double adaptiveBlockTriggerHitsPerSecond = 6.0;
+        // 2026-09-11（代码审计 G03 #4）：改用 int + getAsInt()。
+        // 下游 RediosRules.setAdaptiveBlockTriggerHitsPerSecond(int) 本就是 int 字段，而键名与
+        // 随包 JSON 写作 6.0（浮点字面量）暗示可填小数——原 (int) 截断下填 6.5 会静默变成 6，无日志。
+        // 改为 int 后类型与语义一致（消费方 WeaponManager:254 按「整数次/秒」算 20/hits）。
+        // 兼容性：Gson 的 getAsInt() 对 6.0 同样得 6，行为与原先完全一致。
+        int adaptiveBlockTriggerHitsPerSecond = 6;
         if (root.has("adaptive_block_trigger_hits_per_second")) {
             try {
-                adaptiveBlockTriggerHitsPerSecond = root.get("adaptive_block_trigger_hits_per_second").getAsDouble();
+                adaptiveBlockTriggerHitsPerSecond = root.get("adaptive_block_trigger_hits_per_second").getAsInt();
             }
             catch (RuntimeException e) {
-                adaptiveBlockTriggerHitsPerSecond = 6.0;
+                adaptiveBlockTriggerHitsPerSecond = 6;
             }
         }
         int adaptiveBlockDurationTicks = 20;
@@ -752,13 +757,15 @@ extends SimpleJsonResourceReloadListener {
         }
         // N2: 低帧率判定用的是延迟阈值(毫秒)，键名更名 latency_threshold_ms；
         // M1: 默认 150ms 与字段一致，避免误判普通网络玩家。
-        double latencyThresholdMs = 150.0;
+        // 2026-09-11（代码审计 G03 #4）：同上改为 int + getAsInt()——下游 setLatencyThresholdMs(int)
+        // 本就是 int，随包 JSON 也写作整数 150，用 double 解析纯属多余的类型假象。
+        int latencyThresholdMs = 150;
         if (root.has("latency_threshold_ms")) {
             try {
-                latencyThresholdMs = root.get("latency_threshold_ms").getAsDouble();
+                latencyThresholdMs = root.get("latency_threshold_ms").getAsInt();
             }
             catch (RuntimeException e) {
-                latencyThresholdMs = 150.0;
+                latencyThresholdMs = 150;
             }
         }
         boolean lagProtectionEnabled = true;
@@ -879,7 +886,7 @@ extends SimpleJsonResourceReloadListener {
         RediosRules.setRediosBattleMusicOutroEnabled(rediosBattleMusicOutroEnabled);
         RediosRules.setVoteTimeoutSeconds(voteTimeoutSeconds);
         RediosRules.setVoteTieAsYes(voteTieAsYes);
-        RediosRules.setAdaptiveBlockTriggerHitsPerSecond((int) adaptiveBlockTriggerHitsPerSecond);
+        RediosRules.setAdaptiveBlockTriggerHitsPerSecond(adaptiveBlockTriggerHitsPerSecond);
         RediosRules.setAdaptiveBlockDurationTicks(adaptiveBlockDurationTicks);
         RediosRules.setAdaptiveBlockDamageReduction(adaptiveBlockDamageReduction);
         RediosRules.setAdaptiveBlockCooldownTicks(adaptiveBlockCooldownTicks);
@@ -890,7 +897,7 @@ extends SimpleJsonResourceReloadListener {
         RediosRules.setPushAwayRange(pushAwayRange);
         RediosRules.setRestoredBlocksWhitelist(restoredBlocksWhitelist);
         RediosRules.setRestoreNbt(restoreNbt);
-        RediosRules.setLatencyThresholdMs((int) latencyThresholdMs);
+        RediosRules.setLatencyThresholdMs(latencyThresholdMs);
         RediosRules.setLagProtectionEnabled(lagProtectionEnabled);
         RediosRules.setWeaponWeakpointEnabled(weaponWeakpointEnabled);
         RediosRules.setWeaponWeakpointSlowTicks(weaponWeakpointSlowTicks);
