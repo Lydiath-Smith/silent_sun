@@ -456,14 +456,21 @@ final class AntiCheatLayer {
                 Map<StackKey, Integer> gained = this.creativeGainedItems.remove(id);
                 this.creativePrevInventory.remove(id);
                 List<ItemStack> items = new ArrayList<>();
-                // G4: 检测期间获得的所有物品，每种按最大堆叠上限一组归还
+                // G4（2026-09-11 修复 C03）：按检测期记录的**实际净增量**归还，而不是"每种给满一组"。
+                // gained 的 value 是 tickCreativeTracking 单调累计的净拾取数量，原实现用
+                // getMaxStackSize() 丢弃了该数量 → 拿 1 个钻石也返 64 个（数量越多越离谱）。
                 if (gained != null) {
                     for (Map.Entry<StackKey, Integer> e : gained.entrySet()) {
-                        ItemStack full = new ItemStack(e.getKey().item, new ItemStack(e.getKey().item).getMaxStackSize());
-                        if (e.getKey().tag != null) {
-                            full.set(DataComponents.CUSTOM_DATA, CustomData.of(e.getKey().tag));
+                        int remaining = Math.max(0, e.getValue());
+                        int maxStack = Math.max(1, new ItemStack(e.getKey().item).getMaxStackSize());
+                        while (remaining > 0) {
+                            ItemStack stack = new ItemStack(e.getKey().item, Math.min(remaining, maxStack));
+                            if (e.getKey().tag != null) {
+                                stack.set(DataComponents.CUSTOM_DATA, CustomData.of(e.getKey().tag));
+                            }
+                            items.add(stack);
+                            remaining -= stack.getCount();
                         }
-                        items.add(full);
                     }
                 }
                 // 2026-08-12：期间没拿任何东西 → 不给予任何物品（删除原 D2 fallback
