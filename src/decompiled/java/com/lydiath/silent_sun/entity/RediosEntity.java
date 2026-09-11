@@ -200,7 +200,9 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     private static final int UNITY_POWER_STRENGTH_MAX_LEVEL = 10;
     private static final int STAGE_DIG_RAY_STEPS = 6;
     private static final int STAGE_DIG_INTERVAL_TICKS = 2;
-    private static final int STAGE_BLOCK_BOMB_RANGE = 24;
+    // 2026-09-11（B-4）：原 STAGE_BLOCK_BOMB_RANGE = 24 死常量已删除（全库仅声明、0 消费）——
+    // 投掷门限实际由 WeaponManager.tryThrowBlockBomb 的 getCurrentAttackReach() * 4 决定
+    // （约 20~32 格，随激怒成长；变更出处见 docs/审计优化计划.md）。
     private static final int STAGE_BLOCK_BOMB_COOLDOWN_TICKS = 35;
     private static final float STAGE_BLOCK_BOMB_EXPLOSION_POWER = 2.5f;
     private static final List<Holder<MobEffect>> DUSTLESS_GOOD_BUFF_POOL = List.of(MobEffects.DAMAGE_BOOST, MobEffects.MOVEMENT_SPEED, MobEffects.DIG_SPEED, MobEffects.JUMP, MobEffects.REGENERATION, MobEffects.ABSORPTION, MobEffects.FIRE_RESISTANCE, MobEffects.WATER_BREATHING, MobEffects.NIGHT_VISION, MobEffects.HEALTH_BOOST);
@@ -5021,7 +5023,10 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         int maxIndex = 19683;
         for (int processed = 0; this.darkStarBlastNextIndex < maxIndex && processed < 600; ++processed) {
             BlockState state;
-            int idx = ++this.darkStarBlastNextIndex;
+            // B-05（2026-09-11 依设计 §五 2.6「破坏约 27³」）：原为 ++this.darkStarBlastNextIndex，
+            // 索引自 1 起 → 漏掉 idx=0（相对角点 (-13,-13,-13)），且最后一次 idx=19683 映射到越界的 (14,-13,-13)。
+            // 改为后置自增，索引取 0..19682，恰好覆盖完整 27³ = 19683 格；完成判定（Next >= maxIndex）语义不变。
+            int idx = this.darkStarBlastNextIndex++;
             int dx = idx / 729 - 13;
             int dy = idx / 27 % 27 - 13;
             int dz = idx % 27 - 13;
@@ -6598,8 +6603,9 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         if (this.bossState.isVoteOrTransition()) {
             return base;
         }
-        boolean countdown = this.phase == 1 && (this.titleIndex == 7 || this.titleIndex == 8) || this.phase == 2 && this.titleIndex == 5;
-                if (!countdown || this.titleLockTicks <= 0) {
+        // §7 攻略 A2/D2：锁血倒计时对**每个头衔**可见（归零瞬间 = 5s 真输出窗口开启）。
+        // 原实现在「锁血结束即强制推进、不进入 5s 窗口」的 3 个特例头衔（P1 7/8、P2 5）上才显示，语义倒置。
+        if (this.titleLockTicks <= 0) {
             return base;
         }
         int tenths = Mth.clamp((int)((this.titleLockTicks * 10 + 19) / 20), 0, 9999);
@@ -7346,10 +7352,26 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
 
     private static final class RediosMeleeAttackGoal
     extends Goal {
+        /** §7.2 近身判定距离：设计稿 L611「进入近身（< 4 格）后绕目标圆周移动」。 */
+        private static final double ORBIT_ENTER_DIST = 4.0;
+        private static final double ORBIT_ENTER_SQR = ORBIT_ENTER_DIST * ORBIT_ENTER_DIST;
+        /** 绕圈半径（格）：落在近身圈内，且 < 攻击距离，故绕圈期间攻击判定照常成立。 */
+        private static final double ORBIT_RADIUS = 3.0;
+        /** 每次路径重算推进的切向角度（弧度），0.6 ≈ 34°。 */
+        private static final double ORBIT_STEP_RAD = 0.6;
+        /** 绕圈速度 = 追击速度 × 该系数。 */
+        private static final double ORBIT_SPEED_SCALE = 0.85;
+        /** 换向周期（tick，3~6s 随机）：避免长圈单向的机械感。 */
+        private static final int ORBIT_FLIP_MIN_TICKS = 60;
+        private static final int ORBIT_FLIP_MAX_TICKS = 120;
+
         private final RediosEntity redios;
         private final double speed;
         private int attackCooldownTicks = 0;
         private int pathRecalcTicks = 0;
+        private boolean orbiting = false;
+        private int orbitDir = 1;
+        private int orbitFlipTicks = 0;
 
         private RediosMeleeAttackGoal(RediosEntity redios) {
             this.redios = redios;
@@ -7380,6 +7402,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         }
 
         public void stop() {
+            this.orbiting = false;
             this.redios.getNavigation().stop();
         }
 
@@ -7393,11 +7416,30 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             this.redios.getLookControl().setLookAt(target, 30.0f, 30.0f);
             if (this.pathRecalcTicks-- <= 0) {
                 this.pathRecalcTicks = 6;
-                reach = this.redios.getCurrentAttackReach();
-                reachSqr = reach * reach;
-                if (this.redios.distanceToSqr(target) > reachSqr) {
-                    double moveSpeed = this.redios.heightFlightMode ? this.speed * 1.35 : this.speed;
+                double moveSpeed = this.redios.heightFlightMode ? this.speed * 1.35 : this.speed;
+                if (this.redios.distanceToSqr(target) > ORBIT_ENTER_SQR) {
+                    // 非近身：直线追击当前目标（§7.2 L611 前半）。
+                    this.orbiting = false;
                     this.redios.getNavigation().moveTo(target, moveSpeed);
+                } else {
+                    // 近身（< 4 格）：绕目标圆周移动（§7.2 L611 后半）。
+                    // 切向角取「当前实际方位角 + 一步」，Boss 被击退或导航滞后时不会与圆周脱节；
+                    // 圆心取目标当前位置，目标移动时圈跟着走。
+                    if (!this.orbiting) {
+                        this.orbiting = true;
+                        this.orbitDir = this.redios.getRandom().nextBoolean() ? 1 : -1;
+                        this.orbitFlipTicks = this.rollOrbitFlipTicks();
+                    }
+                    if (--this.orbitFlipTicks <= 0) {
+                        this.orbitDir = -this.orbitDir;
+                        this.orbitFlipTicks = this.rollOrbitFlipTicks();
+                    }
+                    double angle = Math.atan2(this.redios.getZ() - target.getZ(), this.redios.getX() - target.getX());
+                    if (!Double.isFinite(angle)) {
+                        angle = this.redios.getRandom().nextDouble() * Math.PI * 2.0;
+                    }
+                    double next = angle + (double)this.orbitDir * ORBIT_STEP_RAD;
+                    this.redios.getNavigation().moveTo(target.getX() + Math.cos(next) * ORBIT_RADIUS, target.getY(), target.getZ() + Math.sin(next) * ORBIT_RADIUS, moveSpeed * ORBIT_SPEED_SCALE);
                 }
             }
             if (this.attackCooldownTicks > 0) {
@@ -7413,6 +7455,10 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
                 this.redios.swing(InteractionHand.MAIN_HAND);
                 this.redios.doHurtTarget(target);
             }
+        }
+
+        private int rollOrbitFlipTicks() {
+            return ORBIT_FLIP_MIN_TICKS + this.redios.getRandom().nextInt(ORBIT_FLIP_MAX_TICKS - ORBIT_FLIP_MIN_TICKS + 1);
         }
     }
 

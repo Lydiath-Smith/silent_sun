@@ -17,7 +17,10 @@ import net.neoforged.neoforge.data.event.GatherDataEvent;
  * {@code src/generated/resources}（build.gradle 的 data run 已挂 output 与 existing）。
  * 运行：{@code gradlew.bat runData}。
  */
-@EventBusSubscriber(modid = SilentSunMod.MODID, bus = EventBusSubscriber.Bus.MOD)
+// B-21（2026-09-11 依设计 §十三 L1001 约定）：bus 参数自 1.21.1 起 @Deprecated(forRemoval = true)，
+// 其 javadoc 明写「this value is ignored, and the bus is determined automatically.
+// Do not specify a bus at all」→ 去掉显式 bus，由事件类型自动判定（GatherDataEvent 属 mod bus）。
+@EventBusSubscriber(modid = SilentSunMod.MODID)
 public final class DataGenerators {
 
     private DataGenerators() {
