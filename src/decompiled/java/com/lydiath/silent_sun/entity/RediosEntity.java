@@ -1941,15 +1941,9 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         if (this.weaknessCurseActive) {
             this.grantFlag(BossFlag.WEAKNESS_CURSE);
         }
-        if (this.darkStarFired) {
-            this.grantFlag(BossFlag.DARK_STAR_FIRED);
-        }
-        if (this.darkStarFlightUnlocked) {
-            this.grantFlag(BossFlag.DARK_STAR_FLIGHT);
-        }
-        if (this.darkStarBedrockRepaired) {
-            this.grantFlag(BossFlag.BEDROCK_REPAIRED);
-        }
+        // 2026-09-11（代码审计 G06 #3 修复）：原此处 grant 的 DARK_STAR_FIRED / DARK_STAR_FLIGHT /
+        // BEDROCK_REPAIRED 三个旗标**从不被 hasFlag 查询**（真值就是上面三个同名布尔字段），
+        // 属只写不读的死旗标 —— 已随 BossFlag 里的常量一并删除。
     }
 
     boolean isUncontrolledSprintActive() {
@@ -6936,8 +6930,9 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             this.applyColorlessPermanentBuffs();
         }
         if (oldPhase == 2 && oldTitleIndex == 2 && (newPhase != 2 || newTitleIndex != 2)) {
+            // 2026-09-11（代码审计 G06 #3 修复）：真值是 dodgeChance（已随回场快照持久化），
+            // 原先额外 grant 的 DODGE_MIN_15 旗标**从不被 hasFlag 查询** → 已随常量一并删除。
             this.dodgeChance = Math.max(this.dodgeChance, 0.15);
-            this.grantFlag(BossFlag.DODGE_MIN_15);
         }
         if (oldPhase == 2 && oldTitleIndex == 3 && (newPhase != 2 || newTitleIndex != 3)) {
             this.grantFlag(BossFlag.CHAOS_RUIN_ABSOLUTE);
