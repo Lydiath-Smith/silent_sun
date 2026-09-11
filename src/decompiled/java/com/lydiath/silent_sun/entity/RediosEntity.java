@@ -7062,6 +7062,18 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         return this.expelledPlayers;
     }
 
+    /**
+     * 本场参战玩家 UUID 集合（{@link ITargetableHost} 契约）。
+     * <p>
+     * 2026-09-11（代码审计 G06 #2）：补入接口，供 {@code BossTargeting} 统一
+     * 「有主宠物是否算合法攻击者」的判据（要求主人 ∈ 本集合），
+     * 消除与索敌侧「主人必须参战」的口径分叉。
+     */
+    @Override
+    public Set<UUID> battleParticipants() {
+        return this.battleParticipants;
+    }
+
     double getCurrentAttackReach() {
         return this.stats.attackReach();
     }
@@ -7331,7 +7343,17 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         if (this.mobParticipants.isEmpty()) {
             return;
         }
-        this.mobParticipants.removeIf(id -> this.getMobParticipant((UUID)id) == null);
+        // 2026-09-11（代码审计 G09 #1 修复）：清理失效参战生物时，同步回收 WeaponManager 的两本
+        // 格挡记账（guardLastHitTick / guardAvgInterval）。原先只有玩家路径会回收
+        // （expelFromBattle → removeGuardStats），非玩家攻击者（Mode 1 有主宠物 / Mode 2 白名单生物）
+        // 的条目整场无人清理 → 两本 Map 只增不减。
+        this.mobParticipants.removeIf(id -> {
+            if (this.getMobParticipant((UUID)id) == null) {
+                this.weapons.removeGuardStats((UUID)id);
+                return true;
+            }
+            return false;
+        });
     }
 
     LivingEntity getMobParticipant(UUID id) {

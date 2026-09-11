@@ -3,6 +3,7 @@
  */
 package com.lydiath.silent_sun.util;
 
+import com.lydiath.silent_sun.entity.RediosEntity;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.entity.LivingEntity;
@@ -31,6 +32,10 @@ public final class AbsoluteDamageUtil {
     // 写入 / 读取 / 清除都发生在同一次 damage() 调用内，语义与原先完全等价。
     // NBT 键常量保留（第三方可能按老约定读取），但已不再作为信任载体。
     // ─────────────────────────────────────────────────────────────────────────
+    /** 非 Boss 来源绝对伤害的保底减免（5%）与硬上限（默认 200，见 {@link #adjustAbsoluteDamage}）。 */
+    private static final float ABSOLUTE_MIN_MITIGATION = 0.05f;
+    private static final float ABSOLUTE_MAX_DAMAGE = 200.0f;
+
     private static final Map<LivingEntity, Float> PENDING_ABSOLUTE = new ConcurrentHashMap<LivingEntity, Float>();
     private static final Set<LivingEntity> ABSOLUTE_APPLYING = ConcurrentHashMap.newKeySet();
     private static final Map<LivingEntity, Float> PENDING_SEVER = new ConcurrentHashMap<LivingEntity, Float>();
@@ -57,7 +62,7 @@ public final class AbsoluteDamageUtil {
         if (target instanceof Player player && (player.isSpectator() || (player.isCreative() && !allowCreative))) {
             return false;
         }
-        float adjusted = AbsoluteDamageUtil.adjustAbsoluteDamage(target, amount);
+        float adjusted = AbsoluteDamageUtil.adjustAbsoluteDamage(source, target, amount);
         if (adjusted <= 0.0f) {
             return false;
         }
@@ -139,13 +144,27 @@ public final class AbsoluteDamageUtil {
         return value == null ? 0.0f : value.floatValue();
     }
 
-    private static float adjustAbsoluteDamage(LivingEntity target, float amount) {
-        if (!(target instanceof IAbsoluteDamageImmune)) {
-            float minMitigation = 0.05f;
-            amount *= 1.0f - minMitigation;
-            amount = Math.min(amount, 200.0f);
+    /**
+     * 真伤保底减免与硬上限。
+     * <p>
+     * 2026-09-11（代码审计 G02 #2 / G04 #2 修复，依设计稿 §7.1 A1）：<b>仅 Boss 的绝对伤害无视
+     * §3.1 全局「硬上限 200 + 动态减伤」</b>，其它来源的绝对伤害仍受 200 上限约束。
+     * <p>
+     * 原实现对**所有**绝对伤害一律乘 0.95 再钳 200 —— 包括 Boss → 玩家的断魂/混沌真伤，
+     * 与 A1 直接矛盾（§7.1 开头已声明「凡与既有正文冲突处，以本章为准」）。
+     * <p>
+     * 注意玩家 → Boss 的真伤本来就在 {@link #damage} 开头的 {@code IAbsoluteDamageImmune}
+     * 分支早退，其 200 上限由 {@code RediosEntity.applyDamageCap}（读 {@code redios.damageHardCap}）承担。
+     */
+    private static float adjustAbsoluteDamage(DamageSource source, LivingEntity target, float amount) {
+        if (target instanceof IAbsoluteDamageImmune) {
+            return amount; // 防御性：damage() 开头已对免疫目标早退，正常不可达
         }
-        return amount;
+        if (source != null && source.getEntity() instanceof RediosEntity) {
+            return amount; // 设计稿 §7.1 A1：Boss 的绝对伤害无视全局硬上限与保底减免
+        }
+        amount *= 1.0f - ABSOLUTE_MIN_MITIGATION;
+        return Math.min(amount, ABSOLUTE_MAX_DAMAGE);
     }
 
     private AbsoluteDamageUtil() {

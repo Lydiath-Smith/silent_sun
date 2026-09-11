@@ -669,9 +669,18 @@ extends SimpleJsonResourceReloadListener {
         if (root.has("restored_blocks_whitelist") && root.get("restored_blocks_whitelist").isJsonArray()) {
             ArrayList<String> list = new ArrayList<String>();
             for (JsonElement e : root.getAsJsonArray("restored_blocks_whitelist")) {
-                String s;
-                if (!e.isJsonPrimitive() || (s = e.getAsString()) == null || s.isBlank()) continue;
-                list.add(s);
+                ResourceLocation parsedWhitelistId;
+                if (!e.isJsonPrimitive() || (parsedWhitelistId = RediosRulesReloadListener.tryParseId(e.getAsString())) == null) {
+                    LOG.warn("silent_sun/redios_rules.json 的 restored_blocks_whitelist 条目非法（需 namespace:id 形式，如 minecraft:bedrock），已跳过：{}", e);
+                    continue;
+                }
+                // 2026-09-11（代码审计 G03 #3 修复）：原实现原样入库（list.add(s)）。消费端
+                // RediosEntity.isDarkStarSpecialBlock / restoreDarkStarSpecialBlocks 用
+                // BuiltInRegistries.BLOCK.getKey(...).toString() 比较，该值**恒为小写且带命名空间**
+                // → 配置里写大写（minecraft:Bedrock）或缺命名空间（bedrock）的条目**永不匹配**，
+                // 白名单静默失效，被 2.6 暗星爆破摧毁的方块永不恢复（存档内永久摧毁）。
+                // 现统一归一化为 ResourceLocation.toString()。
+                list.add(parsedWhitelistId.toString());
             }
             if (!list.isEmpty()) {
                 restoredBlocksWhitelist = list;

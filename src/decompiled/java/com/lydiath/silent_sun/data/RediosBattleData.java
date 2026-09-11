@@ -301,7 +301,15 @@ extends SavedData {
                 continue;
             }
             ServerLevel level = server.getLevel(ResourceKey.create(Registries.DIMENSION, r.dimension));
-            if (level == null || level.getEntity(r.bossId) != null) {
+            if (level == null) {
+                // 2026-09-11（代码审计 G05 #2 修复）：记录的维度已不存在（数据包/维度被移除）时，
+                // 原实现与「实体仍在」共用一条 continue → 该记录**永不清理**：每 tick 空转，
+                // 且召唤侧的「已有 Boss 记录」检查会被这条幽灵记录永久阻断（Boss 再也召唤不出来）。
+                SilentSunMod.LOGGER.warn("[SilentSun] 账本记录指向的维度已不存在，清理该记录：bossId={} dim={}", r.bossId, r.dimension);
+                this.remove(r.bossId);
+                continue;
+            }
+            if (level.getEntity(r.bossId) != null) {
                 continue;
             }
             long since = now - r.lastSeenGameTime;

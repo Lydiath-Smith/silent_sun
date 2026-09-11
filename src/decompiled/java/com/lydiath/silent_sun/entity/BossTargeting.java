@@ -18,6 +18,7 @@ import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.Level;
 
 import java.util.Optional;
+import java.util.UUID;
 
 /**
  * 战斗模式与目标判定的统一入口。
@@ -107,9 +108,30 @@ public final class BossTargeting {
         }
 
         if (playerOnlyMode()) {
-            return attacker instanceof OwnableEntity ownable && ownable.getOwnerUUID() != null;
+            return isFriendlyPetOfParticipant(boss, attacker);
         }
         return isMobTargetEligible(attacker);
+    }
+
+    /**
+     * 有主宠物是否算「合法攻击者」：必须有主人，且主人是**本场参战玩家**。
+     * <p>
+     * 2026-09-11（代码审计 G06 #2 修复）：原先两套口径 —— 本方法与 {@code DamagePipeline} 的
+     * 25 点限伤判据都只判「有主人」，而 {@code RediosEntity} 的索敌/输出侧要求
+     * 「主人 ∈ battleParticipants」→「主人未参战的宠物」照样能打 Boss，与索敌侧自相矛盾。
+     * 设计稿 §3.5 / §7.1 A10 的口径是「**被参战玩家驯服的**友好生物」。
+     * <p>
+     * <b>本方法只用于「攻击合法性」判定</b>，不要替换 {@code DamagePipeline} 里的限伤判据 ——
+     * 那处是「限伤范围」（两种模式下有主宠物都限 25），而 Mode 2 下 {@code battleParticipants}
+     * 恒为空（{@code markBattleParticipant} 在 {@code !playerOnly} 时直接返回），
+     * 一并替换会取消斗蛐蛐模式下宠物的 25 点限伤。
+     */
+    public static boolean isFriendlyPetOfParticipant(ITargetableHost boss, LivingEntity attacker) {
+        if (!(attacker instanceof OwnableEntity ownable)) {
+            return false;
+        }
+        UUID ownerId = ownable.getOwnerUUID();
+        return ownerId != null && boss.battleParticipants().contains(ownerId);
     }
 
     // ── 反作弊免疫 ──

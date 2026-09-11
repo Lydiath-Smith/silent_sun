@@ -340,7 +340,11 @@ public final class DamagePipeline {
             if (!BossTargeting.isValidDamageAttacker(boss, attacker)) {
                 return DamageResult.cancel();
             }
-            // 有主人的宠物在两种模式下都受 FRIENDLY_MOB_DAMAGE_CAP 上限约束
+            // 有主人的宠物在两种模式下都受 FRIENDLY_MOB_DAMAGE_CAP 上限约束。
+            // 2026-09-11（代码审计 G06 #2）：此处**刻意保持**「只判有主人」——本处管的是**限伤范围**，
+            // 不是攻击合法性。合法性已由上方 isValidDamageAttacker 统一为「Mode 1 要求主人参战」；
+            // 而 Mode 2 下 battleParticipants 恒为空（markBattleParticipant 在 !playerOnly 时直接返回），
+            // 若此处一并改判「主人参战」，会连带取消斗蛐蛐模式下宠物的 25 点限伤 —— 那是行为变更，非本次目标。
             if (attacker instanceof OwnableEntity ownable) {
                 if (ownable.getOwnerUUID() != null) {
                     ctx.amount = Math.min(ctx.amount,

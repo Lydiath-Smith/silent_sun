@@ -78,13 +78,13 @@ public final class IntegrationContract {
     static final String BLADE_STATE_ACCESS_OF_METHOD = "of";
     static final String ISLASH_BLADE_STATE_UPDATE_COMBO_METHOD = "updateComboSeq";
     static final String ISLASH_BLADE_STATE_PROGRESS_COMBO_METHOD = "progressCombo";
-    /** Boss 每 tick 驱动 combo 生命周期：resolvCurrentComboState 推进超时迁移，ComboState.tickAction 执行 TimeLineTickAction */
+    /** Boss 每 tick 驱动 combo 生命周期：resolvCurrentComboState 推进超时迁移。
+     *  <p>2026-09-11（代码审计 G18 #1 修复）：原注释后半句「ComboState.tickAction 执行
+     *  TimeLineTickAction」所指的整条反射链（{@code COMBO_STATE_REGISTRY_CLASS} / {@code _FIELD} /
+     *  {@code _GET_METHOD} / {@code COMBO_STATE_CLASS} / {@code COMBO_STATE_TICK_ACTION_METHOD}
+     *  五个常量 + 三个静态字段）**零消费方**，且与上述活反射项同处一个 try —— 任一解析失败即把
+     *  {@code cachedAvailable} 置 false，**连带整段拔刀剑集成失效**。已删除，见下方静态字段区。 */
     static final String ISLASH_BLADE_STATE_RESOLV_COMBO_METHOD = "resolvCurrentComboState";
-    static final String COMBO_STATE_REGISTRY_CLASS = "mods.flammpfeil.slashblade.registry.ComboStateRegistry";
-    static final String COMBO_STATE_REGISTRY_FIELD = "REGISTRY";
-    static final String COMBO_STATE_REGISTRY_GET_METHOD = "get";
-    static final String COMBO_STATE_CLASS = "mods.flammpfeil.slashblade.registry.combo.ComboState";
-    static final String COMBO_STATE_TICK_ACTION_METHOD = "tickAction";
     /** slashblade 模组 id（ModList 版本探测用）：重锋 2.0.3 / Refix 2.0.3-0.2.3 */
     static final String SLASHBLADE_MOD_ID = "slashblade";
     /** 重锋版 combo 卡死重置阈值：combo 距上次回到 NONE/standby 超过该 tick 数视为卡死。
@@ -247,9 +247,6 @@ public final class IntegrationContract {
     private static volatile Method setProudSoulCountMethod;
     private static volatile Method setRefineMethod;
     private static volatile Method resolvCurrentComboStateMethod;
-    private static volatile Object comboStateRegistry;
-    private static volatile Method comboStateRegistryGetMethod;
-    private static volatile Method comboStateTickActionMethod;
     // EntityDrive（剑气）反射缓存
     private static volatile Class<?> entityDriveClass;
     private static volatile java.lang.reflect.Constructor<?> entityDriveCtor;
@@ -1333,12 +1330,26 @@ public final class IntegrationContract {
 
     /**
      * Replace ghost weapon items in a player's inventory with safe alternatives.
+     * <p>
+     * ⚠️ 2026-09-11（代码审计 G19 #2）：本方法**全库无调用者**（未接线能力）。本次只补安全守卫、
+     * <b>不接线</b>（是否接线需作者裁决，已在审计登记）。原实现两个隐患：
+     * <ol>
+     *   <li>{@link #isGhostWeapon} 的判据之一依赖 {@code slashBladeItemClass}，而该字段只在
+     *       {@link #ensureReflectionReady()} 成功后才非 null —— 若在反射未就绪时执行本方法，
+     *       <b>所有</b>拔刀剑物品都会被判为 ghost → 不可逆清空玩家背包里的刀；</li>
+     *   <li>清除方式为直接置空且无掉落，一旦误判即永久损失物品。</li>
+     * </ol>
+     * 现改为：反射未就绪时直接跳过（判据不可信）；清除时把物品掉落到玩家脚下，误判仍可拾回。
      */
     static void sanitizeGhostWeapons(Player player) {
+        if (!ensureReflectionReady()) {
+            return; // 判据不可信，宁可不清理也不能误删玩家物品
+        }
         for (int i = 0; i < player.getInventory().getContainerSize(); i++) {
             ItemStack stack = player.getInventory().getItem(i);
             if (isGhostWeapon(stack)) {
                 player.getInventory().setItem(i, ItemStack.EMPTY);
+                player.drop(stack, false);
                 LOG.warn("Removed ghost weapon from {} slot {}: {}", player.getName().getString(), i, stack);
             }
         }
@@ -1449,12 +1460,10 @@ public final class IntegrationContract {
                 // Boss 每 tick 驱动 combo 生命周期（Mob 无 inventoryTick，需手动推进）
                 resolvCurrentComboStateMethod = Class.forName(ISLASH_BLADE_STATE_CLASS)
                     .getMethod(ISLASH_BLADE_STATE_RESOLV_COMBO_METHOD, LivingEntity.class);
-                comboStateRegistry = Class.forName(COMBO_STATE_REGISTRY_CLASS)
-                    .getField(COMBO_STATE_REGISTRY_FIELD).get(null);
-                comboStateRegistryGetMethod = comboStateRegistry.getClass()
-                    .getMethod(COMBO_STATE_REGISTRY_GET_METHOD, ResourceLocation.class);
-                comboStateTickActionMethod = Class.forName(COMBO_STATE_CLASS)
-                    .getMethod(COMBO_STATE_TICK_ACTION_METHOD, LivingEntity.class);
+                // 2026-09-11（代码审计 G18 #1 修复）：此处原解析 ComboStateRegistry / ComboState.tickAction
+                // 共三个字段（comboStateRegistry / comboStateRegistryGetMethod / comboStateTickActionMethod），
+                // 但全库**零消费**；且它们与上面的活反射项同处一个 try —— 任一 Class.forName / getMethod
+                // 抛异常都会走到 catch 把 cachedAvailable 置 false，**整段拔刀剑集成连带失效**。已删除。
                 // EntityDrive（剑气）反射：super_burst_drive 的剑气链路（DoSlashEvent →
                 // SuperBurstDriveEffect.onDoingSlash → doBurstDrive(Player)）带 instanceof Player
                 // 检查，Boss（Mob）挥刀触发 DoSlashEvent 时剑气被跳过。这里反射直发同款剑气实体。
