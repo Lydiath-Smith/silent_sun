@@ -594,10 +594,16 @@ public final class DamagePipeline {
             return DamageResult.proceed();
         }
 
+        // 2026-09-11（代码审计 G07 #3 修复）：reflectApplying 是「反伤进行中」的重入闸门（L574 读取），
+        // 全库无第二处复位点、也不入档 —— 原先无 try/finally，attacker.hurt 走进第三方 hurt/事件链
+        // 一旦抛异常，闸门永久保持 true，Boss 的反伤静默失效直至实体重载。
         boss.reflectApplying = true;
-        attacker.hurt(boss.damageSources().thorns(boss),
-            (float) ((double) ctx.amount * boss.reflectRatio));
-        boss.reflectApplying = false;
+        try {
+            attacker.hurt(boss.damageSources().thorns(boss),
+                (float) ((double) ctx.amount * boss.reflectRatio));
+        } finally {
+            boss.reflectApplying = false;
+        }
 
         return DamageResult.proceed();
     }
@@ -619,6 +625,12 @@ public final class DamagePipeline {
         // 放行让后续阶段处理，避免高爆发一击打穿最后 1 血被误判为作弊反复触发反作弊。
         // 2026-09-10：投票/转场同样属于"锁血窗口"（stagePhase1Lock 会钳 1 并取消），
         // 原实现把它们落到下方惩罚分支 → 断魂等机制触发时误报作弊 + 清效果 + 广播惊扰玩家。
+        // 2026-09-11 作者裁决（`docs/设计文稿-重制版.md` L311）：六个 BossState 全放行使下方惩罚分支
+        // **事实上不可达**，且**明确「保持不恢复」**（不补判据、不恢复可达性）—— 作弊惩罚已改由
+        // 「重建回场」路径触发（`rebuildFromRecord` → `counterAllCheatAttackers(level, true)`，设计稿 L312-313）。
+        // 故下方 `deathCheatStrikeCount`/惩罚体恒不执行属**既定设计口径**，不是可修缺陷；
+        // 考古依据（勿再按「死代码」提案恢复）：e97dff1 的 diff 显示本判据是为修「投票/转场误报作弊+刷屏」
+        // 而**故意**扩大的（项目彻查报告 C10）。
         if (boss.bossState.isPhase1Combat() || boss.bossState.isPhase2Combat()
             || boss.bossState == BossState.PHASE1_VOTE
             || boss.bossState == BossState.PHASE1_TRANSITION) {

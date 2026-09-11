@@ -227,17 +227,46 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     private final ServerBossEvent bossEvent = new ServerBossEvent(Component.empty(), BossEvent.BossBarColor.PURPLE, BossEvent.BossBarOverlay.PROGRESS);
     int phase = 1;
     int titleIndex = 0;
-    /** 战斗开始 tick（首次进入战斗记录，灾变式动态减伤的时间基准；0=未开战）。 */
-    int battleStartTick = 0;
+    /**
+     * 战斗开始游戏时间（灾变式动态减伤的时间基准；{@code -1} = 未开战）。
+     * <p>
+     * 2026-09-11（代码审计 G14 #3 修复）：原实现为 {@code int battleStartTick = tickCount}，而
+     * {@code Entity.tickCount} **不落盘** → 区块回场/账本重建后新实例 {@code tickCount=0}、起点也归 0
+     * → {@code elapsedSec=0} → 动态减伤回到初始 {@code dynamicReductionInitial}（默认 80%）并重新衰减，
+     * 等于「每次重载白送最长 40 秒高额减伤」。
+     * <p>
+     * 注意：单纯给旧字段补一个 NBT 键**无效**——旧值是大数、新实例 {@code tickCount} 是 0，
+     * 差值被 {@code Math.max(0.0f, …)} 钳到 0，结果与不落盘完全相同。故改用
+     * {@code ServerLevel.getGameTime()} 作基准：同场次内两者每 tick 同步 +1，**差值逐位相同**，
+     * 在线手感零变化；只有跨重载才体现为「精确还原」而非「计时归零」。
+     */
+    private long dynamicReductionStartGameTime = -1L;
     /** 头衔锁血剩余 tick；包可见供 DamagePipeline 判断「锁血中不推进非 x.9 头衔」（2026-09-01）。 */
     int titleLockTicks = 0;
     /** P2 濒死锁血已到期解除：到期后回到 PHASE2_COMBAT 允许击杀，不再锁血。 */
     boolean pendingLockReleased = false;
+    /**
+     * 头衔锁血结束后的「5 秒禁回血」缓冲（故意的削弱措施，防锁血刚结束就回血越过段顶跳段）。
+     * <p>
+     * 2026-09-11（代码审计 G13 #10 / G14 #7 修复）：原实现不落盘 → 回场/重建后归零，
+     * 该缓冲静默失效，恰好放进它要防的场景（{@code checkHealTitleRegression} 头衔回退）。
+     * 现持久化至 {@code SilentSunTitleLockGrace}。本字段与 {@code titleLockTicks} 同批搬运进回场快照
+     * （{@code snapshotUnlockFlags} 走 {@code addAdditionalSaveData} 全量，无需额外接线）。
+     */
     private int titleLockGraceTicks = 0;
     /** 投票/转阶段/濒死期间所有活跃参战玩家远离 Boss 的连续 tick 数（64 格外），用于区分「主动逃离脱战」与「区块短暂卸载」。 */
     private int disengageTicks = 0;
     private int aiWatchdogNoTargetTicks = 0;
     int transitionTicks = 0;
+    /**
+     * 转场总时长（tick，由 {@code startTransition} 按配置写入）。
+     * <p>
+     * 2026-09-11（代码审计 G13 #2 修复）：原实现不落盘，回场（{@code SilentSunTransition} 已持久化
+     * 而本字段没有）后为 0，消费点却写 {@code Math.max(1, transitionTotalTicks)} → 总时长被抬成 1、
+     * {@code elapsed = 1 - transitionTicks} 变负数 → 转场 Boss 栏被 {@code setVisible(false)} 隐藏、
+     * 进度条钉满格、冲击特效门限（= -5）永不命中。现持久化至 {@code SilentSunTransitionTotal}，
+     * 并由 {@link #transitionTotal()} 在缺键时回落配置值。
+     */
     private int transitionTotalTicks = 0;
     private long soulSeverY = 0L;
     // 2026-09-10（批次 2.7）：原 wrongInterferenceActive / chaosRuinActive / ashDawnActive 三个字段已删除，
@@ -590,9 +619,9 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         if (this.tickFailsafe(serverLevel)) {
             return;
         }
-        // 首次进入战斗记录战斗开始 tick（灾变式动态减伤的时间基准）
-        if (this.battleStartTick == 0 && this.bossState.isCombat()) {
-            this.battleStartTick = this.tickCount;
+        // 首次进入战斗记录战斗开始游戏时间（灾变式动态减伤的时间基准，见 dynamicReductionStartGameTime 注释）
+        if (this.dynamicReductionStartGameTime < 0L && this.bossState.isCombat()) {
+            this.dynamicReductionStartGameTime = serverLevel.getGameTime();
         }
         if (this.allExpelledLeavePending) {
             this.allExpelledLeavePending = false;
@@ -805,7 +834,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             // 配置 phaseTransitionSeconds = 0 时会踩同一条。
             if (this.transitionTicks <= 0) {
                 this.enterPhase2();
-            } else if (this.transitionTicks == Math.max(1, this.transitionTotalTicks) - 6) {
+            } else if (this.transitionTicks == this.transitionTotal() - 6) {
                 this.spawnTransitionImpact(serverLevel);
             }
         } else {
@@ -1213,7 +1242,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             return;
         }
         if (this.bossState == BossState.PHASE1_TRANSITION) {
-            int total = Math.max(1, this.transitionTotalTicks);
+            int total = this.transitionTotal();
             int elapsed = total - this.transitionTicks;
             float p = (float)elapsed / (float)total;
             boolean visible = elapsed >= 6;
@@ -2363,13 +2392,29 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
      * <ol>
      *   <li><b>9bypass 打穿</b>：断魂/穿甲（BYPASSES_INVULNERABILITY）伤害不受动态减伤，
      *       只受硬上限约束——玩家刀断魂、无妄之终 7% 真伤等仍能压制前期高额减伤；</li>
-     *   <li><b>随时间递减</b>：战斗开始（首次进入战斗记录 battleStartTick）后每秒按
+     *   <li><b>随时间递减</b>：战斗开始（首次进入战斗记录 dynamicReductionStartGameTime）后每秒按
      *       {@code dynamicReductionDecayPerSec} 衰减，初始 {@code dynamicReductionInitial}（80%）
      *       高额减伤 → 归零；控制受伤节奏（前期玩家输出被压制，战斗拖久减伤消失）；</li>
      *   <li><b>超额比例削减</b>：阈值以上部分按比例削减（保留原机制）；</li>
      *   <li><b>硬上限</b>：最终不超过 {@code damageHardCap}。</li>
      * </ol>
      */
+    /** 当前服务端游戏时间；非服务端回落 {@code tickCount}（时间基准方法只在服务端链路调用）。 */
+    private long gameTimeNow() {
+        return this.level() instanceof ServerLevel sl ? sl.getGameTime() : (long)this.tickCount;
+    }
+
+    /**
+     * 转场总时长（tick）：优先用 {@link #startTransition} 记录的实值，该字段缺失/为 0 时回落配置值。
+     * 见字段注释（G13 #2：原 {@code Math.max(1, transitionTotalTicks)} 把 0 抬成 1 是坏兜底）。
+     */
+    private int transitionTotal() {
+        if (this.transitionTotalTicks > 0) {
+            return this.transitionTotalTicks;
+        }
+        return Math.max(1, SilentSunConfig.PHASE_TRANSITION_SECONDS.get() * 20);
+    }
+
     float applyDamageCap(float amount, DamageSource source) {
         float hardCap = (SilentSunConfig.DAMAGE_HARD_CAP.get()).floatValue();
         // ⚠️ 裁决沿革（2026-09-11 用户裁决 N02 = **以现状为准**）：
@@ -2380,8 +2425,9 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         if (source != null && source.is(DamageTypeTags.BYPASSES_INVULNERABILITY)) {
             return Math.min(amount, hardCap);
         }
-        // 灾变式：随时间递减的高额减伤
-        float elapsedSec = Math.max(0.0f, (float)(this.tickCount - this.battleStartTick) / 20.0f);
+        // 灾变式：随时间递减的高额减伤（基准 = 开战时记录的 getGameTime()，跨重载可精确还原）
+        float elapsedSec = this.dynamicReductionStartGameTime < 0L ? 0.0f
+            : Math.max(0.0f, (float)(this.gameTimeNow() - this.dynamicReductionStartGameTime) / 20.0f);
         float initial = (SilentSunConfig.DYNAMIC_REDUCTION_INITIAL.get()).floatValue();
         float decay = (SilentSunConfig.DYNAMIC_REDUCTION_DECAY_PER_SEC.get()).floatValue();
         float reduction = Math.max(0.0f, initial - elapsedSec * decay);
@@ -3049,7 +3095,6 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         Player p2 = null;
         ServerPlayer sp = null;
         ServerPlayer sp2 = null;
-        Component warn = null;
         Player playerTarget = null;
         float totalDamage = 0.0f;
         float pierceRatio = 0.0f;
@@ -3116,14 +3161,10 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
                         if (!this.isChaosRuinActive() && !this.chaosRuinAbsoluteAttacks && !this.isSharpenTrialActiveNow()) break block27;
                         damage = (float)this.getAttributeValue(Attributes.ATTACK_DAMAGE);
                         src = this.buildAttackSource();
-                        if (livingTarget instanceof ServerPlayer && (sp = (ServerPlayer)livingTarget).level().getLevelData().isHardcore() && damage >= sp.getHealth()) {
-                            damage = Math.max(0.0f, sp.getHealth() - 1.0f);
-                            this.hardcoreProtectedPlayers.add(sp.getUUID());
-                            sp.level().broadcastEntityEvent(sp, (byte)3);
-                            sl = (ServerLevel)sp.level();
-                            sl.playSound(null, sp.blockPosition(), SoundEvents.PLAYER_DEATH, SoundSource.PLAYERS, 1.0f, 1.0f);
-                            warn = Component.translatable("message.silent_sun.redios.hardcore_spare").withStyle(ChatFormatting.DARK_RED);
-                            sp.sendSystemMessage(this.rediosSigned(warn));
+                        if (livingTarget instanceof ServerPlayer && (sp = (ServerPlayer)livingTarget).level().getLevelData().isHardcore()) {
+                            // 2026-09-11（代码审计 G15 #2 修复）：三份重复的「保 1 血 + 登记标记 + 假死亡演出」
+                            // 收敛为 clampHardcoreSpare / notifyHardcoreSpare（纯重构，行为不变）。
+                            damage = this.clampHardcoreSpare(sp, damage);
                         }
                         result = AbsoluteDamageUtil.damage(livingTarget, src, damage, SilentSunConfig.BOSS_DAMAGE_CREATIVE.get());
                         break block28;
@@ -3153,27 +3194,20 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
                 }
             }
             if (result && livingTarget.getHealth() <= 0.0f && livingTarget instanceof ServerPlayer && (sp = (ServerPlayer)livingTarget).level().getLevelData().isHardcore()) {
+                // **仅兜底**：本条挂在 super.doHurtTarget / 护甲穿透链的汇合点——伤害已结算完、
+                // hurt() 内部可能已触发 die()，事后补血无法事前注入伤害值。正常路径已由上文
+                // clampHardcoreSpare 事前钳伤，不应走到这里；真要「绝不触发 LivingDeathEvent」
+                // 须自行重写 Mob.doHurtTarget 的全部副作用（击退/火焰附加/setLastHurtMob），风险不抵收益。
                 sp.setHealth(1.0f);
-                this.hardcoreProtectedPlayers.add(sp.getUUID());
-                sp.level().broadcastEntityEvent(sp, (byte)3);
-                sl = (ServerLevel)sp.level();
-                sl.playSound(null, sp.blockPosition(), SoundEvents.PLAYER_DEATH, SoundSource.PLAYERS, 1.0f, 1.0f);
-                warn = Component.translatable("message.silent_sun.redios.hardcore_spare").withStyle(ChatFormatting.DARK_RED);
-                sp.sendSystemMessage(this.rediosSigned(warn));
+                this.notifyHardcoreSpare(sp);
             }
             if (!result && this.uncontrolledSprintUnlocked && this.isUncontrolledSprintActive()) {
                 if (this.distanceToSqr(livingTarget) > 9.0) {
                     return false;
                 }
                 damage = (float)this.getAttributeValue(Attributes.ATTACK_DAMAGE);
-                if (livingTarget instanceof ServerPlayer && (sp2 = (ServerPlayer)livingTarget).level().getLevelData().isHardcore() && damage >= sp2.getHealth()) {
-                    damage = Math.max(0.0f, sp2.getHealth() - 1.0f);
-                    this.hardcoreProtectedPlayers.add(sp2.getUUID());
-                    sp2.level().broadcastEntityEvent(sp2, (byte)3);
-                    sl = (ServerLevel)sp2.level();
-                    sl.playSound(null, sp2.blockPosition(), SoundEvents.PLAYER_DEATH, SoundSource.PLAYERS, 1.0f, 1.0f);
-                    warn = Component.translatable("message.silent_sun.redios.hardcore_spare").withStyle(ChatFormatting.DARK_RED);
-                    sp2.sendSystemMessage(this.rediosSigned(warn));
+                if (livingTarget instanceof ServerPlayer && (sp2 = (ServerPlayer)livingTarget).level().getLevelData().isHardcore()) {
+                    damage = this.clampHardcoreSpare(sp2, damage);
                 }
                 AbsoluteDamageUtil.damage(livingTarget, ModDamageTypes.rediosAttack(this.level(), this), damage, SilentSunConfig.BOSS_DAMAGE_CREATIVE.get());
                 result = true;
@@ -3520,6 +3554,12 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             return;
         }
         long locked = this.mirrorFaceLockedSoulSever;
+        if (locked <= 0L) {
+            // 2026-09-11（代码审计 G17 #3 修复）：旧档无 SilentSunMirrorFaceLockedSoulSever 键时兜底，
+            // 按当前断魂总量重新锁定（与进入 1.5 时的口径一致）。否则 locked=0 会每 tick 以 0 重挂，
+            // 把参战玩家身上已累计的镜像面攻击力加成抹掉 → 1.5 的核心增益静默失效。
+            this.mirrorFaceLockedSoulSever = locked = this.getSoulSeverValue();
+        }
         for (UUID id : new HashSet<UUID>(this.battleParticipants)) {
             ServerPlayer player = this.getServerPlayer(id);
             if (player == null || this.expelledPlayers.contains(id) || player.isSpectator() || player.isCreative() || !player.isAlive() || player.level() != this.level()) continue;
@@ -4187,6 +4227,11 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         this.colorlessChallengeTicks = tag.getInt("SilentSunColorlessChallengeTicks");
         this.noResurrection = tag.getBoolean("SilentSunNoResurrection");
         this.awaitingNoResurrectionPhase2 = tag.getBoolean("SilentSunAwaitingNoResurrectionPhase2");
+        // 2026-09-10 作者裁决「保持现状」（docs/项目彻查报告-2026-09-10.md:417「A1 noResurrection 读后覆写」）
+        // —— 下面两行清零是既定口径，不是笔误。考古附证：enableNoResurrection() 在
+        // silent_sun-0.0.17-historical.jar 与 0.0.24-historical.jar 中**均无任何 invoke 调用点**（javap -c 全类扫描）
+        // ⇒ 该功能属「①从未接线」而非回归；设计稿 §2（L94/L147）的「无复活直入 P2」尚未定义触发条件，
+        // 接线须另立批次（见 docs/实现计划-2026-09-11-C-1审计中危批次.md §4.1 D-3）。
         this.noResurrection = false;
         this.awaitingNoResurrectionPhase2 = false;
         this.pendingCommandLeave = tag.getBoolean("SilentSunPendingCommandLeave");
@@ -4254,6 +4299,14 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         this.soulSeverRetiredInPhase1 = tag.getBoolean("SilentSunSoulSeverRetiredInPhase1");
         this.dodgeChance = tag.contains("SilentSunDodgeChance") ? (double)tag.getFloat("SilentSunDodgeChance") : 0.0;
         this.battleStartGameTime = tag.contains("SilentSunBattleStartTime") ? tag.getLong("SilentSunBattleStartTime") : -1L;
+        // 2026-09-11 审计修复（G14 #3）：动态减伤时间基准改用 gameTime；缺键回落 -1（未开战）
+        this.dynamicReductionStartGameTime = tag.contains("SilentSunDynamicReductionStart") ? tag.getLong("SilentSunDynamicReductionStart") : -1L;
+        // 2026-09-11 审计修复（G13 #10 / G14 #7）：锁血结束后 5 秒禁回血缓冲
+        this.titleLockGraceTicks = tag.getInt("SilentSunTitleLockGrace");
+        // 2026-09-11 审计修复（G13 #2）：转场总时长（缺键读回 0 → transitionTotal() 用配置值兜底）
+        this.transitionTotalTicks = tag.getInt("SilentSunTransitionTotal");
+        // 2026-09-11 审计修复（G17 #3）：1.5「镜像面」锁定的断魂总量
+        this.mirrorFaceLockedSoulSever = tag.getLong("SilentSunMirrorFaceLockedSoulSever");
         this.initialParticipants.clear();
         ListTag initialList = tag.getList("SilentSunInitialParticipants", 10);
         for (int i2 = 0; i2 < initialList.size(); ++i2) {
@@ -4393,6 +4446,12 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         tag.putBoolean("SilentSunChaosRuinAbsoluteAttacks", this.chaosRuinAbsoluteAttacks);
         tag.putBoolean("SilentSunSoulSeverRetiredInPhase1", this.soulSeverRetiredInPhase1);
         tag.putFloat("SilentSunDodgeChance", (float)this.dodgeChance);
+        // 2026-09-11 审计修复：4 个此前未落盘的状态字段（见各自字段注释）。
+        // 它们会随 snapshotUnlockFlags（addAdditionalSaveData 全量 - LEDGER_CARRIED_KEYS）自动进回场快照。
+        tag.putLong("SilentSunDynamicReductionStart", this.dynamicReductionStartGameTime);
+        tag.putInt("SilentSunTitleLockGrace", this.titleLockGraceTicks);
+        tag.putInt("SilentSunTransitionTotal", this.transitionTotalTicks);
+        tag.putLong("SilentSunMirrorFaceLockedSoulSever", this.mirrorFaceLockedSoulSever);
         if (this.battleStartGameTime >= 0L) {
             tag.putLong("SilentSunBattleStartTime", this.battleStartGameTime);
         }
@@ -6493,8 +6552,23 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         }
     }
 
+    /**
+     * 「阻断外部传送」的唯一判据（2026-09-11 代码审计 G17 #2 修复）。
+     * <p>
+     * 口径依 2.9 传送能力永久化的既有注释：进入 2.9 解锁 {@code voidAllThingsUnlocked} 后**永久化**，
+     * 逆推回 2.8/更早头衔（COMBAT 期间）也保持，直至 Boss 死亡。
+     * <p>
+     * 原先六参重载用 {@code voidAllThingsUnlocked}（永久位），三参重载却用
+     * {@code isVoidAllThingsActive()}（= {@code phase == 2 && titleIndex == 9}，逆推后即为 false）
+     * → Boss 进过 2.9 再退回 2.8 时，任何走三参重载的第三方/原版传送都能把它挪走，
+     * 2.8 阶段的反传送形同虚设。现两处共用本判据，避免第三次发散。
+     */
+    private boolean isTeleportBlocked() {
+        return !this.allowSelfTeleport && this.voidAllThingsUnlocked;
+    }
+
     public boolean teleportTo(ServerLevel level, double x, double y, double z, Set<RelativeMovement> movements, float yRot, float xRot) {
-        if (!this.allowSelfTeleport && this.voidAllThingsUnlocked) {
+        if (this.isTeleportBlocked()) {
             // 2026-09-02：2.9 阻止外部传送能力永久化（逆推保持，直至 Boss 死亡）
             return false;
         }
@@ -6506,7 +6580,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     }
 
     public void teleportTo(double x, double y, double z) {
-        if (!this.allowSelfTeleport && this.isVoidAllThingsActive()) {
+        if (this.isTeleportBlocked()) {
             return;
         }
         super.teleportTo(x, y, z);
@@ -7372,6 +7446,35 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         if (BossTargeting.playerOnlyMode() && this.battleParticipants.isEmpty()) {
             this.allExpelledLeavePending = true;
         }
+    }
+
+    /**
+     * 极限模式「保 1 血」：把致命伤害钳到 {@code health - 1} 并登记保护标记 + 演出。返回钳后伤害。
+     * <p>
+     * 2026-09-11（代码审计 G15 #2 修复）：原实现在三处各写一遍（混沌之墟/砺锋·无拘冲刺两条事前钳伤
+     * 与汇合点的事后补血），机制与过滤条件已开始发散。现收敛为本方法 + {@link #notifyHardcoreSpare}。
+     * <p>
+     * 设计依据：设计稿 §3.5 L354「极限模式保护：Boss 攻击玩家时，若伤害导致玩家生命值降至 0 以下，
+     * 玩家**不死亡**但播放死亡动画与音效，生命值重置为 1」。事前钳伤使血量从不 ≤0，才真正满足
+     * 「玩家不死亡」（不会外发 {@code LivingDeathEvent}）。
+     */
+    private float clampHardcoreSpare(ServerPlayer sp, float damage) {
+        if (damage < sp.getHealth()) {
+            return damage;
+        }
+        this.notifyHardcoreSpare(sp);
+        return Math.max(0.0f, sp.getHealth() - 1.0f);
+    }
+
+    /** 保 1 血登记 + 假死亡演出（标记 / 死亡动画 / 音效 / 提示）。 */
+    private void notifyHardcoreSpare(ServerPlayer sp) {
+        this.hardcoreProtectedPlayers.add(sp.getUUID());
+        sp.level().broadcastEntityEvent(sp, (byte)3);
+        if (sp.level() instanceof ServerLevel sl) {
+            sl.playSound(null, sp.blockPosition(), SoundEvents.PLAYER_DEATH, SoundSource.PLAYERS, 1.0f, 1.0f);
+        }
+        Component warn = Component.translatable("message.silent_sun.redios.hardcore_spare").withStyle(ChatFormatting.DARK_RED);
+        sp.sendSystemMessage(this.rediosSigned(warn));
     }
 
     public boolean isHardcoreProtected(UUID id) {

@@ -215,18 +215,12 @@ public final class CommonEvents {
     @SubscribeEvent
     public static void onLivingDamagePre(LivingDamageEvent.Pre event) {
         if (!(event.getEntity() instanceof ServerPlayer player)) return;
-        ServerLevel level = player.serverLevel();
-        if (!level.getLevelData().isHardcore()) return;
-        float damage = event.getNewDamage();
-        if (damage < player.getHealth()) return;
         // G7: 极限模式玩家处于 Boss 战锁血保护中时，任何伤害最低保留 1 点生命，
-        // 直到玩家真正死亡（死亡界面选择回到出生点）或脱离战斗
-        for (Entity e : level.getEntities().getAll()) {
-            if (e instanceof RediosEntity redios && redios.isAlive() && !redios.isRemoved()
-                && redios.isHardcoreProtected(player.getUUID())) {
-                event.setNewDamage(Math.max(0.0f, player.getHealth() - 1.0f));
-                return;
-            }
+        // 直到玩家真正死亡（死亡界面选择回到出生点）或脱离战斗。
+        // 非致命伤害直接短路：既省一次 2048 格类过滤查询，也避免把钳制逻辑用在非致命伤害上。
+        if (event.getNewDamage() < player.getHealth()) return;
+        if (hasHardcoreProtector(player)) {
+            event.setNewDamage(Math.max(0.0f, player.getHealth() - 1.0f));
         }
     }
 
@@ -239,22 +233,18 @@ public final class CommonEvents {
      * 死亡事件拦截：受保护硬核玩家死亡 → 取消死亡并钳回 1 血。任何通道（含第三方直写血量）都拦得住。
      * <p>
      * 半径放宽到 2048 格：硬核锁的意义是"玩家不该被本模组的伤害打死"，不该因为离得远就失效。
+     * <p>
+     * 2026-09-11（代码审计 G12 #1 修复）：半径收敛为唯一常量 {@link #HARDCORE_PROTECT_RADIUS}，
+     * 判据收敛为唯一方法 {@link #hasHardcoreProtector}，不再各处自写一套阈值。
      */
     @SubscribeEvent
     public static void onLivingDeathHardcoreProtected(LivingDeathEvent event) {
         if (!(event.getEntity() instanceof ServerPlayer player)) {
             return;
         }
-        if (!(player.level() instanceof ServerLevel level) || !level.getLevelData().isHardcore()) {
-            return;
-        }
-        for (RediosEntity redios : level.getEntitiesOfClass(RediosEntity.class, player.getBoundingBox().inflate(2048.0))) {
-            if (!redios.isAlive() || redios.isRemoved() || !redios.isHardcoreProtected(player.getUUID())) {
-                continue;
-            }
+        if (hasHardcoreProtector(player)) {
             event.setCanceled(true);
             player.setHealth(1.0f);
-            return;
         }
     }
 
@@ -280,6 +270,37 @@ public final class CommonEvents {
     }
 
     /**
+     * 硬核 1 血锁的保护半径（格）。
+     * <p>
+     * 2026-09-11（代码审计 G12 #1 修复）：原先三处判据半径各不相同——{@code onLivingDamagePre} 用
+     * 全维度 {@code getEntities().getAll()}、死亡拦截用 2048 格、{@code clampHardcoreProtected} 用 128 格，
+     * 且 128 格那份的注释还自称「语义等价」。实际后果：玩家距 Boss 超过 128 格时，默认优先级先把伤害钳到
+     * {@code health-1}，随后 LOWEST 的 {@code onSoulSeverDamageLockPre} 再次调用钳制方法，因 128 格过滤
+     * 返回**未钳制的原值**并覆盖前一次钳制 → 致命伤害照常落地，只能靠死亡事件拦截兜底；即 128~2048 格
+     * 区间走的是「先进 {@code die()} 再取消」的降级路径（第三方统计/墓碑类模组会真实收到一次死亡事件）。
+     * <p>
+     * 现三处统一用本半径，取 2048：硬核锁的语义是「玩家不该被本模组的伤害打死」，不该因距离失效。
+     * 性能上无损——本判据只在**致命伤害**时被调用（各调用点均有 {@code damage >= health} 短路），
+     * 且原先 {@code onLivingDamagePre} 走的是全维度实体遍历，比 2048 格类过滤更慢。
+     */
+    private static final double HARDCORE_PROTECT_RADIUS = 2048.0;
+
+    /**
+     * 本维度内是否存在正在保护该玩家的莱德厄斯（唯一硬核保护判据，三处调用点共用）。
+     */
+    private static boolean hasHardcoreProtector(ServerPlayer player) {
+        if (!(player.level() instanceof ServerLevel level) || !level.getLevelData().isHardcore()) {
+            return false;
+        }
+        for (RediosEntity redios : level.getEntitiesOfClass(RediosEntity.class, player.getBoundingBox().inflate(HARDCORE_PROTECT_RADIUS))) {
+            if (redios.isAlive() && !redios.isRemoved() && redios.isHardcoreProtected(player.getUUID())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * M14 硬核 1 血锁（2026-09-10 用户裁决：**两条伤害链共用同一判据**）。
      * <p>
      * 受莱德厄斯 {@code isHardcoreProtected} 标记的硬核玩家，无论被哪条通道命中（绝对真伤
@@ -288,21 +309,13 @@ public final class CommonEvents {
      * <p>
      * 原实现只写在绝对真伤那条链里 → 断魂走另一套标记（{@code isSoulSeverDamageMarked}）可以
      * **越过 1 血锁直接击杀**硬核保护玩家，与 M14 本意矛盾（W5）。
-     * <p>
-     * 性能：原先用 {@code level.getEntities().getAll()} 全实体遍历找 Boss（每次真伤命中都跑一遍）。
-     * 改成 128 格半径的类过滤——Boss 隔着 128 格以上也不可能在打这名玩家，语义等价而代价是分段查询。
      */
     private static float clampHardcoreProtected(LivingEntity target, float damage) {
-        if (!(target instanceof ServerPlayer player) || !(target.level() instanceof ServerLevel level)) {
+        if (!(target instanceof ServerPlayer player)) {
             return damage;
         }
-        if (!level.getLevelData().isHardcore()) {
-            return damage;
-        }
-        for (RediosEntity redios : level.getEntitiesOfClass(RediosEntity.class, player.getBoundingBox().inflate(128.0))) {
-            if (redios.isAlive() && !redios.isRemoved() && redios.isHardcoreProtected(player.getUUID())) {
-                return Math.min(damage, Math.max(0.0f, player.getHealth() - 1.0f));
-            }
+        if (hasHardcoreProtector(player)) {
+            return Math.min(damage, Math.max(0.0f, player.getHealth() - 1.0f));
         }
         return damage;
     }
