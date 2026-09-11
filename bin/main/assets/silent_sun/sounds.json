@@ -4,7 +4,7 @@
       {
         "name": "silent_sun:music/redios_phase1",
         "stream": true,
-        "attenuation_distance": 64
+        "attenuation_distance": 72
       }
     ]
   },
@@ -13,7 +13,61 @@
       {
         "name": "silent_sun:music/redios_phase2",
         "stream": true,
-        "attenuation_distance": 64
+        "attenuation_distance": 72
+      }
+    ]
+  },
+  "redios_battle_music_phase1_intro": {
+    "sounds": [
+      {
+        "name": "silent_sun:music/redios_phase1_intro",
+        "stream": true,
+        "attenuation_distance": 72
+      }
+    ]
+  },
+  "redios_battle_music_phase1_loop": {
+    "sounds": [
+      {
+        "name": "silent_sun:music/redios_phase1_loop",
+        "stream": true,
+        "attenuation_distance": 72
+      }
+    ]
+  },
+  "redios_battle_music_phase1_outro": {
+    "sounds": [
+      {
+        "name": "silent_sun:music/redios_phase1_outro",
+        "stream": true,
+        "attenuation_distance": 72
+      }
+    ]
+  },
+  "redios_battle_music_phase2_intro": {
+    "sounds": [
+      {
+        "name": "silent_sun:music/redios_phase2_intro",
+        "stream": true,
+        "attenuation_distance": 72
+      }
+    ]
+  },
+  "redios_battle_music_phase2_loop": {
+    "sounds": [
+      {
+        "name": "silent_sun:music/redios_phase2_loop",
+        "stream": true,
+        "attenuation_distance": 72
+      }
+    ]
+  },
+  "redios_battle_music_phase2_outro": {
+    "sounds": [
+      {
+        "name": "silent_sun:music/redios_phase2_outro",
+        "stream": true,
+        "attenuation_distance": 72
       }
     ]
   },
@@ -31,7 +85,8 @@
     "subtitle": "subtitles.silent_sun.redios_summon",
     "sounds": [
       {
-        "name": "minecraft:block/end_portal/endportal"
+        "name": "minecraft:block/end_portal/endportal",
+        "attenuation_distance": 72
       }
     ]
   }
