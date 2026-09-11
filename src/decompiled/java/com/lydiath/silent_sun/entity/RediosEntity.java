@@ -397,8 +397,6 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     //（即 G13 #9 登记的「三份重复实现」）—— 已删除。
     /** 集中轰炸目标的星星散布半径（设计稿 §7.3：集中轰炸保持 5.0，非集中才用配置的散射半径）。 */
     private static final double STARFALL_SALVO_CONCENTRATED_RADIUS = 5.0;
-    private static final int STARFALL_SALVO_FALL_FROM_BLOCKS = 30;
-    private static final int STARFALL_SALVO_HOVER_BLOCKS = 2;
     private int starfallSalvoCooldownTicks = 900;
     private boolean starfallSalvoPending = false;
     private final Set<UUID> starfallSalvoStars = new HashSet<UUID>();
