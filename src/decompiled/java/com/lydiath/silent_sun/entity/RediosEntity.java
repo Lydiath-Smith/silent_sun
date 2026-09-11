@@ -176,6 +176,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     private static final int VOID_BATTLE_RANGE_BLOCKS_SQR = 4096;
     /** Boss 数据版本：NBT 结构变更时 +1，用于 EntityJoinLevelEvent 剔除旧版本残留 Boss。 */
     private static final int BOSS_DATA_VERSION = 1;
+    // TODO(审计清理 G13 #5 / #6)：本段 failsafe 五连阈值常量与下方 UNITY_POWER_* 战斗数值群（含 UNITY_POWER_IMMUNE_CHANCE）全库零消费、消费点写死字面量 —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
     private static final long FAILSAFE_TICK_SPIKE_NANOS = 2000000000L;
     private static final int FAILSAFE_TICK_SPIKES_TO_TRIGGER = 2;
     private static final double FAILSAFE_HIGH_MEMORY_RATIO = 0.95;
@@ -192,6 +193,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     private static final int DUSTLESS_GOOD_HEAL_BOOST_TICKS = 600;
     private static final int FIRM_FAITH_PLAYER_RESIST_AMP = 2;
     private static final int FIRM_FAITH_PLAYER_RESIST_REFRESH_TICKS = 40;
+    // TODO(审计清理 G17 #7)：本常量零引用，同值 1000000000 在本文件 3 处裸写 —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
     private static final int ENRAGE_INFINITE_DURATION_TICKS = 1000000000;
     private static final int UNITY_POWER_FRIENDLY_RADIUS = 20;
     private static final int UNITY_POWER_FRIENDLY_RADIUS_SQR = 400;
@@ -848,6 +850,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             this.tickFragileBinding();
             this.tickStarfallSalvo(serverLevel);
         }
+        // TODO(审计清理 G07 #9)：每 4 tick 覆写护甲与 DamagePipeline.stagePhaseConfig 的 PHASE1/PHASE2_ARMOR_VALUE 写入重复（后者含弱点穿透乘算、才是主实现） —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
         if (this.tickCount % 4 == 0) {
             double armor = this.bossState.isPhase2() ? SilentSunConfig.PHASE2_ARMOR_VALUE.get() : SilentSunConfig.PHASE1_ARMOR_VALUE.get();
             if (this.isWeaponWeakpointWindowActive()) {
@@ -939,6 +942,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     private void spawnIntroStars(ServerLevel serverLevel) {
         for (int i = 0; i < INTRO_STAR_COUNT; ++i) {
             double angle = this.random.nextDouble() * Math.PI * 2.0;
+            // TODO(审计清理 G13 #9)：三份星星生成循环重复（本方法 / spawnSummonScatterStars / spawnStarfallStars），入场版仍是已实测否决的中心密旧分布 —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
             double dist = Math.sqrt(this.random.nextDouble()) * 5.0;
             double x = this.getX() + Math.cos(angle) * dist;
             double z = this.getZ() + Math.sin(angle) * dist;
@@ -1514,6 +1518,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
                     this.teleportIntoView(serverLevel, player);
                 } else {
                     int now = this.tickCount;
+                    // TODO(审计清理 G14 #9)：「Boss 不在视野」提醒冷却写死 600（含哨兵 -600），与同义可配置值 RediosRules.locateBossNotifyIntervalTicks（默认 200）两套口径 —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
                     int last = this.lastMissingViewNotifyTick.getOrDefault(id2, -600);
                     if (now - last >= 600) {
                         this.lastMissingViewNotifyTick.put(id2, now);
@@ -2670,6 +2675,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         this.clearBattleRecord(serverLevel);
         this.anticheat.antiCheatNoLoot = true;
         if (setCooldown && BossTargeting.playerOnlyMode()) {
+            // TODO(审计清理 G14 #12)：召唤冷却时长表达式（COOLDOWN_DAYS * 24000L）在本文件 6 处各写一遍，本处为第 2 处（第 1 处留原样） —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
             this.applySummonCooldown(serverLevel, (long)(SilentSunConfig.COOLDOWN_DAYS.get()).intValue() * 24000L);
         }
         serverLevel.playSound(null, this.blockPosition(), SoundEvents.WARDEN_SONIC_CHARGE, SoundSource.HOSTILE, 1.0f, 1.0f);
@@ -2739,6 +2745,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         if (this.inHurtProcessing) {
             return true;
         }
+        // TODO(审计清理 G14 #11)：本分支不可达（已复核确认，非存疑）：L2028 写 deathViaHurtTick 的前置是 isDeadOrDying()，而覆写版 isDeadOrDying()（L2801）在 !isLegitDeathFlow() 时直接 return false，本判据又依赖该字段 ≥ 0 ⇒ 自锁；且到达 L2027 时 inHurtProcessing 已在 L2014 复位（L2009/L2014 是无嵌套保存的置位/复位，重入同样被清）⇒ 字段永远写不进。建议二选一：删字段 + 本分支（保留 inHurtProcessing 判据），或把写入判据改为 super.isDeadOrDying() 让兜底真正可达 —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
         return this.deathViaHurtTick >= 0 && this.tickCount - this.deathViaHurtTick <= 1;
     }
 
@@ -3412,6 +3419,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     /** 反作弊惩罚窗口内：无视目标自定义无敌帧（2026-09-01 用户裁决：反作弊生效 5s 内
      *  Boss 全攻击强制命中，无论是谁——近战/剑气/幻影剑/爆闪/光环统一走此方法）。 */
     private void resetTargetInvulnIfPunishWindow(LivingEntity target) {
+        // TODO(审计清理 G08 #4)：本文件只有调用点（窗口开启实现全在 AntiCheatLayer 的血量篡改路径），5s 生效窗口与另三条惩罚路径的 30s 门两套口径 —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
         if (target != null && this.anticheat.isPunishWindowActive(this.tickCount)) {
             target.invulnerableTime = 0;
         }
@@ -3535,6 +3543,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         this.onTitleChanged(oldPhase, oldTitleIndex, this.phase, this.titleIndex);
     }
 
+    // TODO(审计清理 G15 #8)：本方法名为「广播」实为 LOGGER 日志；「强制推进头衔」逻辑在另一处亦各写一遍 —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
     private void broadcastForceAdvanceCountdown() {
         List<Component> titles;
         if (!(this.level() instanceof ServerLevel)) {
@@ -3648,6 +3657,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     }
 
     void notifyWallAttack(ServerPlayer player) {
+        // TODO(审计清理 G08 #6)：限频/钳位块逐字重复（审计登记全库 8 份，本类即有 5 处），上限校验与反硬直各两套并行实现，本处为被援引的「既有正确写法」 —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
         int cooldown = Math.max(0, RediosRules.wallAttackNotifyCooldownTicks());
         int now = this.tickCount;
         long last = this.wallAttackLastNotifyTick.getOrDefault(player.getUUID(), Integer.MIN_VALUE).intValue();
@@ -4809,6 +4819,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         // 都有 Math.max(1,…)，只有这里没有 ⇒ phaseTransitionSeconds=0 时本处得 0，转场会在
         // 第一 tick 立刻 enterPhase2Combat()、立方体特效被跳过、transitionTotal()-6 的冲击帧永不命中。
         // 默认值 6 不受影响；0 的语义统一为「1 tick」。
+        // TODO(审计清理 G20 #3)：转场「总时长 = 配置×20 / 冲击帧 = 6」在客户端+服务端共四处各写一遍，本处为服务端转场总时长 —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
         this.transitionTicks = ticks = Math.max(1, SilentSunConfig.PHASE_TRANSITION_SECONDS.get() * 20);
         this.transitionTotalTicks = ticks;
         this.bossEvent.setVisible(true);
@@ -6184,6 +6195,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         boolean anyTicking = false;
         for (UUID id : this.battleParticipants) {
             ServerPlayer player = this.getServerPlayer(id);
+            // TODO(审计清理 G17 #8)：区块保留判定裸写 4096.0（=64²），与 RediosRules.battleRadiusBlocks()（默认 72）口径分裂 —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
             if (player == null || this.expelledPlayers.contains(id) || player.isSpectator() || !player.isAlive() || player.level() != this.level() || !serverLevel.isPositionEntityTicking(player.blockPosition()) || player.isCreative() && !(player.distanceToSqr(this) <= 4096.0)) continue;
             anyTicking = true;
             break;
@@ -6214,6 +6226,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         return true;
     }
 
+    // TODO(审计清理 G17 #5)：createDefeatBookAndQuill 与 createVictoryBook 零调用者，连带死配置 redios_victory_book_title / redios_defeat_book_title —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
     private ItemStack createDefeatBookAndQuill() {
         ItemStack book = new ItemStack(Items.WRITTEN_BOOK);
         List<Filterable<Component>> pages = List.of(Filterable.passThrough(Component.translatable("book.silent_sun.redios.defeat.page0")));
@@ -6288,6 +6301,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         }
         this.enrageStackCooldownTicks = 60;
         this.grantEnrageLevels(1);
+        // TODO(审计清理 G17 #6)：激怒满层「续期」分支 current.getDuration() < 1e9 恒 false（本类授予激怒的时长一律 ≥ 1e9） —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
         if (firmFaith && this.isEnrageMax() && (current = this.getEffect(ModEffects.ENRAGE)) != null && current.getDuration() < 1000000000) {
             this.addEffect(new MobEffectInstance(ModEffects.ENRAGE, 1000000000, current.getAmplifier(), true, true), this);
         }
@@ -7015,6 +7029,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         if (newPhase == 1 && newTitleIndex == 5) {
             this.mirrorFaceLockedSoulSever = this.getSoulSeverValue();
             if (this.level() instanceof ServerLevel) {
+                // TODO(审计清理 G12 #4)：镜面攻击力加成播报未截断值，实际生效值被 CommonEvents.clampMirrorFaceValue 硬编码 ±1e9 截断 —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
                 MutableComponent notice = Component.translatable("message.silent_sun.redios.mirror_face_soul_sever_total_prefix").append(Component.literal((String)Long.toString(this.mirrorFaceLockedSoulSever)).withStyle(ChatFormatting.GOLD));
                 for (UUID uUID : new HashSet<UUID>(this.battleParticipants)) {
                     ServerPlayer player2 = this.getServerPlayer(uUID);

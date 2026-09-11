@@ -372,6 +372,7 @@ public class CleavingPainBlockEntity extends BlockEntity {
         }
     }
 
+    // TODO(审计清理 G10 #8)：本方法 findExistingRedios 与 item/RediosSigilItem.java 同名方法各实现一遍 —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
     /** 全维度查找存活且未移除的 RediosEntity。 */
     private static RediosEntity findExistingRedios(ServerLevel serverLevel) {
         MinecraftServer server = serverLevel.getServer();
@@ -388,6 +389,7 @@ public class CleavingPainBlockEntity extends BlockEntity {
         return null;
     }
 
+    // TODO(审计清理 G10 #8)：本方法 teleportPlayerNearBoss 与 item/RediosSigilItem.java 同名方法各实现一遍 —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
     /** 把玩家传送到 Boss 附近（距离 3~5 格的随机方位），用于追击。 */
     private static void teleportPlayerNearBoss(Player player, ServerLevel bossLevel, RediosEntity boss) {
         // M22：随机尝试多个方位找安全落点（脚下有方块、身位是空气），找不到才退回 Boss 高度

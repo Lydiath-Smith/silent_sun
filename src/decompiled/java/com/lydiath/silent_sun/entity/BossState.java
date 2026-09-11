@@ -170,6 +170,7 @@ public enum BossState {
      * 即冻结态也会因区块卸载退场。此处保留原名仅为兼容既有调用与历史语义，
      * <b>不要再把它当成"卸载结算豁免"的判据</b>。
      */
+    // TODO(审计清理 G06 #6)：isFrozen() 与 isSafeWindow() 是同一集合的两份实现 —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
     public boolean isSafeWindow() {
         return this == PHASE1_VOTE || this == PHASE1_TRANSITION || this == PHASE1_PENDING || this == PHASE2_PENDING;
     }

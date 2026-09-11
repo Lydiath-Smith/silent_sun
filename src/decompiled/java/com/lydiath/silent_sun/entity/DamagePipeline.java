@@ -178,6 +178,7 @@ public final class DamagePipeline {
                 armor *= (1.0 - RediosRules.weaponWeakpointArmorPierce());
                 ctx.amount *= (float) RediosRules.weaponWeakpointDamageMultiplier();
             }
+            // TODO(审计清理 G07 #9)：stagePhaseConfig 写护甲与每 4 tick 的护甲更新重复实现（phase2 分支同型，且实现不在 RediosEntity） —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
             boss.getAttribute(Attributes.ARMOR).setBaseValue(armor);
         }
         if (boss.bossState.isPhase2()) {
@@ -435,6 +436,7 @@ public final class DamagePipeline {
             return DamageResult.proceed();
         }
         if ((boss.isUnityPowerActive() || boss.isColorlessActive())
+            // TODO(审计清理 G07 #5)：UNITY_POWER_IMMUNE_CHANCE 零消费死常量，同义概率在此硬编码 0.2f —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
             && ctx.amount > 0.0f && boss.getRandom().nextFloat() < 0.2f) {
             boss.addSoulSeverY(Math.max(0L, (long) Math.ceil(ctx.amount)));
             return DamageResult.cancel();
@@ -471,6 +473,7 @@ public final class DamagePipeline {
 
         if (boss.isWrongInterferenceActive()) {
             if (ctx.source.getEntity() instanceof LivingEntity
+                // TODO(审计清理 G07 #6)：2.3 闪避率 0.2f 硬编码，与相邻阶段同义闪避走 RediosRules/dodgeChance 配置的口径不一致 —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
                 && boss.getRandom().nextFloat() > 0.2f) {
                 return DamageResult.cancel();
             }
@@ -788,6 +791,7 @@ public final class DamagePipeline {
             boss.enterPendingState();
             return DamageResult.cancel();
         }
+        // TODO(审计清理 G07 #8)：段底锁血/濒死推进本文件四处重复、< 1.0f 与 <= 1.0f 边界口径并存（此处为较次要的 pending 防死分支） —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
         if (boss.bossState == BossState.PHASE2_PENDING && !boss.pendingLockReleased
             && boss.getHealth() - ctx.amount < 1.0f) {
             // pending 唯一目的 = 防止击杀误判（2026-09-04 最终口径）：仅当本次伤害会把血量扣到

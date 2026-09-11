@@ -569,6 +569,7 @@ public final class IntegrationContract {
                 // 绕过输入命令判定；A1→A2→…→A5 由各段 getNext（TimeoutNext 帧推进）自动衔接。
                 Object curLoc = resolvCurrentComboStateMethod.invoke(state, caster);
                 if (!(curLoc instanceof ResourceLocation rl)) return;
+                // TODO(审计清理 G18 #5)：同一「当前处于 NONE/standby 待机」判定在本文件两处各写一遍（此处起手段 + combo 卡死检测处），未抽公共谓词 —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
                 if (SLASH_ARTS_NONE_ID.equals(rl) || SLASH_BLADE_STANDBY_ID.equals(rl)) {
                     updateComboSeqMethod.invoke(state, caster, COMBO_A1_ID);
                 } else {
@@ -1163,6 +1164,7 @@ public final class IntegrationContract {
         if (attack <= 0.0f) return; // 虚弱减攻为负/零时跳过，避免负伤害与零输出
 
         ItemStack blade = boss.getMainHandItem();
+        // TODO(审计清理 G19 #7)：幻影剑默认色裸写 0x3333FF，与本文件常量 DRIVE_COLOR 重复定义（同值两处，改色会漏改） —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
         int color = isSlashBladeItem(blade.getItem()) ? bladeColorCode(blade) : 0x3333FF;
 
         Vec3 eye = boss.getEyePosition();
@@ -1400,6 +1402,7 @@ public final class IntegrationContract {
             if (stateOpt instanceof Optional<?> opt && opt.isPresent()) {
                 return ((Number) getColorCodeMethod.invoke(opt.get())).intValue();
             }
+        // TODO(审计清理 G19 #5)：bladeColorCode 空 catch 吞掉反射异常、直接回退白色（同类静默失败见 hasNullShooter 的 return false），失败无任何日志 —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
         } catch (Exception ignored) {
         }
         return 0xFFFFFF;

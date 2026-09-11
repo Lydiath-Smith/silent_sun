@@ -57,6 +57,7 @@ extends HumanoidMobRenderer<RediosEntity, HumanoidModel<RediosEntity>> {
             Object layer = ctor.newInstance(this);
             this.addLayer((RenderLayer) layer);
             SilentSunMod.LOGGER.info("[SilentSun] SlashBlade main-blade layer attached to RediosRenderer");
+        // TODO(审计清理 G20 #5)：tryAttachMainBladeLayer 的空 catch(Throwable) 连 LinkageError / NoClassDefFoundError 一并吞掉，挂层失败无日志无痕迹 —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
         } catch (Throwable ignored) {
         }
     }

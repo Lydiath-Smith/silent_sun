@@ -73,6 +73,7 @@ public final class RediosRewardOverrideConfig {
 
     public static List<ItemStack> getOverrideStacks(int phase, int titleIndex) {
         for (RewardOverride o : overrides) {
+            // TODO(审计清理 G11 #5)：重复的 (phase,titleIndex) 覆盖条目只有第一条生效（命中即 return），其余同键条目静默失效、无告警 —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
             if (o == null || o.phase != phase || o.titleIndex != titleIndex) continue;
             List<RewardItem> items = o.items;
             if (items == null || items.isEmpty()) {

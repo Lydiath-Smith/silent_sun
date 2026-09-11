@@ -337,6 +337,7 @@ extends SavedData {
             //    因此只有"本次启动后确实见过 Boss 在 tick"（= 战斗正常进行过）才允许走 5s 离场。
             //    兜底：万一区块永远不再加载（玩家再也不会回来），10 分钟（UNLOADED_SETTLE_TICKS）
             //    后清掉记录，避免账本永久残留。
+            // TODO(审计清理 G05 #6)：!seenTickingSinceLoad 分支不可达（启动即清账本） —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
             if (!r.seenTickingSinceLoad) {
                 if (since >= (long)UNLOADED_SETTLE_TICKS) {
                     SilentSunMod.LOGGER.warn(

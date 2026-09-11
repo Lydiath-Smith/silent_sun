@@ -75,6 +75,7 @@ public record BlackSunRespawnPayload() implements CustomPacketPayload {
         }
     }
 
+    // TODO(审计清理 G05 #8)：出生点解析 / 传送 / 回满血与 entity/RediosEntity.java 各写一遍，y 偏移 +0.0 vs +0.1、饱和度 5.0 vs 20.0 已发散 —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
     private static void respawnToSpawn(ServerPlayer player) {
         ServerLevel current = player.serverLevel();
         MinecraftServer server = current.getServer();

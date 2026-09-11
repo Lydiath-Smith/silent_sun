@@ -28,6 +28,7 @@ public final class StarfallCurtainRenderer extends EntityRenderer<StarfallCurtai
     }
 
     public void render(StarfallCurtainEntity entity, float entityYaw, float partialTick, PoseStack poseStack, MultiBufferSource buffer, int packedLight) {
+        // 归档注记(G10 #3/G10 #6)：G10 #3 已实施（D-5 裁定）：淡出进度改读实体真值 1.0f - remaining/total，不再依赖 MAX_LIFETIME_TICKS；G10 #6 的「删除 getLifetimeTicks()」一项作废
         // 2026-09-11（代码审计 G10 #3 → 作者裁定采用本方案）：淡出进度改用**实体实例真值**。
         // 原实现的总时长直接读静态常量 MAX_LIFETIME_TICKS ⇒ 一旦 initCurtain 传入别的时长，
         // 渲染进度就与实体实际生命周期脱钩（同一语义两处独立定义）。

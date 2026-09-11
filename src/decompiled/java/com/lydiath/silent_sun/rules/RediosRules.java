@@ -59,6 +59,7 @@ public final class RediosRules {
     private static volatile List<String> phase2VoteNoTokens = List.of("no", "n", "2", "下次", "否");
 
     // ========== 自适应格挡 ==========
+    // TODO(审计清理 G02 #3)：本套默认值在字段初值 / setter null 回退 / reload 重置块三处各写一遍 —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
     private static volatile int adaptiveBlockTriggerHitsPerSecond = 6;
     private static volatile int adaptiveBlockDurationTicks = 20;
     /** 2026-09-10（用户裁决）：「格挡就全免」——该键**已不再被 DamagePipeline 消费**，

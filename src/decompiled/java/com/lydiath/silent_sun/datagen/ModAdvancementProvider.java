@@ -48,6 +48,7 @@ public final class ModAdvancementProvider extends AdvancementProvider {
 
         @Override
         public void generate(HolderLookup.Provider registries, Consumer<AdvancementHolder> saver) {
+            // TODO(审计清理 G11 #7)：root advancement 无任何运行时授予点（全库只授 phase1_clear / phase2_countdown / phase2_win / teleport_expel），配 impossible 触发即永不可获得 —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
             AdvancementHolder root = Advancement.Builder.advancement()
                 .display(
                     ModItems.REDIOS_SIGIL.get(),

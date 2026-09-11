@@ -54,6 +54,7 @@ public final class RuntimeInjectionGuard {
     }
 
     /** 检测到调试器 / agent 注入特征。 */
+    // TODO(审计清理 G04 #5)：agentDetected() / classSourceSuspicious() 两个 getter 零消费者 —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
     public static boolean agentDetected() {
         return agentDetected;
     }

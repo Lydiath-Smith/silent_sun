@@ -55,6 +55,7 @@ public final class SilentSunMod {
                 modEventBus.register(clazz);
             }
             catch (Exception e) {
+                // TODO(审计清理 G01 #4)：客户端事件注册失败仅 warn 就继续启动，三个实体渲染器缺失要到战斗现场才崩 —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
                 LOGGER.warn("Failed to register client events: {}", (Object)e.toString());
             }
         }

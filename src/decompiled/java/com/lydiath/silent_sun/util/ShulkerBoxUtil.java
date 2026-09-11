@@ -34,6 +34,7 @@ public final class ShulkerBoxUtil {
         return box;
     }
 
+    // TODO(审计清理 G11 #6)：placeShulkerBox 的 name 参数被完全忽略（从不写 CUSTOM_NAME），箱名只取决于落地时传入的方块 state —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
     public static boolean placeShulkerBox(ServerLevel level, BlockPos pos, BlockState state, List<ItemStack> items, Component name) {
         if (level == null || pos == null || state == null) {
             return false;

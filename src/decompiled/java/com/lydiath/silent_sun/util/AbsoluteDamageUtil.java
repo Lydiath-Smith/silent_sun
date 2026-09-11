@@ -164,6 +164,7 @@ public final class AbsoluteDamageUtil {
      * 分支早退，其 200 上限由 {@code RediosEntity.applyDamageCap}（读 {@code redios.damageHardCap}）承担。
      */
     private static float adjustAbsoluteDamage(DamageSource source, LivingEntity target, float amount) {
+        // TODO(审计清理 G04 #3)：IAbsoluteDamageImmune 判断恒真（与 damage() 入口重复判定），本身可安全删除 —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
         if (target instanceof IAbsoluteDamageImmune) {
             return amount; // 防御性：damage() 开头已对免疫目标早退，正常不可达
         }

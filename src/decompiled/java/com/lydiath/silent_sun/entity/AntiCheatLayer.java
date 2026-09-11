@@ -283,6 +283,7 @@ final class AntiCheatLayer {
         this.attributeTamperCount++;
         if (this.attributeTamperCount > 9999) this.attributeTamperCount = 9999;
         // 警报广播限频：每 30 秒最多响应一次，防刷屏
+        // TODO(审计清理 G08 #6)：限频/钳位块全项目 8 份逐字重复（上限校验、反硬直各两套并行实现），此处为最典型的一份 —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
         if (this.tamperBroadcastCooldownTicks <= 0) {
             MutableComponent msg = Component.translatable("message.silent_sun.redios.anticheat.tamper").withStyle(ChatFormatting.RED);
             boss.broadcastToParticipants(boss.rediosSigned(msg));
@@ -378,6 +379,7 @@ final class AntiCheatLayer {
         this.antiCheatPunishGlobalCooldownTicks = 600;
         this.attributeTamperFlagTicks = 60;
         // 惩罚窗口：反作弊生效后 5s 内全攻击重置目标自定义无敌帧（用户裁决）
+        // TODO(审计清理 G08 #4)：5s（100 tick）生效窗口只在此血量篡改路径打开，另三条惩罚路径仅占 30s 门 —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
         this.punishUntilTick = boss.tickCount + 100;
         boss.level().playSound(null, boss.blockPosition(),
             SoundEvents.WARDEN_SONIC_BOOM, SoundSource.HOSTILE, 1.0f, 1.0f);
@@ -740,8 +742,10 @@ final class AntiCheatLayer {
             for (int ii = 0; ii < items.size(); ii++) {
                 CompoundTag ie = items.getCompound(ii);
                 ResourceLocation rl = ResourceLocation.tryParse(ie.getString("Item"));
+                // TODO(审计清理 G08 #5)：其一——不可达死分支（DefaultedRegistry 契约保证不返回 null），删除安全但掩盖「卸载物品被记为 minecraft:air」的语义缺口，建议改 Items.AIR 判据 —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
                 if (rl == null) continue;
                 Item item = BuiltInRegistries.ITEM.get(rl);
+                // TODO(审计清理 G08 #5)：其二——不可达死分支（DefaultedRegistry 契约保证不返回 null），删除安全但掩盖「卸载物品被记为 minecraft:air」的语义缺口，建议改 Items.AIR 判据 —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
                 if (item == null) continue;
                 CompoundTag customTag = ie.contains("Tag", 10) ? ie.getCompound("Tag") : null;
                 // 2026-09-11（代码审计 G08 #2 修复）：单条目计数封顶，防止存档里的巨大 Count

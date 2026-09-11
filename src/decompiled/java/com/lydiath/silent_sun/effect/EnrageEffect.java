@@ -20,6 +20,7 @@ public final class EnrageEffect extends MobEffect {
      * 因此阈值必须 ≤ 9，否则该逻辑永不触发。满层（amplifier=9）后继续叠加
      * 激怒即施加第一层脆弱。
      */
+    // TODO(审计清理 G09 #2)：激怒等级两套口径（amplifier 0~9 / level 1~10）裸值 9/10 分散 4 处 —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
     public static final int FRAGILE_TRIGGER_LEVEL = 9;
 
     /**

@@ -39,6 +39,7 @@ extends Item {
         super(properties);
     }
 
+    // TODO(审计清理 G10 #6)：getUseAnimation() 零调用（返回常量 UseAnim.NONE，与不覆写等价）；同族零调用方法见 entity/StarfallSalvoEntity.java 的 isFalling() / getOwnerUuid()。注：StarfallCurtainEntity.getLifetimeTicks() 已于 D-5 裁定后「由死变活」，不要删 —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
     public UseAnim getUseAnimation(ItemStack stack) {
         return UseAnim.NONE;
     }
@@ -61,6 +62,7 @@ extends Item {
         return InteractionResultHolder.pass(stack);
     }
 
+    // TODO(审计清理 G10 #8)：本方法 findExistingRedios 与 block/CleavingPainBlockEntity.java 同名方法各实现一遍 —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
     /** 查找当前任意维度里存活且未移除的莱德厄斯；找不到返回 null。 */
     private RediosEntity findExistingRedios(ServerLevel serverLevel) {
         MinecraftServer server = serverLevel.getServer();
@@ -77,6 +79,7 @@ extends Item {
         return null;
     }
 
+    // TODO(审计清理 G10 #8)：本方法 teleportPlayerNearBoss 与 block/CleavingPainBlockEntity.java 同名方法各实现一遍 —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
     /** 把玩家传送到 Boss 附近水平 3~5 格随机落点（2026-08-30：落点高度 = Boss 所在高度，
      *  Boss 在空中/高处时玩家也传到同高度，不再回落地表）。M22：优先找安全落点。 */
     private void teleportPlayerNearBoss(Player player, RediosEntity boss) {

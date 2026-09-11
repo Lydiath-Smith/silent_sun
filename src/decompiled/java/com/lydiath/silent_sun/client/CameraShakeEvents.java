@@ -22,6 +22,7 @@ import java.util.List;
 @EventBusSubscriber(modid = "silent_sun", value = Dist.CLIENT)
 public final class CameraShakeEvents {
 
+    // TODO(审计清理 G20 #3)：转场「总时长 = 配置×20 / 冲击帧 = 6」在客户端+服务端共四处各写一遍，此处把配置驱动的总时长硬编码成 120.0（= 默认 6s 的值）—— 配置改时长后本处不跟随 —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
     /** 过渡时长归一化参考（对应 PHASE_TRANSITION_SECONDS 默认 6s = 120 tick）；
      *  配置改时长只影响强度曲线相位，不影响功能。 */
     private static final double TRANSITION_TICKS_REF = 120.0;

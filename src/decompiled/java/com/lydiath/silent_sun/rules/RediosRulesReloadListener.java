@@ -142,6 +142,7 @@ extends SimpleJsonResourceReloadListener {
             RediosRules.setRediosBattleMusicOutroEnabled(true);
             RediosRules.setVoteTimeoutSeconds(30);
             RediosRules.setVoteTieAsYes(false);
+            // TODO(审计清理 G02 #3)：本套默认值在字段初值 / setter null 回退 / reload 重置块三处各写一遍 —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
             RediosRules.setAdaptiveBlockTriggerHitsPerSecond(6);
             RediosRules.setAdaptiveBlockDurationTicks(20);
             RediosRules.setAdaptiveBlockDamageReduction(1.0);
@@ -165,6 +166,7 @@ extends SimpleJsonResourceReloadListener {
         }
         JsonObject root = element.getAsJsonObject();
         // 2026-09-11（G03）：改用 tryParseString —— 原裸调 getAsString()，键值非字符串即异常逃出 apply()
+        // TODO(审计清理 G03 #5)：71 个默认值在三处各抄一遍（注释自证已漂移过一次） —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
         String rawMode = tryParseString(root, "twilight_moment_mode");
         RediosRules.TwilightMomentPunishmentMode punishmentMode = RediosRules.TwilightMomentPunishmentMode.VISUAL;
         if (root.has("twilight_moment_punishment")) {

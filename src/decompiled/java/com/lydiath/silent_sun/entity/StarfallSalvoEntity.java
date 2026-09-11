@@ -166,6 +166,7 @@ public final class StarfallSalvoEntity extends Entity {
         return this.settled;
     }
 
+    // TODO(审计清理 G10 #6)：本文件 isFalling() / getOwnerUuid() 与 item/RediosSigilItem.java 的 getUseAnimation() 是三个零调用公开方法，可删；注意 StarfallCurtainEntity.getLifetimeTicks() 已于 D-5 裁定后「由死变活」，**不要删** —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
     public boolean isFalling() {
         return this.falling;
     }

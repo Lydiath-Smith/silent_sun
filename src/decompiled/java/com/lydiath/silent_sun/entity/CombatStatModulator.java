@@ -66,6 +66,7 @@ final class CombatStatModulator {
     }
 
     /** 移动速度：读移动速度属性（属性轨 + 激怒乘数）。 */
+    // TODO(审计清理 G06 #7)：moveSpeed() 零调用（类注释自称「四读数唯一出口」），且死常量 BLADE_BASE_ATTACK_COOLDOWN_TICKS —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
     double moveSpeed() {
         return this.host.getAttributeValue(Attributes.MOVEMENT_SPEED);
     }

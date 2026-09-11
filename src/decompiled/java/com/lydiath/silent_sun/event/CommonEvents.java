@@ -176,6 +176,7 @@ public final class CommonEvents {
         MinecraftServer server = event.getServer();
         RediosEntity.purgeAllResidualBosses(server);
         ServerLevel overworld = server.overworld();
+        // TODO(审计清理 G05 #6)：!seenTickingSinceLoad 分支不可达（启动即清账本） —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
         RediosBattleData.get(overworld).clearAllRecords();
         RediosCooldownData.get(overworld).resetCooldown();
     }
@@ -220,6 +221,7 @@ public final class CommonEvents {
             (ctx.getSource()).getServer().getCommands().performPrefixedCommand(ctx.getSource(), "reload");
             return 1;
         }
+        // TODO(审计清理 G12 #6)：runReloadAll 的 catch 丢弃异常对象，失败原因无任何日志 —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
         catch (Exception e) {
             (ctx.getSource()).sendFailure(Component.translatable("command.silent_sun.reload_all.dispatch_failed"));
             return 0;
