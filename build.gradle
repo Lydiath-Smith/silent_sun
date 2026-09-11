@@ -29,7 +29,7 @@ sourceSets.main.resources {
 
     // Exclude common development only resources from finalized outputs
     exclude("**/*.bbmodel") // BlockBench project files
-    exclude("src/generated/**/.cache") // datagen cache files
+    exclude("**/.cache/**") // datagen cache files（2026-09-11 修复：原 "src/generated/**/.cache" 是相对 srcDir 的路径，永不匹配 → .cache/ 被打进 jar 根目录）
     exclude("**/*.class")
     exclude("com/**")
 }
@@ -43,6 +43,10 @@ repositories {
         content {
             includeGroup("software.bernie.geckolib")
         }
+    }
+    maven {
+        name = 'JEI'
+        url = 'https://maven.blamejared.com/'
     }
 }
 
@@ -144,10 +148,10 @@ configurations {
 dependencies {
     // Example optional mod dependency with JEI
     // The JEI API is declared for compile time use, while the full JEI artifact is used at runtime
-    // compileOnly "mezz.jei:jei-${mc_version}-common-api:${jei_version}"
-    // compileOnly "mezz.jei:jei-${mc_version}-neoforge-api:${jei_version}"
+    // compileOnly "mezz.jei:jei-${minecraft_version}-common-api:${jei_version}"
+    // compileOnly "mezz.jei:jei-${minecraft_version}-neoforge-api:${jei_version}"
     // We add the full version to localRuntime, not runtimeOnly, so that we do not publish a dependency on it
-    // localRuntime "mezz.jei:jei-${mc_version}-neoforge:${jei_version}"
+    // localRuntime "mezz.jei:jei-${minecraft_version}-neoforge:${jei_version}"
 
     // Example mod dependency using a mod jar from ./libs with a flat dir repository
     // This maps to ./libs/coolmod-${mc_version}-${coolmod_version}.jar

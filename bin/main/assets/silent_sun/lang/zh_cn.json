@@ -38,6 +38,7 @@
   "message.silent_sun.redios.signature": "【%s】 ",
   "message.silent_sun.redios_sigil.busy": "在忙，别烦。忙完再来（剩余 %s 天）",
   "message.silent_sun.redios_sigil.already_busy_extra": "干嘛……",
+  "message.silent_sun.redios_sigil.battle_pending": "祭坛感应到远方还有一场没打完——等它了结再回来。（本次未消耗材料）",
   "message.silent_sun.redios.wall_attack": "无视线投掷:我应该没说过我找得到你们。",
   "message.silent_sun.redios.twilight_moment_expel": "断光之刻：阴招不可怕，但是阴招不凑效确实可怕。",
   "message.silent_sun.redios.colorless_curse": "无光失色：希望你能让我尽兴。",

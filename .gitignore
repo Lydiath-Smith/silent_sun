@@ -23,7 +23,6 @@ out/
 .settings
 .springBeans
 .sts4-cache
-bin/
 !**/src/**/bin/
 
 ### VS Code ###
@@ -46,6 +45,11 @@ libs/
 debug.log
 
 ### Silent Sun 资源真源例外（bin/main）###
+# 2026-09-10 实测修复：原先第 26 行有一条 `bin/`（排除整个 bin 目录），而 Git 规则是
+# **父目录被排除时无法重新包含其子文件** → 下面这一整套 !bin/main/** 规则全部失效，
+# 于是 bin/main 下 66 个文件（含新伤害类型定义 redios_spectrum.json、cleaving_pain 资产、
+# mineable/needs_diamond_tool 标签等约 30 个资源真源）压根没入库；干净克隆会因为
+# 标签引用不存在的伤害类型而在运行时报错。现已删除该父级排除，只保留下面这套精确规则。
 # bin/main 的 assets/、data/、pack.mcmeta 是手写资源真源（build.gradle srcDir('bin/main') 打进 jar），
 # 必须入库；bin/main/com/ 是旧编译产物、bin/default 是模板仓库嵌套拷贝，均忽略。
 bin/*
@@ -56,5 +60,7 @@ bin/main/*
 !bin/main/data/
 !bin/main/data/**
 !bin/main/pack.mcmeta
+# 旧编译产物（.class）与嵌套模板仓库显式忽略
+bin/main/com/
 # bin/default 是模板仓库的嵌套拷贝（含 .git），显式忽略
 bin/default/

@@ -38,6 +38,7 @@
   "message.silent_sun.redios.signature": "[%s] ",
   "message.silent_sun.redios_sigil.busy": "Busy. Come back later (%s days remaining)",
   "message.silent_sun.redios_sigil.already_busy_extra": "What are you doing...",
+  "message.silent_sun.redios_sigil.battle_pending": "The altar senses an unfinished battle far away — settle it first. (No materials consumed)",
   "message.silent_sun.redios.wall_attack": "Wall-piercing throw: walls won't save you.",
   "message.silent_sun.redios.twilight_moment_expel": "Twilight Moment: darkness failed; expelled from battle.",
   "message.silent_sun.redios.colorless_curse": "Colorless: the curse descends.",
