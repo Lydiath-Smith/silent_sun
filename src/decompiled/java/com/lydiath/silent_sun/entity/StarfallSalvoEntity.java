@@ -11,6 +11,8 @@ import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientGamePacketListener;
 import net.minecraft.network.protocol.game.ClientboundAddEntityPacket;
+import net.minecraft.network.syncher.EntityDataAccessor;
+import net.minecraft.network.syncher.EntityDataSerializers;
 import net.minecraft.network.syncher.SynchedEntityData;
 import net.minecraft.server.level.ServerEntity;
 import net.minecraft.server.level.ServerLevel;
@@ -47,8 +49,16 @@ public final class StarfallSalvoEntity extends Entity {
     /** 最近一次 hurt 的攻击者（用于作弊清除时定位作弊者）。2026-09-10 恢复：本批曾连同
      *  remove() 检测一起被删，导致"星星被外部清除"再也不会静默补刀（W2 回归）。 */
     private Entity lastAttacker = null;
-    /** 显示豁免：入场演出星星置 true，客户端渲染时绕过雾效（失明遮蔽下仍全程可见）。 */
-    private boolean displayExempt = false;
+    /**
+     * 显示豁免：入场演出星星置 true，客户端渲染时绕过雾效（失明遮蔽下仍全程可见）。
+     * <p>
+     * 2026-09-11（代码审计 G10 修复）：原为普通 boolean 字段，**只在服务端由
+     * {@code RediosEntity} 置位、没有任何同步通道** —— 客户端渲染器
+     * {@code StarfallSalvoRenderer} 读到的恒为 false，「穿透黑雾」豁免从来没有生效过。
+     * 改为 SynchedEntityData 同步（本类原先就覆写了空的 defineSynchedData）。
+     */
+    private static final EntityDataAccessor<Boolean> DATA_DISPLAY_EXEMPT =
+        SynchedEntityData.defineId(StarfallSalvoEntity.class, EntityDataSerializers.BOOLEAN);
 
     public StarfallSalvoEntity(EntityType<?> type, Level level) {
         super(type, level);
@@ -72,14 +82,15 @@ public final class StarfallSalvoEntity extends Entity {
 
     /** 入场演出星星标记为显示豁免：客户端渲染绕过雾效，失明遮蔽下仍全程可见。 */
     public void markDisplayExempt() {
-        this.displayExempt = true;
+        this.entityData.set(DATA_DISPLAY_EXEMPT, Boolean.TRUE);
     }
 
     public boolean isDisplayExempt() {
-        return this.displayExempt;
+        return this.entityData.get(DATA_DISPLAY_EXEMPT);
     }
 
     protected void defineSynchedData(SynchedEntityData.Builder builder) {
+        builder.define(DATA_DISPLAY_EXEMPT, Boolean.FALSE);
     }
 
     public Packet<ClientGamePacketListener> getAddEntityPacket(ServerEntity entity) {
@@ -237,7 +248,7 @@ public final class StarfallSalvoEntity extends Entity {
         this.falling = tag.getBoolean("SalvoFalling");
         this.settled = tag.getBoolean("SalvoSettled");
         this.ageTicks = tag.getInt("SalvoAge");
-        this.displayExempt = tag.getBoolean("SalvoDisplayExempt");
+        this.entityData.set(DATA_DISPLAY_EXEMPT, tag.getBoolean("SalvoDisplayExempt"));
     }
 
     protected void addAdditionalSaveData(CompoundTag tag) {
@@ -255,6 +266,6 @@ public final class StarfallSalvoEntity extends Entity {
         tag.putBoolean("SalvoFalling", this.falling);
         tag.putBoolean("SalvoSettled", this.settled);
         tag.putInt("SalvoAge", this.ageTicks);
-        tag.putBoolean("SalvoDisplayExempt", this.displayExempt);
+        tag.putBoolean("SalvoDisplayExempt", this.entityData.get(DATA_DISPLAY_EXEMPT));
     }
 }

@@ -541,7 +541,12 @@ public final class DamagePipeline {
             // 混沌之墟是内部设计路径，需自行施加并同步合法伤害累计，防低血量篡改误判。
             // applyDamageCap 只减不增（超额部分按比例削减 + 硬上限），因此 finalDamage
             // 必然 ≤ ctx.amount；voidAllThings 激活时打穿到 ≤1 锁 1 血不推进（无敌语义）。
-            float finalDamage = boss.applyDamageCap(ctx.amount, ctx.source);
+            // 2026-09-11（代码审计 P2 修复）：ctx.amount 已在 stageDamageCap（管线 idx 10）结算过，
+            // 而 applyDamageCap 非幂等（先乘动态减伤、再对超阈值部分按比例削减），此处再算一次
+            // 等于把减伤打两遍。按默认配置（initial 0.8 / ratio 0.5 / threshold 100 / hardCap 200）
+            // 实测算例：原始 1000 经 stagePhaseConfig(×0.55) 与一次 cap 后为 105，二次 cap 后仅 21
+            // —— 只有普通命中路径的 1/5，与注释宣称的「无视减伤但吃 cap」不符。
+            float finalDamage = ctx.amount;
             float next = boss.getHealth() - finalDamage;
             if (next <= 1.0f) {
                 boss.setHealth(1.0f);

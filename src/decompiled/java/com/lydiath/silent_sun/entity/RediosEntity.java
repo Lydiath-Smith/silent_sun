@@ -24,6 +24,7 @@ import com.lydiath.silent_sun.integration.BladeAttackGoal;
 import com.lydiath.silent_sun.loot.RediosLootConfig;
 import com.lydiath.silent_sun.loot.RediosRewardOverrideConfig;
 import com.lydiath.silent_sun.network.BlackSunDefeatPayload;
+import com.lydiath.silent_sun.network.BlackSunRespawnPayload;
 import com.lydiath.silent_sun.registry.ModDamageTypes;
 import com.lydiath.silent_sun.registry.ModEffects;
 import com.lydiath.silent_sun.registry.ModEntities;
@@ -346,6 +347,11 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     private int battleMusicPhase = 0;
     /** A-1：当前段（0=none 1=intro 2=loop 3=outro）。 */
     private int battleMusicSegment = MUSIC_SEG_NONE;
+    /**
+     * A-1：下发世代号——每次需要让玩家**重新收到**音效时递增（换相位 / 换段 / loop 重发）。
+     * 不能用「相位×10+段」当标识：loop 段重发时段标识不变，会被"未变则跳过"吃掉。
+     */
+    private int battleMusicStamp = 0;
     /** A-1：当前段结束时刻（tickCount 基准）；intro→loop 切换与 loop 重发均以此判定。 */
     private long battleMusicSegmentEndTick = 0L;
     /** A-1：本场是否已下发 outro —— 结算时据此决定是否仍 stop 掉 MUSIC 源（让 outro 播完）。 */
@@ -706,10 +712,16 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         // 外部把位置写成世界边界之外的荒谬值时直接拉回战斗锚点，避免 Boss 被"流放"后触发
         // 脱战/区域卸载等误判，随后还会被判 externally removed（回场 + 流程空窗）。
         if (Math.abs(this.getX()) > 3.0E7 || Math.abs(this.getZ()) > 3.0E7 || Math.abs(this.getY()) > 2.0E4) {
-            SilentSunMod.LOGGER.warn("[Redios] 非法坐标拦截：位置=({}, {}, {}) → 拉回战斗锚点 {}",
-                (int)this.getX(), (int)this.getY(), (int)this.getZ(), this.battleAnchorPos);
-            this.moveTo((double)this.battleAnchorPos.getX() + 0.5, (double)this.battleAnchorPos.getY(),
-                (double)this.battleAnchorPos.getZ() + 0.5, this.getYRot(), this.getXRot());
+            // 2026-09-11（代码审计 P0 修复）：battleAnchorPos 可能为 null——:415 初始化为 null，
+            // :4289-4292 在存档缺 SilentSunAnchorX 时又会置回 null。原实现直接解引用会在实体
+            // tick 抛 NPE 崩服（同文件 :5416/:5478 的同类用法都有判空，唯独这里漏了）。
+            BlockPos recover = this.battleAnchorPos != null ? this.battleAnchorPos : serverLevel.getSharedSpawnPos();
+            SilentSunMod.LOGGER.warn("[Redios] 非法坐标拦截：位置=({}, {}, {}) → 拉回{} ({}, {}, {})",
+                (int)this.getX(), (int)this.getY(), (int)this.getZ(),
+                this.battleAnchorPos != null ? "战斗锚点" : "世界出生点（锚点为空）",
+                recover.getX(), recover.getY(), recover.getZ());
+            this.moveTo((double)recover.getX() + 0.5, (double)recover.getY(),
+                (double)recover.getZ() + 0.5, this.getYRot(), this.getXRot());
             this.setDeltaMovement(0.0, 0.0, 0.0);
         }
         // 防死兜底（2026-09-10 实测修复）：防死窗口内若有任何路径把血量写到 <1（前置模组断魂
@@ -1558,6 +1570,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             this.battleMusicSegment = MUSIC_SEG_INTRO;
             this.battleMusicSegmentEndTick = (long)this.tickCount + this.battleMusicIntroTicksFor(desiredPhase);
             this.battleMusicOutroSent = false;
+            ++this.battleMusicStamp;
         }
         // ② 段推进
         if (this.bossState == BossState.PHASE1_VOTE) {
@@ -1566,16 +1579,21 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
                 this.stopAllBattleMusic();
                 this.battleMusicSegment = MUSIC_SEG_OUTRO;
                 this.battleMusicSegmentEndTick = 0L;
+                ++this.battleMusicStamp;
             }
             this.battleMusicOutroSent = true;
         } else if (this.battleMusicSegment == MUSIC_SEG_INTRO) {
             if ((long)this.tickCount >= this.battleMusicSegmentEndTick) {
                 this.battleMusicSegment = MUSIC_SEG_LOOP;
                 this.battleMusicSegmentEndTick = (long)this.tickCount + this.battleMusicLoopTicksFor(this.battleMusicPhase);
+                ++this.battleMusicStamp;
             }
         } else if (this.battleMusicSegment == MUSIC_SEG_LOOP) {
             if ((long)this.tickCount >= this.battleMusicSegmentEndTick) {
                 this.battleMusicSegmentEndTick = (long)this.tickCount + this.battleMusicLoopTicksFor(this.battleMusicPhase);
+                // 2026-09-11 修复（代码审计 G14）：原本只续期 endTick、未改段标识，而下发判定是
+                // 「stamp 未变则跳过」→ 重发被整个吃掉，loop 播完一次后整场无声。
+                ++this.battleMusicStamp;
             }
         }
         int segment = this.battleMusicSegment;
@@ -1589,7 +1607,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         // ③ 逐玩家下发：段标识变化（含换段、重发周期到点后 loop 段不变）时重新发送。
         float volume = RediosRules.rediosBattleMusicVolume();
         double rangeSqr = this.battleMusicRangeSqr();
-        int stamp = this.battleMusicPhase * 10 + segment;
+        int stamp = this.battleMusicStamp;
         for (UUID id : new HashSet<UUID>(this.battleParticipants)) {
             ServerPlayer player = this.getServerPlayer(id);
             if (player == null || this.expelledPlayers.contains(id) || player.isSpectator() || !player.isAlive() || player.level() != this.level()) {
@@ -5323,6 +5341,9 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             MutableComponent msg = Component.translatable("message.silent_sun.redios.black_sun_farewell", new Object[]{player.getName().getString()}).withStyle(ChatFormatting.BLUE);
             player.sendSystemMessage(this.rediosSigned(msg));
             if (this.expelledPlayers.contains(id) || player.isSpectator() || player.isCreative() || !player.isAlive() || player.level() != this.level()) continue;
+            // 2026-09-11（代码审计 G05 修复）：先登记再发界面——回包只有登记过且未过期才被受理，
+            // 否则任意客户端可伪造包随时满血传送（原 handleServer 零校验）。
+            BlackSunRespawnPayload.markDefeatScreenShown(player);
             PacketDistributor.sendToPlayer(player, new BlackSunDefeatPayload(), (CustomPacketPayload[])new CustomPacketPayload[0]);
         }
         this.endBattleThreeDayCooldown();
@@ -5722,7 +5743,12 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         }
         AdvancementHolder advancement = serverLevel.getServer().getAdvancements().get(ResourceLocation.fromNamespaceAndPath("silent_sun", (String)name));
         if (advancement != null) {
-            player.getAdvancements().award(advancement, "silent_sun:" + name);
+            // 2026-09-11（代码审计 P0 修复）：criterion 名必须是 json 里定义的那个。
+            // datagen 侧统一用 .addCriterion("trigger", impossible())（见 ModAdvancementProvider），
+            // 生成的 advancement json 里 criteria 键就是 "trigger"。原实现传的是成就 id
+            // （"silent_sun:" + name），grantProgress 查不到该名会**静默返回 false** →
+            // phase1_clear / phase2_countdown / phase2_win / teleport_expel 与 root 全部拿不到。
+            player.getAdvancements().award(advancement, "trigger");
         }
     }
 
@@ -6012,7 +6038,12 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
                 continue;
             }
             ++active;
-            if (player.distanceToSqr(this) <= radiusSqr) {
+            // 2026-09-11（代码审计 P2 修复）：与 tickChunkRetention 的口径统一——只按水平（XZ）距离。
+            // 原用 player.distanceToSqr(this)（含 Y 轴），Boss 高度飞行去追人时，地面玩家会被垂直差
+            // 误判为「超出战斗半径」→ 60 秒后判全员脱战 → Boss 无奖励退场（明明水平还在圈内）。
+            double dx = player.getX() - this.getX();
+            double dz = player.getZ() - this.getZ();
+            if (dx * dx + dz * dz <= radiusSqr) {
                 anyClose = true;
                 break;
             }
@@ -6441,21 +6472,24 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     private void checkVoidBattleRange(ServerLevel serverLevel) {
         for (UUID id : new HashSet<UUID>(this.battleParticipants)) {
             ServerPlayer player = this.getServerPlayer(id);
-            if (player == null || this.expelledPlayers.contains(id) || player.isSpectator() || player.isCreative() || !player.isAlive() || player.level() != this.level() || this.distanceToSqr(player) <= VOID_BATTLE_RANGE_BLOCKS_SQR) continue;
+            if (player == null || this.expelledPlayers.contains(id) || player.isSpectator() || player.isCreative() || !player.isAlive() || player.level() != this.level()) continue;
+            // 2026-09-11（代码审计 P2 修复）：统一为水平（XZ）距离，同 tickChunkRetention / 脱战判定。
+            // 原用 this.distanceToSqr(player)（含 Y 轴），2.9 期间 Boss 高飞时地面玩家会被垂直差
+            // 误判为「超出 64 格」而即时逐出。
+            double vdx = player.getX() - this.getX();
+            double vdz = player.getZ() - this.getZ();
+            if (vdx * vdx + vdz * vdz <= VOID_BATTLE_RANGE_BLOCKS_SQR) continue;
             ChunkPos cp = player.chunkPosition();
             if (!serverLevel.getChunkSource().hasChunk(cp.x, cp.z)) continue;
-            this.battleParticipants.remove(id);
-            this.weapons.removeGuardStats(id);
             player.sendSystemMessage(this.rediosSigned(Component.translatable("message.silent_sun.redios.expelled").withStyle(ChatFormatting.DARK_RED)));
-            this.cleanupPlayerAfterBattle(player);
-        }
-        // 2026-09-11 实测修复（S5）：逐出后如果参战者集合空了，必须补「全员离场」标记。
-        // 原实现只 remove 参战者、不写 expelledPlayers 也不置 allExpelledLeavePending →
-        // 全灭/脱战/区块保留/账本心跳四条守卫全部 early-return ⇒ 区块保持加载时 Boss 永不退场、
-        // 不结算、不设冷却（玩家走光也拿不到任何结果）。
-        if (this.battleParticipants.isEmpty() && !this.allExpelledLeavePending) {
-            this.allExpelledLeavePending = true;
-            SilentSunMod.LOGGER.warn("[Redios] 2.9 逐出后参战者集合为空 → 标记全员离场（下一 tick 无掉落退场）");
+            // 2026-09-11（代码审计 G17 修复）：改为复用统一入口 expelFromBattle。
+            // 原先的内联实现只做「remove 参战者 + 清格挡统计 + cleanupPlayerAfterBattle」，
+            // 漏掉该入口的 4 项状态更新：expelledPlayers 登记（被逐出者不算已逐出，可能再次入战）、
+            // twilightTimedMissingTicks / twilightTimedMissingFromApply 两个计时表、
+            // hardcoreProtectedPlayers（硬核 1 血保护残留）；且 allExpelledLeavePending 的判据
+            // 少了 playerOnlyMode()，Mode 2（斗蛐蛐）下会误判全员离场而让 Boss 无奖励退场。
+            this.expelFromBattle(player);
+            SilentSunMod.LOGGER.warn("[Redios] 2.9 超距逐出：{}", player.getName().getString());
         }
     }
 

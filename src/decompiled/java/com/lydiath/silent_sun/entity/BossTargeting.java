@@ -124,8 +124,6 @@ public final class BossTargeting {
     private static boolean isMobTargetEligible(LivingEntity target) {
         EntityType<?> type = target.getType();
         if (type.is(PRIMARY_TARGETS) || type.is(MOB_TARGETS)) {
-            // 命中任一白名单标签说明标签已定义，修正缓存以兼容 /reload 后标签生效。
-            tagsUndefinedCache = Boolean.FALSE;
             return true;
         }
         // 两个白名单标签均未定义（数据包未安装）→ 回退安全过滤，
@@ -143,26 +141,24 @@ public final class BossTargeting {
     }
 
     /**
-     * 数据包白名单标签"未定义"结果缓存：斗蛐蛐模式下每 tick 索敌/每次受伤判定
-     * 都可能落到此分支，缓存可避免反复 {@code registry.getTag} 查询。
-     * 标签内容在运行时基本不变（仅 /reload 数据包时可能变化）；命中标签时由
-     * {@link #isMobTargetEligible(LivingEntity)} 主动重置为 false 兼容 reload。
+     * 数据包白名单标签是否「未定义」（两个标签都为空 → 视为未安装数据包，回退安全过滤）。
+     * <p>
+     * 2026-09-11（代码审计 G06 修复）：**移除原 tagsUndefinedCache**。该缓存只有
+     * 「命中标签 → 置 false」一个方向的写入点，**没有任何失效路径** —— 数据包装着时首次判定
+     * 就把缓存写成 false，此后管理员移除/改名数据包并 {@code /reload}，标签已不存在却仍读到
+     * false → 斗蛐蛐模式（Mode 2）下任何非玩家实体都进不了回退分支，
+     * <b>Boss 永久无法攻击任何生物，直到重启服务器</b>。
+     * <p>
+     * 去掉缓存后每次走 {@code registry.getTag}（HashMap 查表，O(1)）——Mode 2 下每 tick
+     * 即使数百次调用也可忽略，换来的是与标签真值永不脱钩（含 /reload 与数据包增删）。
      */
-    private static volatile Boolean tagsUndefinedCache;
-
     private static boolean tagsUndefined(Level level) {
-        Boolean cached = tagsUndefinedCache;
-        if (cached != null) {
-            return cached;
-        }
         Registry<EntityType<?>> registry =
             level.registryAccess().registryOrThrow(Registries.ENTITY_TYPE);
         Optional<? extends HolderSet.Named<EntityType<?>>> primary = registry.getTag(PRIMARY_TARGETS);
         Optional<? extends HolderSet.Named<EntityType<?>>> mob = registry.getTag(MOB_TARGETS);
         boolean primaryEmpty = primary.isEmpty() || primary.get().size() == 0;
         boolean mobEmpty = mob.isEmpty() || mob.get().size() == 0;
-        boolean result = primaryEmpty && mobEmpty;
-        tagsUndefinedCache = Boolean.valueOf(result);
-        return result;
+        return primaryEmpty && mobEmpty;
     }
 }

@@ -109,10 +109,8 @@ extends SimpleJsonResourceReloadListener {
             return;
         }
         JsonObject root = element.getAsJsonObject();
-        String rawMode = null;
-        if (root.has("twilight_moment_mode")) {
-            rawMode = root.get("twilight_moment_mode").getAsString();
-        }
+        // 2026-09-11（G03）：改用 tryParseString —— 原裸调 getAsString()，键值非字符串即异常逃出 apply()
+        String rawMode = tryParseString(root, "twilight_moment_mode");
         RediosRules.TwilightMomentPunishmentMode punishmentMode = RediosRules.TwilightMomentPunishmentMode.VISUAL;
         if (root.has("twilight_moment_punishment")) {
             // E1: 显式二选一配置："expel"=逐出 / "visual"=视觉改变（默认）
@@ -362,7 +360,8 @@ extends SimpleJsonResourceReloadListener {
             }
         }
         ResourceLocation twilightApplyId = ResourceLocation.fromNamespaceAndPath("minecraft", "darkness");
-        if (root.has("twilight_moment_apply_effect") && (parsed = RediosRulesReloadListener.tryParseId(root.get("twilight_moment_apply_effect").getAsString())) != null) {
+        String twilightApplyRaw = tryParseString(root, "twilight_moment_apply_effect");
+        if (twilightApplyRaw != null && (parsed = RediosRulesReloadListener.tryParseId(twilightApplyRaw)) != null) {
             twilightApplyId = parsed;
         }
         ArrayList<ResourceLocation> satisfyIds = null;
@@ -484,15 +483,18 @@ extends SimpleJsonResourceReloadListener {
             }
         }
         ResourceLocation rediosOutcomeTextPhase1WinOnlyFile = null;
-        if (root.has("redios_outcome_text_phase1_win_only_file") && (parsed = RediosRulesReloadListener.tryParseId(root.get("redios_outcome_text_phase1_win_only_file").getAsString())) != null) {
+        String outcomePhase1WinOnlyRaw = tryParseString(root, "redios_outcome_text_phase1_win_only_file");
+        if (outcomePhase1WinOnlyRaw != null && (parsed = RediosRulesReloadListener.tryParseId(outcomePhase1WinOnlyRaw)) != null) {
             rediosOutcomeTextPhase1WinOnlyFile = parsed;
         }
         ResourceLocation rediosOutcomeTextPhase1WinPhase2LoseFile = null;
-        if (root.has("redios_outcome_text_phase1_win_phase2_lose_file") && (parsed = RediosRulesReloadListener.tryParseId(root.get("redios_outcome_text_phase1_win_phase2_lose_file").getAsString())) != null) {
+        String outcomeP1WinP2LoseRaw = tryParseString(root, "redios_outcome_text_phase1_win_phase2_lose_file");
+        if (outcomeP1WinP2LoseRaw != null && (parsed = RediosRulesReloadListener.tryParseId(outcomeP1WinP2LoseRaw)) != null) {
             rediosOutcomeTextPhase1WinPhase2LoseFile = parsed;
         }
         ResourceLocation rediosOutcomeTextPhase2WinFile = null;
-        if (root.has("redios_outcome_text_phase2_win_file") && (parsed = RediosRulesReloadListener.tryParseId(root.get("redios_outcome_text_phase2_win_file").getAsString())) != null) {
+        String outcomePhase2WinRaw = tryParseString(root, "redios_outcome_text_phase2_win_file");
+        if (outcomePhase2WinRaw != null && (parsed = RediosRulesReloadListener.tryParseId(outcomePhase2WinRaw)) != null) {
             rediosOutcomeTextPhase2WinFile = parsed;
         }
         boolean rediosBattleMusicEnabled = true;
@@ -844,5 +846,27 @@ extends SimpleJsonResourceReloadListener {
         catch (RuntimeException e) {
             return null;
         }
+    }
+
+    /**
+     * 2026-09-11（代码审计 G03 修复）：安全取字符串键。
+     * <p>
+     * Gson 的 {@code JsonElement.getAsString()} 只被 {@code JsonPrimitive} 覆写——键值写成
+     * 数组 / 对象 / null 时会抛 {@code UnsupportedOperationException}。本文件原先有 5 处裸调
+     * （twilight_moment_mode、twilight_moment_apply_effect、三个 redios_outcome_text_*_file），
+     * 异常会逃出 {@code apply()} → <b>整次数据包 reload 失败</b>，且文件顶部那条「配置缺失」
+     * 告警不会触发，现象是「改了配置完全无效、日志也无提示」。失败时返回 null 并告警，
+     * 由调用方回退默认值。
+     */
+    private static String tryParseString(JsonObject root, String key) {
+        if (root == null || !root.has(key)) {
+            return null;
+        }
+        JsonElement e = root.get(key);
+        if (e == null || e.isJsonNull() || !e.isJsonPrimitive()) {
+            LOG.warn("silent_sun/redios_rules.json 的键 {} 不是字符串（类型不符），已忽略并使用默认值", key);
+            return null;
+        }
+        return e.getAsString();
     }
 }

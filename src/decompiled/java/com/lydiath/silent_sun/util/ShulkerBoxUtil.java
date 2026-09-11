@@ -9,6 +9,7 @@ import net.minecraft.core.component.DataComponents;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.util.Unit;
+import net.minecraft.world.Containers;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
@@ -48,13 +49,22 @@ public final class ShulkerBoxUtil {
             return false;
         }
         ShulkerBoxBlockEntity shulker = (ShulkerBoxBlockEntity)be;
-        int size = Math.min(items.size(), shulker.getContainerSize());
+        int capacity = shulker.getContainerSize();
+        int size = Math.min(items.size(), capacity);
         int i = 0;
         while (i < size) {
             shulker.setItem(i, items.get(i));
             ++i;
         }
         shulker.setChanged();
+        // 2026-09-11（代码审计 G11 修复）：潜影盒只有 capacity（27）格，超出的奖励原先被**静默丢弃**
+        // 却仍返回 true（调用方以为已全额发放）。改为把溢出部分掉落在箱子处，避免奖励永久损失。
+        for (int j = capacity; j < items.size(); ++j) {
+            ItemStack extra = items.get(j);
+            if (extra != null && !extra.isEmpty()) {
+                Containers.dropItemStack(level, (double)pos.getX() + 0.5, (double)pos.getY() + 0.5, (double)pos.getZ() + 0.5, extra);
+            }
+        }
         return true;
     }
 

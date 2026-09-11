@@ -22,6 +22,7 @@ import net.minecraft.resources.ResourceLocation;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
 import net.minecraft.world.level.ItemLike;
 import net.neoforged.fml.loading.FMLPaths;
 
@@ -75,15 +76,28 @@ public final class RediosLootConfig {
     public static List<ItemStack> roll(RandomSource random) {
         ArrayList<ItemStack> stacks = new ArrayList<ItemStack>();
         for (LootEntry entry : entries) {
-            int max;
-            int count;
-            Item item;
-            double chance;
-            if (entry == null) continue;
-            double d = chance = entry.chance <= 0.0 ? 1.0 : Math.min(1.0, entry.chance);
-            if (random.nextDouble() > chance || (item = (Item)BuiltInRegistries.ITEM.get(ResourceLocation.parse((String)entry.item))) == null) continue;
+            if (entry == null || entry.item == null || entry.item.isBlank()) {
+                continue;
+            }
+            // 2026-09-11（代码审计 G11 修复）：原实现直接 ResourceLocation.parse(entry.item)——
+            // 物品 id 拼错或含非法字符时抛 ResourceLocationException 逃出 roll()，而 roll() 在
+            // 结算生成掉落时被调用 → 整次结算中断。改用 tryParse 跳过非法条目并告警。
+            // 另注：Registry.get() 对未注册 id 返回 Items.AIR 而非 null，原先的 == null 判据无效。
+            ResourceLocation id = ResourceLocation.tryParse(entry.item);
+            if (id == null) {
+                SilentSunMod.LOGGER.warn("redios_loot.json 条目物品 id 非法，已跳过：{}", entry.item);
+                continue;
+            }
+            Item item = BuiltInRegistries.ITEM.get(id);
+            if (item == Items.AIR) {
+                SilentSunMod.LOGGER.warn("redios_loot.json 条目物品未注册，已跳过：{}", entry.item);
+                continue;
+            }
+            double chance = entry.chance <= 0.0 ? 1.0 : Math.min(1.0, entry.chance);
+            if (random.nextDouble() > chance) continue;
             int min = Math.max(0, entry.min);
-            int n = count = min == (max = Math.max(min, entry.max)) ? min : min + random.nextInt(max - min + 1);
+            int max = Math.max(min, entry.max);
+            int count = min == max ? min : min + random.nextInt(max - min + 1);
             if (count <= 0) continue;
             stacks.add(new ItemStack((ItemLike)item, count));
         }
