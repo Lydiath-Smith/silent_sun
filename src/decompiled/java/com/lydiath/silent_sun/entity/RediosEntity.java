@@ -457,7 +457,6 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     private int darknessSoundCooldown = 0;
     private static final ResourceLocation MAX_HEALTH_MODIFIER_ID = ResourceLocation.fromNamespaceAndPath("silent_sun", "redios_max_health_override");
     private static final double ATTRIBUTE_MAX_HEALTH_CAP = 1024.0;
-    private static boolean maxHealthUncapped = false;
     private static boolean warnedMaxHealthClamped = false;
 
     public RediosEntity(EntityType<? extends RediosEntity> type, Level level) {
@@ -983,11 +982,16 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             }
         }
         this.introStarfallDetonated = true;
-        float power = (float) ((Double) SilentSunConfig.STARFALL_SALVO_EXPLOSION_POWER.get()).doubleValue();
+        // 2026-09-11（代码审计 G13 #3 修复）：演出路径必须用 **0.0f** 威力。
+        // 本方法 javadoc 自称「无伤害、不破坏方块，仅爆炸特效」，但原实现传的是
+        // STARFALL_SALVO_EXPLOSION_POWER（默认 6.0）—— 而 Level.explode **任何** interaction
+        // 都会对实体造成爆炸伤害与击退（同文件 spawnTransitionImpact 的注释已明确这一点，
+        // 并因此用 0.0f 做「真·无害爆炸」）。演出星星就悬在 Boss 身边（hoverY = getY() + 2），
+        // 即玩家召唤时站立处 ⇒ 残血玩家可能在「无害演出」里被炸死。
         for (UUID uuid : this.introStarfallStars) {
             Entity star = serverLevel.getEntity(uuid);
             if (star == null || star.isRemoved()) continue;
-            serverLevel.explode(this, star.getX(), star.getY(), star.getZ(), power, Level.ExplosionInteraction.NONE);
+            serverLevel.explode(this, star.getX(), star.getY(), star.getZ(), 0.0f, Level.ExplosionInteraction.NONE);
             if (star instanceof StarfallSalvoEntity salvo) salvo.markLegitRemoval();
             star.discard();
         }
@@ -1295,18 +1299,15 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         }
     }
 
-    private static void ensureMaxHealthUncapped() {
-        if (maxHealthUncapped) {
-            return;
-        }
-        maxHealthUncapped = true;
-    }
-
     private void applyPhaseMaxHealth(ServerLevel serverLevel) {
         AttributeInstance kbInst;
         AttributeInstance ekbInst;
         AttributeInstance attackInst;
-        RediosEntity.ensureMaxHealthUncapped();
+        // 2026-09-11（代码审计 G13 #4 修复）：原此处先调 ensureMaxHealthUncapped()，但那是个
+        // **空操作** —— maxHealthUncapped 字段只被它自己读写（全库零读取），整段等价于「什么都不做」；
+        // 而紧邻的 1024 上限告警却在实打实处理「被原版上限钳住」的后果 ⇒ 两者互为误导，
+        // 维护者会以为本模组已自行绕过 1024 上限。已删除该字段、方法与本次调用。
+        // （真正绕过原版 1024 上限仍需外部 attributefix，见下方的钳制告警。）
         double desired = (SilentSunConfig.PHASE_MAX_HEALTH.get()).intValue();
         if (!Double.isFinite(desired) || desired <= 0.0) {
             return;
@@ -2056,8 +2057,12 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         int cooldown = Math.max(0, RediosRules.damageSourceDebugCooldownTicks());
         String msgId = source.getMsgId();
         String key = msgId + "|" + (sourceCls = source.getClass().getName()) + "|" + (eCls = e == null ? "null" : e.getClass().getName()) + "|" + (dCls = direct == null ? "null" : direct.getClass().getName());
-        int last = this.damageSourceDebugLastTick.getOrDefault(key, Integer.MIN_VALUE);
-        if (now - last < cooldown) {
+        // 2026-09-11（代码审计 G14 #2 修复）：哨兵整数溢出。新键取到 Integer.MIN_VALUE 后做
+        // **int** 减法会回绕成负数（now=5000 → -2147478648；now=MAX → -1），恒 < cooldown
+        // ⇒ 直接 return、连 put 都到不了，键永远是「新键」⇒ 下方 LOGGER.warn 永不执行。
+        // 与本文件 wallAttackLastNotifyTick 的既有正确写法对齐，把比较放宽成 long。
+        long last = this.damageSourceDebugLastTick.getOrDefault(key, Integer.MIN_VALUE).intValue();
+        if ((long)now - last < (long)cooldown) {
             return;
         }
         this.damageSourceDebugLastTick.put(key, now);
@@ -2080,8 +2085,11 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         int now = this.tickCount;
         String msgId = source.getMsgId();
         String key = reason + "|" + msgId + "|" + source.getClass().getName();
-        int last = this.damageZeroLogLastTick.getOrDefault(key, Integer.MIN_VALUE);
-        if (now - last < cooldown) {
+        // 2026-09-11（代码审计 G14 #2 修复）：同 debugLogUnknownDamageSource —— 哨兵 Integer.MIN_VALUE
+        // 参与 int 减法会回绕，导致限频判据恒真、日志分支永不执行（DAMAGE_ZERO_LOG_ENABLED
+        // 打开后也拿不到任何输出，等于排障手段失效）。
+        long last = this.damageZeroLogLastTick.getOrDefault(key, Integer.MIN_VALUE).intValue();
+        if ((long)now - last < (long)cooldown) {
             return;
         }
         this.damageZeroLogLastTick.put(key, now);
@@ -2958,6 +2966,12 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             this.blockPosition());
         // 退场秩序化（M5）：先清账本再执行可能抛异常的清理/掉落，防幽灵重建
         this.clearBattleRecord(serverLevel);
+        // 2026-09-11（代码审计 G15 #4 修复）：暗星方块还原**提到无掉落分支之前**。
+        // 原实现把它放在下方（紧随玩家效果清理之后），而 antiCheatNoLoot 分支在它之前就 return
+        // ⇒ 那是 die() 里唯一不还原的路径：2.6 暗星爆破摧毁/替换掉的白名单方块
+        // （命令方块 / 结构方块 / 屏障 / 末地传送门框架等）既不还原也无处恢复，
+        // 属**不可逆的世界改动**。现三条退出路径共用同一次还原。
+        this.restoreDarkStarSpecialBlocks(serverLevel);
         if (this.anticheat.antiCheatNoLoot) {
             this.disableBossOutline(serverLevel);
             this.cleanupNearbyLivingAfterBattle(serverLevel);
@@ -2972,7 +2986,6 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             if (player == null) continue;
             player.removeEffect(ModEffects.SOUL_SEVER);
         }
-        this.restoreDarkStarSpecialBlocks(serverLevel);
         boolean clearedPhase1 = this.hasClearedPhase1ForLoot();
         if (!clearedPhase1) {
             super.die(damageSource);
@@ -3322,7 +3335,12 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         DamageSource src = ModDamageTypes.rediosAttack(this.level(), this);
         Holder<DamageType> dmgHolder = this.resolveAttackDamageHolder();
         if (dmgHolder != null) {
-            src = new DamageSource(dmgHolder);
+            // 2026-09-11（代码审计 G15 #3 修复）：单参构造 `new DamageSource(holder)` 不带
+            // causingEntity / directEntity，会把上一行刚带上的 this（Boss）丢掉 ⇒
+            // isFinalKillerPlayer(damageSource) 恒返回 false（击杀时不设召唤冷却），
+            // 死亡/受击事件与第三方模组的 attacker 判定同样拿不到 Boss。
+            // 与本文件 randomAttackSource() 的 `new DamageSource(holder, this, this)` 口径统一。
+            src = new DamageSource(dmgHolder, this, this);
         }
         float mainHealthBefore = mainTarget.getHealth();
         float partHealthBefore = part instanceof LivingEntity ? ((LivingEntity)part).getHealth() : 0.0f;
@@ -4583,7 +4601,8 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         DamageSource src = ModDamageTypes.rediosAttack(this.level(), this);
         Holder<DamageType> dmgHolder = this.resolveAttackDamageHolder();
         if (dmgHolder != null) {
-            src = new DamageSource(dmgHolder);
+            // 2026-09-11（代码审计 G15 #3 修复）：同上 —— 补回攻击者，避免该来源无 getEntity()。
+            src = new DamageSource(dmgHolder, this, this);
         }
         return src;
     }

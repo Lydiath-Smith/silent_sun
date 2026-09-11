@@ -33,6 +33,7 @@ import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.neoforged.neoforge.event.entity.player.PlayerEvent;
 import net.minecraft.server.packs.resources.PreparableReloadListener;
 import net.minecraft.util.Mth;
 import net.minecraft.world.damagesource.DamageSource;
@@ -126,12 +127,32 @@ public final class CommonEvents {
     @SubscribeEvent
     public static void onUseItemFinish(LivingEntityUseItemEvent.Finish event) {
         if (!(event.getEntity() instanceof ServerPlayer player)) return;
+        // 2026-09-11（代码审计 G12 #2 修复）：补上与 Start / Stop 一致的物品校验。
+        // 原先此处**不校验物品** —— 只要快照表里有该玩家的条目，完成**任意**物品使用
+        // （吃食物、喝药水）都会把旧断魂快照回灌给他，与「喝奶清除断魂」正好相反；
+        // 而「Start 之后未配对 Stop/Finish」的真实路径是「饮用中掉线 / 被打断而 Stop 未触发」。
+        // 校验物品后，只有「喝奶完成」才可能回灌。
+        if (!event.getItem().is(Items.MILK_BUCKET)) return;
         UUID id = player.getUUID();
         MobEffectInstance snapshot = MILK_SOUL_SEVER_SNAPSHOT.remove(id);
         if (snapshot == null) return;
         if (!player.isAlive()) return;
         // Finish 事件在 finishUsingItem（牛奶清除效果）之后触发，此处重新施加断魂
         player.addEffect(snapshot);
+    }
+
+    /**
+     * 2026-09-11（代码审计 G12 #2 修复）：玩家登出时丢弃断魂快照。
+     * <p>
+     * 快照表原先只有 Start→Finish / Start→Stop 两条清理路径，而两者都是「配对事件」——
+     * 玩家在饮用中掉线时二者都不会触发，该 UUID 的条目长期驻留（按 UUID 只增不减），
+     * 且他重新登录后完成物品使用即可回灌旧断魂。
+     */
+    @SubscribeEvent
+    public static void onPlayerLoggedOut(PlayerEvent.PlayerLoggedOutEvent event) {
+        if (event.getEntity() instanceof ServerPlayer player) {
+            MILK_SOUL_SEVER_SNAPSHOT.remove(player.getUUID());
+        }
     }
 
     @SubscribeEvent
