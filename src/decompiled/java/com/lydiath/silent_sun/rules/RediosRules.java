@@ -107,6 +107,15 @@ public final class RediosRules {
     // ========== 战斗音乐 ==========
     private static volatile boolean rediosBattleMusicEnabled = true;
     private static volatile float rediosBattleMusicVolume = 1.0f;
+    // A-1（2026-09-11）：三段结构。*_ticks 表示各段音频长度——服务端据此切换（intro→loop）
+    // 与重发（流式 ogg 无法自动循环，loop 每 loop_ticks 重发一次）。
+    // **按阶段分组**：实测 P1/P2 的 intro 素材长度差异很大（873 vs 482 tick），单组配置无法
+    // 同时正确（短的那段会留下静音空档），故每阶段各一组。默认值 = 各 ogg 实测时长。
+    private static volatile int rediosBattleMusicPhase1IntroTicks = 873;
+    private static volatile int rediosBattleMusicPhase1LoopTicks = 3245;
+    private static volatile int rediosBattleMusicPhase2IntroTicks = 482;
+    private static volatile int rediosBattleMusicPhase2LoopTicks = 3171;
+    private static volatile boolean rediosBattleMusicOutroEnabled = true;
 
     // ========== 武器弱点 ==========
     private static volatile boolean weaponWeakpointEnabled = true;
@@ -305,6 +314,16 @@ public final class RediosRules {
     public static void setRediosBattleMusicEnabled(boolean v) { rediosBattleMusicEnabled = v; }
     public static float rediosBattleMusicVolume() { return rediosBattleMusicVolume; }
     public static void setRediosBattleMusicVolume(float v) { if (!Float.isFinite(v)) { rediosBattleMusicVolume = 1.0f; return; } rediosBattleMusicVolume = Math.max(0.0f, Math.min(4.0f, v)); }
+    public static int rediosBattleMusicPhase1IntroTicks() { return rediosBattleMusicPhase1IntroTicks; }
+    public static void setRediosBattleMusicPhase1IntroTicks(int v) { rediosBattleMusicPhase1IntroTicks = Math.max(1, v); }
+    public static int rediosBattleMusicPhase1LoopTicks() { return rediosBattleMusicPhase1LoopTicks; }
+    public static void setRediosBattleMusicPhase1LoopTicks(int v) { rediosBattleMusicPhase1LoopTicks = Math.max(1, v); }
+    public static int rediosBattleMusicPhase2IntroTicks() { return rediosBattleMusicPhase2IntroTicks; }
+    public static void setRediosBattleMusicPhase2IntroTicks(int v) { rediosBattleMusicPhase2IntroTicks = Math.max(1, v); }
+    public static int rediosBattleMusicPhase2LoopTicks() { return rediosBattleMusicPhase2LoopTicks; }
+    public static void setRediosBattleMusicPhase2LoopTicks(int v) { rediosBattleMusicPhase2LoopTicks = Math.max(1, v); }
+    public static boolean rediosBattleMusicOutroEnabled() { return rediosBattleMusicOutroEnabled; }
+    public static void setRediosBattleMusicOutroEnabled(boolean v) { rediosBattleMusicOutroEnabled = v; }
 
     // ================================================================
     // Weapon Weakpoint

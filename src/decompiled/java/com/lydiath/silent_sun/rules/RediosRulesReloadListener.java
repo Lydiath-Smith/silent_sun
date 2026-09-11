@@ -80,6 +80,11 @@ extends SimpleJsonResourceReloadListener {
             RediosRules.setRediosOutcomeTextPhase2WinFile(null);
             RediosRules.setRediosBattleMusicEnabled(true);
             RediosRules.setRediosBattleMusicVolume(1.0f);
+            RediosRules.setRediosBattleMusicPhase1IntroTicks(873);
+            RediosRules.setRediosBattleMusicPhase1LoopTicks(3245);
+            RediosRules.setRediosBattleMusicPhase2IntroTicks(482);
+            RediosRules.setRediosBattleMusicPhase2LoopTicks(3171);
+            RediosRules.setRediosBattleMusicOutroEnabled(true);
             RediosRules.setVoteTimeoutSeconds(30);
             RediosRules.setVoteTieAsYes(false);
             RediosRules.setAdaptiveBlockTriggerHitsPerSecond(6);
@@ -508,6 +513,54 @@ extends SimpleJsonResourceReloadListener {
                 rediosBattleMusicVolume = 1.0f;
             }
         }
+        // A-1（2026-09-11）：战斗音乐三段。*_ticks 表示各段音频长度——服务端据此切换
+        // （intro→loop）与重发（流式 ogg 无法自动循环）。**按阶段分组**：P1/P2 的 intro
+        // 素材长度差异很大（实测 873 vs 482 tick），单组配置会让短的那段留下静音空档。
+        int rediosBattleMusicPhase1IntroTicks = 873;
+        if (root.has("redios_battle_music_phase1_intro_ticks")) {
+            try {
+                rediosBattleMusicPhase1IntroTicks = root.get("redios_battle_music_phase1_intro_ticks").getAsInt();
+            }
+            catch (RuntimeException e) {
+                rediosBattleMusicPhase1IntroTicks = 873;
+            }
+        }
+        int rediosBattleMusicPhase1LoopTicks = 3245;
+        if (root.has("redios_battle_music_phase1_loop_ticks")) {
+            try {
+                rediosBattleMusicPhase1LoopTicks = root.get("redios_battle_music_phase1_loop_ticks").getAsInt();
+            }
+            catch (RuntimeException e) {
+                rediosBattleMusicPhase1LoopTicks = 3245;
+            }
+        }
+        int rediosBattleMusicPhase2IntroTicks = 482;
+        if (root.has("redios_battle_music_phase2_intro_ticks")) {
+            try {
+                rediosBattleMusicPhase2IntroTicks = root.get("redios_battle_music_phase2_intro_ticks").getAsInt();
+            }
+            catch (RuntimeException e) {
+                rediosBattleMusicPhase2IntroTicks = 482;
+            }
+        }
+        int rediosBattleMusicPhase2LoopTicks = 3171;
+        if (root.has("redios_battle_music_phase2_loop_ticks")) {
+            try {
+                rediosBattleMusicPhase2LoopTicks = root.get("redios_battle_music_phase2_loop_ticks").getAsInt();
+            }
+            catch (RuntimeException e) {
+                rediosBattleMusicPhase2LoopTicks = 3171;
+            }
+        }
+        boolean rediosBattleMusicOutroEnabled = true;
+        if (root.has("redios_battle_music_outro_enabled")) {
+            try {
+                rediosBattleMusicOutroEnabled = root.get("redios_battle_music_outro_enabled").getAsBoolean();
+            }
+            catch (RuntimeException e) {
+                rediosBattleMusicOutroEnabled = true;
+            }
+        }
         // 死配置（M5）：vote_timeout_seconds / vote_tie_as_yes 无任何消费方——
         // 投票超时/平局已硬编码 30s/否决（设计裁决）。保留解析仅为兼容旧 json 里仍有这两个键，
         // 值被读入 RediosRules 但无调用点。新 json 已移除这两个键。
@@ -753,6 +806,11 @@ extends SimpleJsonResourceReloadListener {
         RediosRules.setRediosOutcomeTextPhase2WinFile(rediosOutcomeTextPhase2WinFile);
         RediosRules.setRediosBattleMusicEnabled(rediosBattleMusicEnabled);
         RediosRules.setRediosBattleMusicVolume(rediosBattleMusicVolume);
+        RediosRules.setRediosBattleMusicPhase1IntroTicks(rediosBattleMusicPhase1IntroTicks);
+        RediosRules.setRediosBattleMusicPhase1LoopTicks(rediosBattleMusicPhase1LoopTicks);
+        RediosRules.setRediosBattleMusicPhase2IntroTicks(rediosBattleMusicPhase2IntroTicks);
+        RediosRules.setRediosBattleMusicPhase2LoopTicks(rediosBattleMusicPhase2LoopTicks);
+        RediosRules.setRediosBattleMusicOutroEnabled(rediosBattleMusicOutroEnabled);
         RediosRules.setVoteTimeoutSeconds(voteTimeoutSeconds);
         RediosRules.setVoteTieAsYes(voteTieAsYes);
         RediosRules.setAdaptiveBlockTriggerHitsPerSecond((int) adaptiveBlockTriggerHitsPerSecond);

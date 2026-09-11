@@ -344,8 +344,21 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     private boolean heightFlightMode = false;
     boolean phaseMaxHealthApplied = false;
     private int battleMusicPhase = 0;
+    /** A-1：当前段（0=none 1=intro 2=loop 3=outro）。 */
+    private int battleMusicSegment = MUSIC_SEG_NONE;
+    /** A-1：当前段结束时刻（tickCount 基准）；intro→loop 切换与 loop 重发均以此判定。 */
+    private long battleMusicSegmentEndTick = 0L;
+    /** A-1：本场是否已下发 outro —— 结算时据此决定是否仍 stop 掉 MUSIC 源（让 outro 播完）。 */
+    private boolean battleMusicOutroSent = false;
+    private static final int MUSIC_SEG_NONE = 0;
+    private static final int MUSIC_SEG_INTRO = 1;
+    private static final int MUSIC_SEG_LOOP = 2;
+    private static final int MUSIC_SEG_OUTRO = 3;
     private final Map<UUID, Integer> battleMusicPlaying = new HashMap<UUID, Integer>();
-    private static final double MUSIC_FADE_OUT_DIST_SQR = 4096.0;
+    // 2026-09-11（A-1）：音乐可听半径不再硬编码（原 MUSIC_FADE_OUT_DIST_SQR = 4096.0 即 64 格，
+    // 与设计稿 §十 A3 的 72 格参战区倒挂 → 64~72 格仍在战斗却听不到音乐），改读
+    // RediosRules.battleRadiusBlocks()。注意 sounds.json 的 attenuation_distance 是静态字段，
+    // 无法读配置，须手工同步为同一值（当前 72）。
     private static final int STARFALL_SALVO_SETTLE_TIMEOUT_TICKS = 160;
     /** 集中轰炸目标的星星散布半径（设计稿 §7.3：集中轰炸保持 5.0，非集中才用配置的散射半径）。 */
     private static final double STARFALL_SALVO_CONCENTRATED_RADIUS = 5.0;
@@ -1519,25 +1532,64 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         player.sendSystemMessage(this.rediosSigned(xaeroMsg));
     }
 
+    /**
+     * A-1（2026-09-11）：战斗音乐由「整曲单次播放」改为 intro → loop → outro 段状态机。
+     * <p>
+     * 流程（依用户裁决）：开战/换相位 → intro；满 introTicks → loop（每 loopTicks 重发一次，
+     * 因流式 ogg 无法自动循环）；**P1 进入投票（PHASE1_VOTE）→ P1 outro**；跳过投票直入 P2 则
+     * 直接播 P2 intro；战斗结束 → P2 outro（见 {@link #playBattleMusicOutroForParticipants()}）。
+     * <p>
+     * 每个玩家独立记「已下发的段」（{@code phase*10 + segment}），进出范围时自动补发/停播。
+     */
     private void tickBattleMusic(ServerLevel serverLevel) {
-        int desiredPhase;
-        if (!RediosRules.rediosBattleMusicEnabled()) {
+        if (!RediosRules.rediosBattleMusicEnabled() || this.battleParticipants.isEmpty()) {
             this.stopAllBattleMusic();
             this.battleMusicPhase = 0;
+            this.battleMusicSegment = MUSIC_SEG_NONE;
+            this.battleMusicSegmentEndTick = 0L;
             return;
         }
-        if (this.battleParticipants.isEmpty()) {
-            this.stopAllBattleMusic();
-            this.battleMusicPhase = 0;
-            return;
-        }
-        int n = desiredPhase = this.phase == 2 ? 2 : 1;
+        int desiredPhase = this.phase == 2 ? 2 : 1;
+        // ① 相位切换（含开战）：清掉上一相位的音效，从 intro 重新起步。
+        //    投票必然属于 P1；若正在投票而相位记录尚未跟上，按 P1 处理（不切段）。
         if (desiredPhase != this.battleMusicPhase) {
             this.stopAllBattleMusic();
             this.battleMusicPhase = desiredPhase;
+            this.battleMusicSegment = MUSIC_SEG_INTRO;
+            this.battleMusicSegmentEndTick = (long)this.tickCount + this.battleMusicIntroTicksFor(desiredPhase);
+            this.battleMusicOutroSent = false;
         }
-        DeferredHolder<SoundEvent, SoundEvent> music = desiredPhase == 2 ? ModSounds.REDIOS_BATTLE_MUSIC_PHASE2 : ModSounds.REDIOS_BATTLE_MUSIC_PHASE1;
+        // ② 段推进
+        if (this.bossState == BossState.PHASE1_VOTE) {
+            // 用户裁决「P1 进投票放 P1 结束（outro）」：outro 不重发、不计时。
+            if (this.battleMusicSegment != MUSIC_SEG_OUTRO) {
+                this.stopAllBattleMusic();
+                this.battleMusicSegment = MUSIC_SEG_OUTRO;
+                this.battleMusicSegmentEndTick = 0L;
+            }
+            this.battleMusicOutroSent = true;
+        } else if (this.battleMusicSegment == MUSIC_SEG_INTRO) {
+            if ((long)this.tickCount >= this.battleMusicSegmentEndTick) {
+                this.battleMusicSegment = MUSIC_SEG_LOOP;
+                this.battleMusicSegmentEndTick = (long)this.tickCount + this.battleMusicLoopTicksFor(this.battleMusicPhase);
+            }
+        } else if (this.battleMusicSegment == MUSIC_SEG_LOOP) {
+            if ((long)this.tickCount >= this.battleMusicSegmentEndTick) {
+                this.battleMusicSegmentEndTick = (long)this.tickCount + this.battleMusicLoopTicksFor(this.battleMusicPhase);
+            }
+        }
+        int segment = this.battleMusicSegment;
+        if (segment == MUSIC_SEG_NONE) {
+            return;
+        }
+        DeferredHolder<SoundEvent, SoundEvent> music = this.battleMusicSoundFor(this.battleMusicPhase, segment);
+        if (music == null) {
+            return;
+        }
+        // ③ 逐玩家下发：段标识变化（含换段、重发周期到点后 loop 段不变）时重新发送。
         float volume = RediosRules.rediosBattleMusicVolume();
+        double rangeSqr = this.battleMusicRangeSqr();
+        int stamp = this.battleMusicPhase * 10 + segment;
         for (UUID id : new HashSet<UUID>(this.battleParticipants)) {
             ServerPlayer player = this.getServerPlayer(id);
             if (player == null || this.expelledPlayers.contains(id) || player.isSpectator() || !player.isAlive() || player.level() != this.level()) {
@@ -1547,18 +1599,84 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
                 this.battleMusicPlaying.remove(id);
                 continue;
             }
-            if (this.distanceToSqr(player) > MUSIC_FADE_OUT_DIST_SQR) {
+            if (this.distanceToSqr(player) > rangeSqr) {
                 this.stopBattleMusicFor(player);
                 this.battleMusicPlaying.remove(id);
                 continue;
             }
-            Integer playingPhase = this.battleMusicPlaying.get(id);
-            if (playingPhase != null && playingPhase == desiredPhase) continue;
+            Integer playing = this.battleMusicPlaying.get(id);
+            if (playing != null && playing == stamp) continue;
             this.stopBattleMusicFor(player);
             player.connection.send(new ClientboundSoundPacket(music, SoundSource.MUSIC, this.getX(), this.getY(), this.getZ(), volume, 1.0f, this.random.nextLong()));
-            this.battleMusicPlaying.put(id, desiredPhase);
+            this.battleMusicPlaying.put(id, stamp);
         }
         this.battleMusicPlaying.keySet().removeIf(uid -> !this.battleParticipants.contains(uid));
+    }
+
+    /** A-1：该阶段的 intro 段时长（tick）＝ 对应 ogg 实测长度。 */
+    private int battleMusicIntroTicksFor(int phase) {
+        return phase == 2 ? RediosRules.rediosBattleMusicPhase2IntroTicks() : RediosRules.rediosBattleMusicPhase1IntroTicks();
+    }
+
+    /** A-1：该阶段的 loop 段时长（tick）＝ 重发周期（＝对应 ogg 实测长度）。 */
+    private int battleMusicLoopTicksFor(int phase) {
+        return phase == 2 ? RediosRules.rediosBattleMusicPhase2LoopTicks() : RediosRules.rediosBattleMusicPhase1LoopTicks();
+    }
+
+    /** A-1：相位 + 段 → 对应的音效事件（无匹配返回 null）。 */
+    private DeferredHolder<SoundEvent, SoundEvent> battleMusicSoundFor(int phase, int segment) {
+        boolean p2 = phase == 2;
+        if (segment == MUSIC_SEG_INTRO) {
+            return p2 ? ModSounds.REDIOS_BATTLE_MUSIC_PHASE2_INTRO : ModSounds.REDIOS_BATTLE_MUSIC_PHASE1_INTRO;
+        }
+        if (segment == MUSIC_SEG_LOOP) {
+            return p2 ? ModSounds.REDIOS_BATTLE_MUSIC_PHASE2_LOOP : ModSounds.REDIOS_BATTLE_MUSIC_PHASE1_LOOP;
+        }
+        if (segment == MUSIC_SEG_OUTRO) {
+            return p2 ? ModSounds.REDIOS_BATTLE_MUSIC_PHASE2_OUTRO : ModSounds.REDIOS_BATTLE_MUSIC_PHASE1_OUTRO;
+        }
+        return null;
+    }
+
+    /** A-1：音乐可听半径的平方——跟随参战半径配置；无效值回落 72（与 sounds.json 保持一致）。 */
+    private double battleMusicRangeSqr() {
+        int r = RediosRules.battleRadiusBlocks();
+        if (r <= 0) {
+            r = 72;
+        }
+        return (double)r * (double)r;
+    }
+
+    /**
+     * A-1（2026-09-11）：战斗结束时下发本阶段 outro（用户裁决：P1 进投票播 P1 结束曲，
+     * P2 收尾按惯性 = 战斗结束）。已下发过（投票期已播 P1 outro）则不重复。
+     * <p>
+     * 下发后置 {@code battleMusicOutroSent}，使随后的 {@code cleanupPlayerAfterBattle}
+     * 不再 stop MUSIC 源 —— 让 outro 自然播完，而不是被清理打断。
+     */
+    private void playBattleMusicOutroForParticipants() {
+        if (this.battleMusicOutroSent) {
+            return;
+        }
+        this.battleMusicOutroSent = true;
+        if (!RediosRules.rediosBattleMusicEnabled() || !RediosRules.rediosBattleMusicOutroEnabled()) {
+            return;
+        }
+        DeferredHolder<SoundEvent, SoundEvent> outro = this.battleMusicSoundFor(this.phase == 2 ? 2 : 1, MUSIC_SEG_OUTRO);
+        if (outro == null) {
+            return;
+        }
+        float volume = RediosRules.rediosBattleMusicVolume();
+        HashSet<UUID> ids = new HashSet<UUID>(this.battleParticipants);
+        ids.addAll(this.expelledPlayers);
+        for (UUID id : ids) {
+            ServerPlayer player = this.getServerPlayer(id);
+            if (player == null || player.connection == null) {
+                continue;
+            }
+            this.stopBattleMusicFor(player);
+            player.connection.send(new ClientboundSoundPacket(outro, SoundSource.MUSIC, this.getX(), this.getY(), this.getZ(), volume, 1.0f, this.random.nextLong()));
+        }
     }
 
     private void stopBattleMusicFor(ServerPlayer player) {
@@ -5523,6 +5641,10 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     }
 
     private void cleanupPlayersAfterBattle(ServerLevel serverLevel) {
+        // A-1（2026-09-11）：战斗结束时下发本阶段 outro（用户裁决：P1 进投票播 P1 结束曲，
+        // P2 收尾按惯性 = 战斗结束）。已下发则随后的 cleanupPlayerAfterBattle 不再 stop
+        // MUSIC 源，让 outro 自然播完而不是被清理打断。
+        this.playBattleMusicOutroForParticipants();
         ServerPlayer player;
         for (UUID id : new HashSet<UUID>(this.battleParticipants)) {
             player = this.getServerPlayer(id);
@@ -5538,7 +5660,9 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     }
 
     private void cleanupPlayerAfterBattle(ServerPlayer player) {
-        this.stopBattleMusicFor(player);
+        if (!this.battleMusicOutroSent) {
+            this.stopBattleMusicFor(player);
+        }
         CommonEvents.clearPhase2ChoicePending(player);
         CommonEvents.clearSharpenSoulSever(player);
         CommonEvents.clearRootlessBuffBlock(player);
