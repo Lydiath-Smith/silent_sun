@@ -3371,7 +3371,11 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             this.applySoulSeverToTarget(mainTarget);
         }
         this.weapons.tryApplyUncontrolledSprintExtraHits(mainTarget);
-        return true;
+        // 2026-09-11（代码审计 G15 #6 修复）：原实现**恒返回 true** —— 目标处于无敌帧 /
+        // 伤害被完全吸收（dealt == false）时也被上层当成「命中」，攻击动画与冷却照常走；
+        // 而 doHurtTarget 里「无拘冲刺补击」分支（要求 !result）在这种情形下不会触发，
+        // 与「打不动就换判定框 / 补击」的既有意图相左。现与内部判定对齐。
+        return meaningful;
     }
 
     private boolean damageMultiPart(Entity part, DamageSource src, float damage) {
@@ -4043,12 +4047,19 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         if (this.battleParticipants.isEmpty()) {
             return false;
         }
+        // 2026-09-11（代码审计 G15 #7 修复）：原实现把「玩家取不到（离线 / 已死）」与
+        // 「玩家确实低帧」走同一条 continue ⇒ 参战者**全部离线**时循环走空并返回 true，
+        // 被当成「全员低帧」触发延迟保护退场（无掉落）—— 即最后一名玩家掉线就等于被踢掉战斗。
+        // 现分开处理：离线/已死者不计入，且至少要有 1 名在线参战者才可能返回 true。
+        int lowFpsOnline = 0;
         for (UUID id : this.battleParticipants) {
-            ServerPlayer player;
-            if (this.expelledPlayers.contains(id) || (player = this.getServerPlayer(id)) == null || !player.isAlive() || this.isPlayerLowFps(player)) continue;
-            return false;
+            if (this.expelledPlayers.contains(id)) continue;
+            ServerPlayer player = this.getServerPlayer(id);
+            if (player == null || !player.isAlive()) continue;
+            if (!this.isPlayerLowFps(player)) return false;
+            ++lowFpsOnline;
         }
-        return true;
+        return lowFpsOnline > 0;
     }
 
     private boolean tickFailsafe(ServerLevel serverLevel) {

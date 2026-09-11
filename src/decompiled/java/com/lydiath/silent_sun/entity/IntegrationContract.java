@@ -1289,9 +1289,12 @@ public final class IntegrationContract {
         if (data.getBoolean(PHANTOM_SWORD_RETARGET_TAG)) return;
 
         Vec3 dir = pickPhantomSwordDirection(blade, boss, targets, index);
-        data.putBoolean(PHANTOM_SWORD_RETARGET_TAG, true);
+        // 2026-09-11（代码审计 G19 #4 修复）：标记改到 shoot **成功之后**再打。
+        // 原实现先写标记、后 invoke —— 一旦 invoke 抛异常，该剑就被永久标记为「已定向」，
+        // 再也不会被重试改向（而方向其实从未下发）。
         try {
             summonedSwordShootMethod.invoke(blade, dir.x, dir.y, dir.z, 3.0f, 0.0f);
+            data.putBoolean(PHANTOM_SWORD_RETARGET_TAG, true);
         } catch (Exception e) {
             LOG.warn("Failed to retarget phantom sword: {}", e.toString());
         }
