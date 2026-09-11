@@ -291,14 +291,19 @@ final class WeaponManager {
             Vec3 point = from.add(dir.scale(i));
             BlockPos pos = BlockPos.containing(point);
             BlockState state = serverLevel.getBlockState(pos);
-            if (!state.isAir()) {
-                if (state.getDestroySpeed(serverLevel, pos) < 0.0f) break;
-                recordMinedBlock(state);
-                serverLevel.setBlock(pos, Blocks.AIR.defaultBlockState(), 35);
-                serverLevel.levelEvent(2001, pos, net.minecraft.world.level.block.Block.getId(state));
-                this.stageDigCooldownTicks = STAGE_DIG_INTERVAL_TICKS;
-                break;
-            }
+            if (state.isAir()) continue;
+            // 2026-09-11（代码审计 G09 #4 修复）：原实现只判 `!isAir()` 就挖 —— 流体（水 / 岩浆）
+            // 与无碰撞的植物 / 花草 / 火把并不「挡路」，却会被当成实心方块挖掉并记入挖矿队列
+            //（recordMinedBlock 会让 Boss 之后把它们当方块炸弹投出去）。
+            // 现要求「有碰撞形状」才算挡路：流体与无碰撞方块一律跳过、继续沿射线往后找。
+            if (!state.getFluidState().isEmpty()) continue;
+            if (state.getCollisionShape(serverLevel, pos).isEmpty()) continue;
+            if (state.getDestroySpeed(serverLevel, pos) < 0.0f) break;
+            recordMinedBlock(state);
+            serverLevel.setBlock(pos, Blocks.AIR.defaultBlockState(), 35);
+            serverLevel.levelEvent(2001, pos, net.minecraft.world.level.block.Block.getId(state));
+            this.stageDigCooldownTicks = STAGE_DIG_INTERVAL_TICKS;
+            break;
         }
     }
 

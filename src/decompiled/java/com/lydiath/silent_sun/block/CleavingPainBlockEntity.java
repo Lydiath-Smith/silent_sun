@@ -138,11 +138,13 @@ public class CleavingPainBlockEntity extends BlockEntity {
                 be.summonBossAfterSequence(level, pos);
             }
         }
+        // 2026-09-11（代码审计 G10 #9 修复）：原 diamondCountdown > 0 分支末尾直接 `return`，
+        // 导致「上一次落雷已排定的召唤器掉落倒计时」在玩家又放一颗钻石期间被**整体冻结** ——
+        // 召唤器迟迟不掉（要等新一轮钻石倒计时走完才恢复推进）。两个倒计时彼此独立，
+        // 改为 else-if 串联，让掉落倒计时照常推进。
         if (be.diamondCountdown > 0) {
             be.diamondCountdown--;
-            return;
-        }
-        if (be.diamondCountdown == 0) {
+        } else if (be.diamondCountdown == 0) {
             be.diamondCountdown = -1;
             be.removePlacedDiamond(level);
             be.fluid = FLUID_NONE;
@@ -280,6 +282,12 @@ public class CleavingPainBlockEntity extends BlockEntity {
 
     /** 倒水后手持莱德厄斯召唤器右键：冷却检查通过后启动召唤序列（敲钟→末地传送门音效→开场动画）。 */
     public ItemInteractionResult trySummon(Player player, Level level, BlockPos pos) {
+        // 2026-09-11（代码审计 G10 #7 修复）：召唤序列进行中时拒绝再次启动。
+        // 原实现直接执行 `summonTicks = 0` → 右击可让序列反复重跑（敲钟 / 末地传送门音效 /
+        // 开场动画从头来一遍），且 summoningPlayerUuid 会被后来者覆盖。
+        if (summonTicks >= 0) {
+            return ItemInteractionResult.PASS_TO_DEFAULT_BLOCK_INTERACTION;
+        }
         if (fluid != FLUID_WATER) {
             return ItemInteractionResult.PASS_TO_DEFAULT_BLOCK_INTERACTION;
         }
