@@ -10,6 +10,8 @@ import com.lydiath.silent_sun.rules.RediosRules;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.TreeSet;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.packs.resources.ResourceManager;
 import net.minecraft.server.packs.resources.SimpleJsonResourceReloadListener;
@@ -22,6 +24,59 @@ extends SimpleJsonResourceReloadListener {
     private static final Gson GSON = new Gson();
     private static final ResourceLocation RULES_ID = ResourceLocation.fromNamespaceAndPath("silent_sun", "redios_rules");
     private static final Logger LOG = LoggerFactory.getLogger("SilentSun:Rules");
+
+    /**
+     * 代码真正读取的配置键全集（2026-09-11 代码审计 G03 #2 修复）。
+     * <p>
+     * 背景：本文件的 60 余处读取都是「取不到 / 类型不符 → 静默回落默认值」，管理员把键名
+     * 拼错时现象是「改了配置完全无效、日志无任何提示」。逐处打日志会刷屏，故改为 reload
+     * 结束时<b>一次性汇总</b>：把 json 里出现、但代码从不读取的键报出来（几乎必然是拼写错误）。
+     * <p>
+     * 维护约定：新增 / 改名配置键后必须同步本清单，否则会误报「未知键」。
+     * 可用下面这条命令重新提取（PowerShell，仓库根目录执行）：
+     * <pre>
+     * $t = [IO.File]::ReadAllText('src\decompiled\java\com\lydiath\silent_sun\rules\RediosRulesReloadListener.java')
+     * [regex]::Matches($t, 'root\.(?:get|has|getAsJsonArray|getAsJsonObject)\(\s*"([a-z0-9_]+)"|tryParseString\(\s*root\s*,\s*"([a-z0-9_]+)"') |
+     *     ForEach-Object { if ($_.Groups[1].Success) { $_.Groups[1].Value } else { $_.Groups[2].Value } } |
+     *     Sort-Object -Unique
+     * </pre>
+     * 注：{@code vote_timeout_seconds} 等键在当前 json 中未出现，但代码仍读取以兼容旧配置，故一并列入。
+     */
+    private static final Set<String> KNOWN_KEYS = Set.of(
+        "adaptive_block_cooldown_ticks", "adaptive_block_damage_reduction", "adaptive_block_duration_ticks", "adaptive_block_trigger_hits_per_second",
+        "battle_expel_timeout_seconds", "battle_radius_blocks", "black_sun_defeat_ratio", "boss_missing_vision_action",
+        "boss_missing_vision_dot_threshold", "boss_missing_vision_enabled", "boss_missing_vision_ticks", "chaos_ruin_incoming_absolute_enabled",
+        "colorless_reflect_ratio", "colorless_weakness_amplifier", "colorless_weakness_duration_ticks", "damage_source_debug",
+        "damage_source_debug_cooldown_ticks", "damage_source_debug_only_phase2", "damage_source_debug_only_when_expelled", "height_flight_diff_blocks",
+        "height_flight_enabled", "height_flight_vertical_speed", "lag_protection_enabled", "latency_threshold_ms",
+        "locate_boss_distance_blocks", "locate_boss_enabled", "locate_boss_notify_interval_ticks", "phase2_vote_no_tokens",
+        "phase2_vote_yes_tokens", "push_away_distance", "push_away_range", "push_away_strength",
+        "redios_battle_music_enabled", "redios_battle_music_outro_enabled", "redios_battle_music_phase1_intro_ticks", "redios_battle_music_phase1_loop_ticks",
+        "redios_battle_music_phase2_intro_ticks", "redios_battle_music_phase2_loop_ticks", "redios_battle_music_volume", "redios_book_author",
+        "redios_defeat_book_title", "redios_note_phase1_win_phase2_lose", "redios_outcome_text_phase1_win_only_file", "redios_outcome_text_phase1_win_phase2_lose_file",
+        "redios_outcome_text_phase2_win_file", "redios_victory_book_title", "restore_nbt", "restored_blocks_whitelist",
+        "skip_vote", "twilight_moment_apply_effect", "twilight_moment_debug_messages", "twilight_moment_expel_enabled",
+        "twilight_moment_mode", "twilight_moment_notify_cooldown_ticks", "twilight_moment_punishment", "twilight_moment_satisfy_effects",
+        "twilight_moment_timed_grace_ticks", "uncontrolled_sprint_aoe_dodge_chance", "uncontrolled_sprint_extra_cooldown_ticks", "uncontrolled_sprint_extra_damage_ratio",
+        "uncontrolled_sprint_extra_hits", "void_all_things_darkness_duration_ticks", "void_all_things_teleport_cooldown_ticks", "vote_tie_as_yes",
+        "vote_timeout_seconds", "wall_attack_notify_cooldown_ticks", "wall_attack_trace_particles", "weapon_weakpoint_armor_pierce",
+        "weapon_weakpoint_cooldown_ticks", "weapon_weakpoint_damage_multiplier", "weapon_weakpoint_enabled", "weapon_weakpoint_fixed_cooldown",
+        "weapon_weakpoint_slow_ticks"
+    );
+
+    /**
+     * reload 结束时汇总「json 里有、但代码从不读取」的键，只打一条日志。
+     * <p>
+     * 2026-09-11（代码审计 G03 #2）：用于让「键名拼错 → 配置静默无效」变得可观测。
+     */
+    private static void warnUnknownKeys(JsonObject root) {
+        Set<String> unknown = new TreeSet<>(root.keySet());
+        unknown.removeAll(KNOWN_KEYS);
+        if (!unknown.isEmpty()) {
+            LOG.warn("silent_sun/redios_rules.json 含 {} 个代码不认识的键（已忽略；多半是拼写错误，正确键名见 RediosRulesReloadListener.KNOWN_KEYS）：{}",
+                    unknown.size(), unknown);
+        }
+    }
 
     public RediosRulesReloadListener() {
         super(GSON, "silent_sun");
@@ -843,6 +898,8 @@ extends SimpleJsonResourceReloadListener {
         RediosRules.setWeaponWeakpointFixedCooldown(weaponWeakpointFixedCooldown);
         RediosRules.setWeaponWeakpointDamageMultiplier(weaponWeakpointDamageMultiplier);
         RediosRules.setWeaponWeakpointArmorPierce(weaponWeakpointArmorPierce);
+        // 2026-09-11（G03 #2）：未知键汇总告警——见 KNOWN_KEYS 的 javadoc
+        warnUnknownKeys(root);
     }
 
     private static ResourceLocation tryParseId(String raw) {
