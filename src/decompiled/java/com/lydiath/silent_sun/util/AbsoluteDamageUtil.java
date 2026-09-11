@@ -8,6 +8,10 @@ import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.player.Player;
 
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+
 public final class AbsoluteDamageUtil {
     /** 绝对真实伤害标记：目标当前这一次 hurt 应锁定为的最终伤害值。 */
     public static final String ABSOLUTE_DAMAGE_KEY = "silent_sun:absolute_damage";
@@ -17,6 +21,20 @@ public final class AbsoluteDamageUtil {
     public static final String SOUL_SEVER_DAMAGE_KEY = "silent_sun:soul_sever_damage";
     /** 断魂伤害防重入标记。 */
     public static final String SOUL_SEVER_DAMAGE_APPLYING_KEY = "silent_sun:soul_sever_damage_applying";
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 2026-09-11 用户裁决（C1 → 选项 A）：标记载体由「实体持久数据 ForgeData」改为**本模组内存映射**。
+    // 原实现把标记写进 ForgeData，而键是 public 常量 → 任何模组 / 数据包 / op 只要往实体上写
+    // `silent_sun:absolute_damage_applying=true` + `silent_sun:absolute_damage=<大数>`，之后任意
+    // 一次命中就会把最终伤害改写成那个值，**绕过全部 22 条管线阶段 + 锁血 + 防死拦截（一击致死）**。
+    // 改到内存后第三方无法写入；hurt → LivingDamageEvent.Pre 是服务器线程内的同步调用，
+    // 写入 / 读取 / 清除都发生在同一次 damage() 调用内，语义与原先完全等价。
+    // NBT 键常量保留（第三方可能按老约定读取），但已不再作为信任载体。
+    // ─────────────────────────────────────────────────────────────────────────
+    private static final Map<LivingEntity, Float> PENDING_ABSOLUTE = new ConcurrentHashMap<LivingEntity, Float>();
+    private static final Set<LivingEntity> ABSOLUTE_APPLYING = ConcurrentHashMap.newKeySet();
+    private static final Map<LivingEntity, Float> PENDING_SEVER = new ConcurrentHashMap<LivingEntity, Float>();
+    private static final Set<LivingEntity> SEVER_APPLYING = ConcurrentHashMap.newKeySet();
 
     public static boolean damage(LivingEntity target, DamageSource source, float amount) {
         return AbsoluteDamageUtil.damage(target, source, amount, false);
@@ -43,35 +61,36 @@ public final class AbsoluteDamageUtil {
         if (adjusted <= 0.0f) {
             return false;
         }
-        CompoundTag data = target.getPersistentData();
-        if (data.getBoolean(ABSOLUTE_DAMAGE_APPLYING_KEY)) {
+        if (ABSOLUTE_APPLYING.contains(target)) {
             return false; // 防重入
         }
         // 走 hurt() 完整死亡链路，避免 setHealth 旁门绕过掉落/死亡信息/LivingDeathEvent。
         // 标记用于在 LivingDamageEvent.Pre(LOWEST) 中把最终伤害锁回 adjusted，绕过护甲/附魔减免。
+        // 2026-09-11：标记改存内存（见文件顶部说明），第三方无法伪造。
         int savedInvuln = target.invulnerableTime;
-        data.putBoolean(ABSOLUTE_DAMAGE_APPLYING_KEY, true);
-        data.putFloat(ABSOLUTE_DAMAGE_KEY, adjusted);
+        ABSOLUTE_APPLYING.add(target);
+        PENDING_ABSOLUTE.put(target, Float.valueOf(adjusted));
         boolean dealt;
         try {
             target.invulnerableTime = 0;
             dealt = target.hurt(source, adjusted);
         } finally {
             target.invulnerableTime = savedInvuln;
-            data.remove(ABSOLUTE_DAMAGE_APPLYING_KEY);
-            data.remove(ABSOLUTE_DAMAGE_KEY);
+            ABSOLUTE_APPLYING.remove(target);
+            PENDING_ABSOLUTE.remove(target);
         }
         return dealt;
     }
 
     /** 目标当前是否正处于"绝对真实伤害"标记中（hurt 链路内）。 */
     public static boolean isAbsoluteDamageMarked(LivingEntity target) {
-        return target.getPersistentData().getBoolean(ABSOLUTE_DAMAGE_APPLYING_KEY);
+        return target != null && ABSOLUTE_APPLYING.contains(target);
     }
 
     /** 读取当前"绝对真实伤害"标记锁定的最终伤害值。 */
     public static float getAbsoluteDamageValue(LivingEntity target) {
-        return target.getPersistentData().getFloat(ABSOLUTE_DAMAGE_KEY);
+        Float value = target == null ? null : PENDING_ABSOLUTE.get(target);
+        return value == null ? 0.0f : value.floatValue();
     }
 
     /**
@@ -91,33 +110,33 @@ public final class AbsoluteDamageUtil {
         if (target instanceof Player player && (player.isSpectator() || player.isCreative())) {
             return false;
         }
-        CompoundTag data = target.getPersistentData();
-        if (data.getBoolean(SOUL_SEVER_DAMAGE_APPLYING_KEY)) {
+        if (SEVER_APPLYING.contains(target)) {
             return false;
         }
         int savedInvuln = target.invulnerableTime;
-        data.putBoolean(SOUL_SEVER_DAMAGE_APPLYING_KEY, true);
-        data.putFloat(SOUL_SEVER_DAMAGE_KEY, amount);
+        SEVER_APPLYING.add(target);
+        PENDING_SEVER.put(target, Float.valueOf(amount));
         boolean dealt;
         try {
             target.invulnerableTime = 0;
             dealt = target.hurt(source, amount);
         } finally {
             target.invulnerableTime = savedInvuln;
-            data.remove(SOUL_SEVER_DAMAGE_APPLYING_KEY);
-            data.remove(SOUL_SEVER_DAMAGE_KEY);
+            SEVER_APPLYING.remove(target);
+            PENDING_SEVER.remove(target);
         }
         return dealt;
     }
 
     /** 目标当前是否正处于"断魂伤害"标记中（hurt 链路内）。 */
     public static boolean isSoulSeverDamageMarked(LivingEntity target) {
-        return target.getPersistentData().getBoolean(SOUL_SEVER_DAMAGE_APPLYING_KEY);
+        return target != null && SEVER_APPLYING.contains(target);
     }
 
     /** 读取当前"断魂伤害"标记锁定的最终伤害值。 */
     public static float getSoulSeverDamageValue(LivingEntity target) {
-        return target.getPersistentData().getFloat(SOUL_SEVER_DAMAGE_KEY);
+        Float value = target == null ? null : PENDING_SEVER.get(target);
+        return value == null ? 0.0f : value.floatValue();
     }
 
     private static float adjustAbsoluteDamage(LivingEntity target, float amount) {

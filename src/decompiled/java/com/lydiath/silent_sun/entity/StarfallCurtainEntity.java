@@ -28,7 +28,7 @@ public final class StarfallCurtainEntity extends Entity {
     private UUID ownerUuid = null;
     /** 合法移除标记：生命周期到期前置 true，防止被误判为作弊清除。 */
     private boolean legitRemoval = false;
-    /** 最近一次 hurt 的攻击者（用于作弊清除时定位作弊者）。 */
+    /** 最近一次 hurt 的攻击者（用于作弊清除时定位作弊者）。2026-09-10 恢复（W2 回归）。 */
     private Entity lastAttacker = null;
 
     public StarfallCurtainEntity(EntityType<?> type, Level level) {
@@ -84,20 +84,21 @@ public final class StarfallCurtainEntity extends Entity {
         return false;
     }
 
-    public boolean hurt(DamageSource source, float amount) {
-        Entity attacker = source.getEntity();
-        if (attacker != null) {
-            this.lastAttacker = attacker;
-        }
-        return false;
-    }
-
     public boolean isAttackable() {
         return false;
     }
 
     public boolean isNoGravity() {
         return true;
+    }
+
+    /** 记录攻击者（2026-09-10 恢复，W2 回归）：幕布被外部清除时用它定位作弊者。仍不吃伤害。 */
+    public boolean hurt(DamageSource source, float amount) {
+        Entity attacker = source.getEntity();
+        if (attacker != null) {
+            this.lastAttacker = attacker;
+        }
+        return false;
     }
 
     /**

@@ -3,6 +3,7 @@
  */
 package com.lydiath.silent_sun.registry;
 
+import com.lydiath.silent_sun.item.CleavingPainBlockItem;
 import com.lydiath.silent_sun.item.RediosDiscItem;
 import com.lydiath.silent_sun.item.RediosSigilItem;
 import net.minecraft.core.component.DataComponents;
@@ -12,7 +13,6 @@ import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.entity.EquipmentSlotGroup;
 import net.minecraft.world.entity.ai.attributes.AttributeModifier;
 import net.minecraft.world.entity.ai.attributes.Attributes;
-import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.EitherHolder;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.JukeboxPlayable;
@@ -22,23 +22,21 @@ import net.neoforged.neoforge.registries.DeferredRegister;
 
 public final class ModItems {
     public static final DeferredRegister.Items ITEMS = DeferredRegister.createItems("silent_sun");
-    public static final DeferredHolder<Item, Item> REDIOS_SIGIL = ITEMS.register("redios_sigil", () -> new RediosSigilItem(new Item.Properties().stacksTo(1)));
-    /** 裂解之痛（召唤祭坛）方块物品（2026-09-04）。 */
+    public static final DeferredHolder<Item, Item> REDIOS_SIGIL = ITEMS.register("redios_sigil", () -> new RediosSigilItem(new Item.Properties().stacksTo(1).fireResistant()));
+    /** 裂解之痛（召唤祭坛）方块物品（2026-09-04；tooltip 补全 2026-09-09；2026-09-10 防火：
+     *  祭坛用法强制相邻岩浆且触发时生成真实落雷，掉落物被烧毁即永久损失，故打 FIRE_RESISTANT 组件）。 */
     public static final DeferredHolder<Item, Item> CLEAVING_PAIN = ITEMS.register("cleaving_pain",
-        () -> new BlockItem(ModBlocks.CLEAVING_PAIN.get(), new Item.Properties()));
-    /** 莱德厄斯召唤器（裂解之痛祭坛产出，持其右键祭坛召唤/追击 Boss，2026-09-04）。 */
-    public static final DeferredHolder<Item, Item> REDIOS_SUMMONER = ITEMS.register("redios_summoner",
-        () -> new Item(new Item.Properties().stacksTo(1)));
+        () -> new CleavingPainBlockItem(ModBlocks.CLEAVING_PAIN.get(), new Item.Properties().fireResistant()));
     /**
      * 一阶段战斗曲唱片：掉落于一阶段奖励，音频复用 redios_battle_music_phase1。
      * 封面贴图来自用户提供的 image (1).png（转为圆形唱片贴图）。
      */
-    public static final DeferredHolder<Item, Item> REDIOS_DISC_PHASE1 = ITEMS.register("redios_disc_phase1", () -> new RediosDiscItem(new Item.Properties().stacksTo(1).component(DataComponents.JUKEBOX_PLAYABLE, new JukeboxPlayable(new EitherHolder<>(ResourceKey.create(Registries.JUKEBOX_SONG, ResourceLocation.fromNamespaceAndPath("silent_sun", "redios_disc_phase1"))), true)), "tooltip.silent_sun.redios_disc.phase1"));
+    public static final DeferredHolder<Item, Item> REDIOS_DISC_PHASE1 = ITEMS.register("redios_disc_phase1", () -> new RediosDiscItem(new Item.Properties().stacksTo(1).fireResistant().component(DataComponents.JUKEBOX_PLAYABLE, new JukeboxPlayable(new EitherHolder<>(ResourceKey.create(Registries.JUKEBOX_SONG, ResourceLocation.fromNamespaceAndPath("silent_sun", "redios_disc_phase1"))), true)), "tooltip.silent_sun.redios_disc.phase1"));
     /**
      * 二阶段战斗曲唱片：掉落于二阶段奖励，音频复用 redios_battle_music_phase2。
      * 封面贴图来自用户提供的 image (2).png（转为圆形唱片贴图）。
      */
-    public static final DeferredHolder<Item, Item> REDIOS_DISC_PHASE2 = ITEMS.register("redios_disc_phase2", () -> new RediosDiscItem(new Item.Properties().stacksTo(1).component(DataComponents.JUKEBOX_PLAYABLE, new JukeboxPlayable(new EitherHolder<>(ResourceKey.create(Registries.JUKEBOX_SONG, ResourceLocation.fromNamespaceAndPath("silent_sun", "redios_disc_phase2"))), true)), "tooltip.silent_sun.redios_disc.phase2"));
+    public static final DeferredHolder<Item, Item> REDIOS_DISC_PHASE2 = ITEMS.register("redios_disc_phase2", () -> new RediosDiscItem(new Item.Properties().stacksTo(1).fireResistant().component(DataComponents.JUKEBOX_PLAYABLE, new JukeboxPlayable(new EitherHolder<>(ResourceKey.create(Registries.JUKEBOX_SONG, ResourceLocation.fromNamespaceAndPath("silent_sun", "redios_disc_phase2"))), true)), "tooltip.silent_sun.redios_disc.phase2"));
     /**
      * 莱德厄斯常规状态手持的三叉戟型武器（未拔刀形态）。
      * 模型复用拔刀剑 OBJ（models/item/miedao_duan.obj，见 redios_trident.json），

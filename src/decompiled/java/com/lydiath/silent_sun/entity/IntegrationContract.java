@@ -755,13 +755,20 @@ public final class IntegrationContract {
         // "Bound must be positive" 直接崩服。这里改为扫描 Boss 战斗半径内全部剑气，
         // 凡 owner 为 LivingEntity 且攻击力 ≤ 0（或 owner 为空）者强制关闭暴击，
         // 从源头杜绝负伤害暴击崩溃，而不再局限于 owner==Boss。
+        //
+        // 2026-09-10（实测补强，**高危漏项**）：扫描判据由 EntityDrive **上移到父类
+        // EntityAbstractSummonedSword** —— 该父类的 onHitEntity **有一模一样的崩服结构**
+        // （字节码：Mth.ceil → getIsCritical → iconst_2/idiv/iconst_2 → nextInt，位于
+        // EntityAbstractSummonedSword.onHitEntity 偏移 29/94/108-112），即**幻影剑一族**同样会崩。
+        // EntityDrive extends EntityAbstractSummonedSword，故判据上移后**同时覆盖两者**，不会漏剑气。
+        // （注：EntityJudgementCut 是独立类，其 nextInt 在**构造器**里做随机种子、不是伤害公式，无此崩服路径。）
         List<Projectile> drives = level.getEntitiesOfClass(Projectile.class, boss.getBoundingBox().inflate(64.0),
-            e -> entityDriveClass.isInstance(e) && e.isAlive());
+            e -> entityAbstractSummonedSwordClass.isInstance(e) && e.isAlive());
         if (drives.isEmpty()) return;
 
         for (Projectile drive : drives) {
             try {
-                if (isDangerousBladeDriveOwner(drive.getOwner())) {
+                if (isDangerousBladeDrive(drive)) {
                     if (Boolean.TRUE.equals(summonedSwordGetIsCriticalMethod.invoke(drive))) {
                         summonedSwordSetIsCriticalMethod.invoke(drive, false);
                     }
@@ -854,12 +861,39 @@ public final class IntegrationContract {
         if (summonedSwordGetIsCriticalMethod == null || summonedSwordSetIsCriticalMethod == null) return;
 
         for (net.minecraft.server.level.ServerLevel level : server.getAllLevels()) {
+            boolean anyPlayer = !level.players().isEmpty();
             for (Entity entity : level.getEntities().getAll()) {
-                if (!entityDriveClass.isInstance(entity)) continue;
-                if (!(entity instanceof Projectile drive) || !drive.isAlive()) continue;
-                sanitizeBladeDriveCritical(drive);
+                // 2026-09-10：判据上移到父类，覆盖幻影剑一族（见 sanitizeBossBladeDrives 的说明）。
+                if (entityAbstractSummonedSwordClass.isInstance(entity)) {
+                    if (!(entity instanceof Projectile drive) || !drive.isAlive()) continue;
+                    sanitizeBladeDriveCritical(drive);
+                }
+                // 2026-09-11 崩服护栏补漏（审计 G 组）：原先全局兜底**只关暴击、不补 owner**，
+                // 于是"远离 Boss 的孤儿 IShootable"（玩家侧 ArrowReflector 会扫描
+                // TargetSelector.getReflectableEntitiesWithinAABB）仍可能因 getShooter()==null 崩端。
+                // 这里补一道外科手术式兜底：**玩家附近**且存活 ≥20 tick 仍无 shooter 的孤儿直接移除。
+                // 玩家自己的拔刀剑投射物都带 owner，孤儿只可能来自 Mob/异常生成 → 移除无副作用；
+                // 限定"玩家附近"既避开昂贵的全维度实体查询，也正好覆盖真正会崩的那一段。
+                if (anyPlayer && iShootableClass != null && iShootableSetShooterMethod != null
+                    && iShootableClass.isInstance(entity)
+                    && entity instanceof Projectile projectile && projectile.isAlive()
+                    && projectile.tickCount >= 20 && hasNullShooter(projectile)
+                    && isNearAnyPlayer(level, projectile)) {
+                    projectile.discard();
+                }
             }
         }
+    }
+
+    /** 目标是否在任一玩家 64 格内（用于孤儿 IShootable 的崩服兜底判定，避免全维度查询）。 */
+    private static boolean isNearAnyPlayer(net.minecraft.server.level.ServerLevel level, Entity entity) {
+        double limit = 64.0 * 64.0;
+        for (net.minecraft.world.entity.player.Player player : level.players()) {
+            if (player.distanceToSqr(entity) <= limit) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -871,7 +905,8 @@ public final class IntegrationContract {
         if (!ensureReflectionReady()) return;
         if (entityDriveClass == null || entityAbstractSummonedSwordClass == null) return;
         if (summonedSwordGetIsCriticalMethod == null || summonedSwordSetIsCriticalMethod == null) return;
-        if (!entityDriveClass.isInstance(entity)) return;
+        // 2026-09-10：判据上移到父类，覆盖幻影剑一族（见 sanitizeBossBladeDrives 的说明）。
+        if (!entityAbstractSummonedSwordClass.isInstance(entity)) return;
         if (!(entity instanceof Projectile drive)) return;
         sanitizeBladeDriveCritical(drive);
     }
@@ -911,11 +946,11 @@ public final class IntegrationContract {
         }
     }
 
-    /** 单发剑气就地清扫暴击：owner 危险（负攻击力 / 空 / Redios）时强制关闭暴击。 */
+    /** 单发剑气就地清扫暴击：判据见 {@link #isDangerousBladeDrive(Projectile)}。 */
     private static void sanitizeBladeDriveCritical(Projectile drive) {
         try {
             if (!Boolean.TRUE.equals(summonedSwordGetIsCriticalMethod.invoke(drive))) return;
-            if (isDangerousBladeDriveOwner(drive.getOwner())) {
+            if (isDangerousBladeDrive(drive)) {
                 summonedSwordSetIsCriticalMethod.invoke(drive, false);
             }
         } catch (Exception e) {
@@ -931,6 +966,38 @@ public final class IntegrationContract {
             return living.getAttributeValue(Attributes.ATTACK_DAMAGE) <= 0.0;
         }
         return false;
+    }
+
+    /**
+     * 判断**剑气整体**是否危险（2026-09-10 补强，实测崩服后加）。
+     * <p>
+     * 原判据 {@link #isDangerousBladeDriveOwner(Entity)} **只看 owner**（空 / Redios / 攻击力 ≤ 0），
+     * 漏掉「owner 健康、但第三方 SA 用 {@code setDamage(负)} 传进来的剑气」——实测崩服即这条路径
+     * （{@code EntityDrive.onHitEntity:303} → {@code nextInt(Mth.ceil(damageValue)/2+2)}，bound ≤ 0）。
+     * <p>
+     * 命中时的 {@code damageValue = getDamage() × owner.ATTACK_DAMAGE × scale × 全局倍率}
+     * （两处乘法**都没有 clamp**，见 `EntityDrive.onHitEntity` 偏移 137-148 / 325-347），
+     * 所以「自身 {@code getDamage() ≤ 0}」与「owner 攻击力 ≤ 0」是两个必须同时覆盖的入口。
+     */
+    private static boolean isDangerousBladeDrive(Projectile drive) {
+        if (isDangerousBladeDriveOwner(drive.getOwner())) return true;
+        return bladeDriveBaseDamage(drive) <= 0.0;
+    }
+
+    /**
+     * 读 IShootable.getDamage()（剑气 base 伤害，命中时还要再乘 owner 攻击力）。
+     * 读不到时返回 {@code NaN}——比较恒为 false，即"不危险"，避免误关全部剑气的暴击。
+     */
+    private static double bladeDriveBaseDamage(Projectile drive) {
+        if (iShootableGetDamageMethod == null || iShootableClass == null || !iShootableClass.isInstance(drive)) {
+            return Double.NaN;
+        }
+        try {
+            Object value = iShootableGetDamageMethod.invoke(drive);
+            return value instanceof Number number ? number.doubleValue() : Double.NaN;
+        } catch (Exception e) {
+            return Double.NaN;
+        }
     }
 
     /**

@@ -53,6 +53,7 @@ import net.neoforged.neoforge.event.RegisterCommandsEvent;
 import net.neoforged.neoforge.event.ServerChatEvent;
 import net.neoforged.neoforge.event.entity.EntityJoinLevelEvent;
 import net.neoforged.neoforge.event.entity.living.LivingDamageEvent;
+import net.neoforged.neoforge.event.entity.living.LivingDeathEvent;
 import net.neoforged.neoforge.event.entity.living.LivingEntityUseItemEvent;
 import net.neoforged.neoforge.event.entity.living.LivingHealEvent;
 import net.neoforged.neoforge.event.entity.living.LivingIncomingDamageEvent;
@@ -101,6 +102,11 @@ public final class CommonEvents {
         IntegrationContract.sanitizeShooterOnJoin(event.getEntity());
         if (!(event.getEntity() instanceof RediosEntity redios)) return;
         if (!(event.getLevel() instanceof ServerLevel serverLevel)) return;
+        // M16：旧版本残留 Boss（未加载区块里老 jar 生成的 Boss 后续加载）→ 拒绝加入
+        if (redios.isLegacyData()) {
+            event.setCanceled(true);
+            return;
+        }
         if (RediosEntity.isAnotherRediosPresent(serverLevel, redios)) {
             event.setCanceled(true);
             return;
@@ -129,19 +135,22 @@ public final class CommonEvents {
     }
 
     @SubscribeEvent
+    public static void onUseItemStop(LivingEntityUseItemEvent.Stop event) {
+        if (!(event.getEntity() instanceof ServerPlayer player)) return;
+        if (!event.getItem().is(Items.MILK_BUCKET)) return;
+        // M15：饮用中断（未 Finish）丢弃快照，避免陈旧断魂快照残留、下次喝奶误回灌旧断魂
+        MILK_SOUL_SEVER_SNAPSHOT.remove(player.getUUID());
+    }
+
+    @SubscribeEvent
     public static void onServerStarting(ServerStartingEvent event) {
         RediosLootConfig.loadOrCreate();
         RediosRewardOverrideConfig.loadOrCreate();
         // 2026-08-30 用户裁决：每次进入游戏清理全版本遗留莱德厄斯（实体 + 账本 + 冷却），
         // 防止老版本 jar 生成的 Boss（旧 NBT 数据）带着旧逻辑直接加载进世界。
+        // 2026-09-09：清理入口收窄到 RediosEntity.purgeAllResidualBosses（防打穿，不再暴露公开静默剔除）。
         MinecraftServer server = event.getServer();
-        for (ServerLevel sl : server.getAllLevels()) {
-            for (Entity e : sl.getEntities().getAll()) {
-                if (e instanceof RediosEntity redios && !redios.isRemoved()) {
-                    redios.forceDiscardSilently();
-                }
-            }
-        }
+        RediosEntity.purgeAllResidualBosses(server);
         ServerLevel overworld = server.overworld();
         RediosBattleData.get(overworld).clearAllRecords();
         RediosCooldownData.get(overworld).resetCooldown();
@@ -174,6 +183,8 @@ public final class CommonEvents {
 
     private static int runRediosResetSummonCd(CommandContext<CommandSourceStack> ctx) {
         ServerLevel overworld = ctx.getSource().getServer().overworld();
+        // 管理员清理扩展：标记全维度存活 Boss 待离场（任意状态；区块静止的 Boss 解冻恢复 tick 后自动无掉落退场）
+        RediosEntity.requestCommandLeaveAll(ctx.getSource().getServer());
         RediosCooldownData.get(overworld).resetCooldown();
         RediosBattleData.get(overworld).clearAllRecords();
         ctx.getSource().sendSuccess(() -> Component.translatable("command.silent_sun.redios.reset_summon_cd.success"), true);
@@ -220,6 +231,34 @@ public final class CommonEvents {
     }
 
     /**
+     * M14 硬核 1 血锁**最终兜底**（2026-09-11 用户裁决 C2 → 选项 A）。
+     * <p>
+     * 前面四条 {@code clampHardcoreProtected} 都挂在 {@code LivingDamageEvent.Pre} / 兜底事件上，
+     * 但**真正致命的断魂通道不经过这些事件**：灭却之日的 {@code SoulSeverMobEffect.applyTrueDamage}
+     * 是 {@code hurt()} + **{@code setHealth} 差额补扣**，扣到 0 时直接走死亡流程。因此这里加一道
+     * 死亡事件拦截：受保护硬核玩家死亡 → 取消死亡并钳回 1 血。任何通道（含第三方直写血量）都拦得住。
+     * <p>
+     * 半径放宽到 2048 格：硬核锁的意义是"玩家不该被本模组的伤害打死"，不该因为离得远就失效。
+     */
+    @SubscribeEvent
+    public static void onLivingDeathHardcoreProtected(LivingDeathEvent event) {
+        if (!(event.getEntity() instanceof ServerPlayer player)) {
+            return;
+        }
+        if (!(player.level() instanceof ServerLevel level) || !level.getLevelData().isHardcore()) {
+            return;
+        }
+        for (RediosEntity redios : level.getEntitiesOfClass(RediosEntity.class, player.getBoundingBox().inflate(2048.0))) {
+            if (!redios.isAlive() || redios.isRemoved() || !redios.isHardcoreProtected(player.getUUID())) {
+                continue;
+            }
+            event.setCanceled(true);
+            player.setHealth(1.0f);
+            return;
+        }
+    }
+
+    /**
      * 绝对真实伤害核心锁定（始终启用）。
      * <p>
      * {@link AbsoluteDamageUtil#damage} 以 hurt() 走完整链路，并在目标上标记最终应锁定的
@@ -235,7 +274,37 @@ public final class CommonEvents {
         if (!AbsoluteDamageUtil.isAbsoluteDamageMarked(target)) {
             return;
         }
-        event.setNewDamage(AbsoluteDamageUtil.getAbsoluteDamageValue(target));
+        float damage = AbsoluteDamageUtil.getAbsoluteDamageValue(target);
+        damage = clampHardcoreProtected(target, damage);
+        event.setNewDamage(damage);
+    }
+
+    /**
+     * M14 硬核 1 血锁（2026-09-10 用户裁决：**两条伤害链共用同一判据**）。
+     * <p>
+     * 受莱德厄斯 {@code isHardcoreProtected} 标记的硬核玩家，无论被哪条通道命中（绝对真伤
+     * {@code AbsoluteDamageUtil} 标记，或断魂 {@code soul_sever} 标记），伤害一律钳到
+     * {@code health - 1}，保 1 点生命。
+     * <p>
+     * 原实现只写在绝对真伤那条链里 → 断魂走另一套标记（{@code isSoulSeverDamageMarked}）可以
+     * **越过 1 血锁直接击杀**硬核保护玩家，与 M14 本意矛盾（W5）。
+     * <p>
+     * 性能：原先用 {@code level.getEntities().getAll()} 全实体遍历找 Boss（每次真伤命中都跑一遍）。
+     * 改成 128 格半径的类过滤——Boss 隔着 128 格以上也不可能在打这名玩家，语义等价而代价是分段查询。
+     */
+    private static float clampHardcoreProtected(LivingEntity target, float damage) {
+        if (!(target instanceof ServerPlayer player) || !(target.level() instanceof ServerLevel level)) {
+            return damage;
+        }
+        if (!level.getLevelData().isHardcore()) {
+            return damage;
+        }
+        for (RediosEntity redios : level.getEntitiesOfClass(RediosEntity.class, player.getBoundingBox().inflate(128.0))) {
+            if (redios.isAlive() && !redios.isRemoved() && redios.isHardcoreProtected(player.getUUID())) {
+                return Math.min(damage, Math.max(0.0f, player.getHealth() - 1.0f));
+            }
+        }
+        return damage;
     }
 
     /**
@@ -258,7 +327,7 @@ public final class CommonEvents {
             return;
         }
         event.setCanceled(false);
-        event.setAmount(AbsoluteDamageUtil.getAbsoluteDamageValue(target));
+        event.setAmount(clampHardcoreProtected(target, AbsoluteDamageUtil.getAbsoluteDamageValue(target)));
     }
 
     /**
@@ -277,7 +346,10 @@ public final class CommonEvents {
         if (!AbsoluteDamageUtil.isSoulSeverDamageMarked(target)) {
             return;
         }
-        event.setNewDamage(AbsoluteDamageUtil.getSoulSeverDamageValue(target));
+        // 2026-09-10（W5）：断魂同样受 M14 硬核 1 血锁约束——原实现只锁断魂值、没有硬核判定，
+        // 于是断魂成了唯一能越过 1 血锁击杀硬核保护玩家的通道（与本意矛盾）。
+        float locked = AbsoluteDamageUtil.getSoulSeverDamageValue(target);
+        event.setNewDamage(clampHardcoreProtected(target, locked));
     }
 
     /**
@@ -297,7 +369,7 @@ public final class CommonEvents {
             return;
         }
         event.setCanceled(false);
-        event.setAmount(AbsoluteDamageUtil.getSoulSeverDamageValue(target));
+        event.setAmount(clampHardcoreProtected(target, AbsoluteDamageUtil.getSoulSeverDamageValue(target)));
     }
 
     /**
@@ -391,7 +463,8 @@ public final class CommonEvents {
             bossId = data.getUUID(SHARPEN_SOUL_SEVER_BOSS_KEY);
             int amp = data.getInt(SHARPEN_SOUL_SEVER_AMP_KEY);
             Entity entity = player.serverLevel().getEntity(bossId);
-            if (!(entity instanceof RediosEntity) || !(redios = (RediosEntity)entity).isAlive()) {
+            if (!(entity instanceof RediosEntity) || !(redios = (RediosEntity)entity).isAlive()
+                    || redios.isSoulSeverRetiredInPhase1()) {
                 CommonEvents.clearSharpenSoulSever((ServerPlayer)player);
             } else {
                 MobEffectInstance current = player.getEffect(ModEffects.SOUL_SEVER);
@@ -457,8 +530,10 @@ public final class CommonEvents {
             return;
         }
         RediosBattleData.get(server.overworld()).tickServer(server);
-        // 拔刀剑全局兜底清扫：每 20 tick（1 秒）跨维度清扫一次危险暴击剑气，
-        // 覆盖 Boss 不在场/非战斗态/跨维度残留剑气（入世即清扫见 onEntityJoinLevel）。
+        // 拔刀剑全局兜底清扫：每 20 tick（1 秒）跨维度清扫一次危险暴击剑气（2026-09-10 实测回归修复：
+        // 本批把它从 20 改成 100 = 最长 5 秒空窗，而本仓库 RediosEntity:669-672 的注释正是反证——
+        // 实测崩服 EntityDrive.onHitEntity:303 nextInt(负) 就落在这个空窗里。危险剑气是崩服护栏，
+        // 不该为了省一次实体扫描把窗口放大 5 倍）。
         if (++bladeGlobalSweepTick >= 20) {
             bladeGlobalSweepTick = 0;
             IntegrationContract.globalSanitizeBladeDrives(server);

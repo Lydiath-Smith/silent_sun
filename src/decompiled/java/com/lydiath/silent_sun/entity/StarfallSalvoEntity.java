@@ -44,7 +44,8 @@ public final class StarfallSalvoEntity extends Entity {
     private int ageTicks = 0;
     /** 合法移除标记：生命周期到期或 Boss 引爆前置 true，防止被误判为作弊清除。 */
     private boolean legitRemoval = false;
-    /** 最近一次 hurt 的攻击者（用于作弊清除时定位作弊者）。 */
+    /** 最近一次 hurt 的攻击者（用于作弊清除时定位作弊者）。2026-09-10 恢复：本批曾连同
+     *  remove() 检测一起被删，导致"星星被外部清除"再也不会静默补刀（W2 回归）。 */
     private Entity lastAttacker = null;
     /** 显示豁免：入场演出星星置 true，客户端渲染时绕过雾效（失明遮蔽下仍全程可见）。 */
     private boolean displayExempt = false;
@@ -178,20 +179,24 @@ public final class StarfallSalvoEntity extends Entity {
         return false;
     }
 
-    public boolean hurt(DamageSource source, float amount) {
-        Entity attacker = source.getEntity();
-        if (attacker != null) {
-            this.lastAttacker = attacker;
-        }
-        return false;
-    }
-
     public boolean isAttackable() {
         return false;
     }
 
     public boolean isNoGravity() {
         return true;
+    }
+
+    /**
+     * 记录攻击者（2026-09-10 恢复，W2 回归）：星星被外部清除时用它定位作弊者，静默补刀。
+     * 仍然不吃伤害（return false），只是留痕。
+     */
+    public boolean hurt(DamageSource source, float amount) {
+        Entity attacker = source.getEntity();
+        if (attacker != null) {
+            this.lastAttacker = attacker;
+        }
+        return false;
     }
 
     /**
@@ -221,6 +226,12 @@ public final class StarfallSalvoEntity extends Entity {
         if (tag.contains("SalvoOwner")) {
             this.ownerUuid = tag.getUUID("SalvoOwner");
         }
+        // M23：跟踪目标 + 水平偏移持久化（此前缺失，重载后星星丢失跟踪目标）
+        if (tag.contains("SalvoTarget")) {
+            this.targetUuid = tag.getUUID("SalvoTarget");
+        }
+        this.offsetX = tag.getDouble("SalvoOffsetX");
+        this.offsetZ = tag.getDouble("SalvoOffsetZ");
         this.hoverY = tag.getDouble("SalvoHoverY");
         this.delayTicks = tag.getInt("SalvoDelay");
         this.falling = tag.getBoolean("SalvoFalling");
@@ -233,6 +244,12 @@ public final class StarfallSalvoEntity extends Entity {
         if (this.ownerUuid != null) {
             tag.putUUID("SalvoOwner", this.ownerUuid);
         }
+        // M23：跟踪目标 + 水平偏移持久化
+        if (this.targetUuid != null) {
+            tag.putUUID("SalvoTarget", this.targetUuid);
+        }
+        tag.putDouble("SalvoOffsetX", this.offsetX);
+        tag.putDouble("SalvoOffsetZ", this.offsetZ);
         tag.putDouble("SalvoHoverY", this.hoverY);
         tag.putInt("SalvoDelay", this.delayTicks);
         tag.putBoolean("SalvoFalling", this.falling);

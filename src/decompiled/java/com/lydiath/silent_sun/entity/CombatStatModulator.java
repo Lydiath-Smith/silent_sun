@@ -41,7 +41,7 @@ final class CombatStatModulator {
         if (this.host.weaponWeakpointSlowTicks > 0) {
             return Math.max(1, RediosRules.weaponWeakpointFixedCooldown());
         }
-        if (this.host.uncontrolledSprintUnlocked && this.host.phase == 2) {
+        if (this.host.isUncontrolledSprintActive()) {
             return P2_SPRINT_ATTACK_COOLDOWN_TICKS;
         }
         int level = this.enrageLevel();

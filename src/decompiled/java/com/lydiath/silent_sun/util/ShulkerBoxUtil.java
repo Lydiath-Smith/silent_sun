@@ -8,6 +8,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.util.Unit;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
@@ -28,6 +29,9 @@ public final class ShulkerBoxUtil {
             box.set(DataComponents.CUSTOM_NAME, name);
         }
         box.set(DataComponents.CONTAINER, ItemContainerContents.fromItems(items));
+        // 2026-09-10 防火：奖励盒可能掉在 Boss 死亡的岩浆/火里（本模组祭坛触发时还会生成真实落雷），
+        // 被烧毁即全部奖励永久损失；打 FIRE_RESISTANT 组件使其掉落物实体免疫销毁（同下界合金机制）。
+        box.set(DataComponents.FIRE_RESISTANT, Unit.INSTANCE);
         return box;
     }
 

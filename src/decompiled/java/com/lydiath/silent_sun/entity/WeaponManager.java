@@ -84,20 +84,20 @@ final class WeaponManager {
     private static final float STAGE_BLOCK_BOMB_EXPLOSION_POWER = 2.5f;
 
     // ── 拔刀剑窗口参数 ──
-    /** 刀窗口最短 5 秒（100 tick） */
-    private static final int BLADE_MODE_MIN_TICKS = 100;
-    /** 刀窗口 5~10 秒（随机追加 0~100 tick） */
-    private static final int BLADE_MODE_EXTRA_TICKS = 100;
-    /** 窗口冷却最短 8 秒（160 tick） */
-    private static final int BLADE_MODE_COOLDOWN_MIN_TICKS = 160;
-    /** 窗口冷却 8~15 秒（随机追加 0~140 tick） */
-    private static final int BLADE_MODE_COOLDOWN_EXTRA_TICKS = 140;
-    /** 冷却归零且无目标时垫 2 秒（40 tick）再重试 */
-    private static final int BLADE_MODE_RETRY_TICKS = 40;
+    // 2026-09-10 用户裁决：
+    //   ① **缩短切刀冷却**（原 8~15 秒 → 4~7 秒），让拔刀剑窗口来得更勤、SA 有机会放出来；
+    //   ② **三叉戟 ⇄ 拔刀剑 的互相切换 cd 与切刀冷却统一** —— 两个方向共用同一套参数：
+    //      拔刀剑在场时长 = 三叉戟在场时长 = 4~7 秒（原窗口 5~10 秒、冷却 8~15 秒，两个方向不一致）。
+    /** 单方向武器驻留时长下限：4 秒（80 tick）——拔刀剑窗口与三叉戟冷却共用 */
+    private static final int BLADE_SWITCH_MIN_TICKS = 80;
+    /** 单方向武器驻留时长随机追加：0~60 tick（合计 4~7 秒），两个方向共用 */
+    private static final int BLADE_SWITCH_EXTRA_TICKS = 60;
+    /** 冷却归零且无目标时垫 1 秒（20 tick，原 40）再重试 */
+    private static final int BLADE_MODE_RETRY_TICKS = 20;
     /** 开战热身冷却：进入战斗后前 3 秒（60 tick）不切刀，先走空手近战/移动节奏。 */
     private static final int BLADE_MODE_WARMUP_TICKS = 60;
-    /** 冷却归零且有目标时进入刀窗口的概率 */
-    private static final double BLADE_MODE_ENTER_CHANCE = 0.35;
+    /** 冷却归零且有目标时进入刀窗口的概率（原 0.35 → 0.5，配合缩短的冷却提高切刀频率） */
+    private static final double BLADE_MODE_ENTER_CHANCE = 0.5;
 
     WeaponManager(RediosEntity boss) {
         this.boss = boss;
@@ -154,8 +154,9 @@ final class WeaponManager {
         }
         if (this.bladeModeTicks > 0) {
             if (--this.bladeModeTicks <= 0) {
-                this.bladeModeCooldownTicks = BLADE_MODE_COOLDOWN_MIN_TICKS
-                    + boss.getRandom().nextInt(BLADE_MODE_COOLDOWN_EXTRA_TICKS);
+                // 三叉戟驻留时长 = 拔刀剑驻留时长（用户裁决：两个方向统一）
+                this.bladeModeCooldownTicks = BLADE_SWITCH_MIN_TICKS
+                    + boss.getRandom().nextInt(BLADE_SWITCH_EXTRA_TICKS);
             }
             return;
         }
@@ -167,8 +168,14 @@ final class WeaponManager {
         LivingEntity target = boss.getTarget();
         if (target != null && target.isAlive()
             && boss.getRandom().nextDouble() < BLADE_MODE_ENTER_CHANCE) {
-            this.bladeModeTicks = BLADE_MODE_MIN_TICKS
-                + boss.getRandom().nextInt(BLADE_MODE_EXTRA_TICKS);
+            this.bladeModeTicks = BLADE_SWITCH_MIN_TICKS
+                + boss.getRandom().nextInt(BLADE_SWITCH_EXTRA_TICKS);
+            // 2026-09-10 用户裁决：切刀瞬间就把刀拿在手上，别等 tickEquipment 的最多 2 tick 延迟——
+            // 主手还是三叉戟时 tryInvokeRandomSA 取不到 BladeState，SA 会被静默吞掉（"切刀期间放不出 SA"）。
+            ItemStack blade = IntegrationContract.tryEquipBlade(boss);
+            if (!blade.isEmpty()) {
+                boss.setItemSlot(EquipmentSlot.MAINHAND, blade);
+            }
         } else {
             this.bladeModeCooldownTicks = BLADE_MODE_RETRY_TICKS;
         }
@@ -180,9 +187,8 @@ final class WeaponManager {
     }
 
     private void tickEquipment() {
-        if (boss.tickCount % 2 != 1) {
-            return;
-        }
+        // 2026-09-10 用户裁决（切换 cd 统一）：去掉原先「每 2 tick 采一次样」的门——
+        // 主手切换严格由刀窗口状态机在边界那一 tick 决定，两个方向不再有采样延迟。
         if (IntegrationContract.isSlashBladeIntegrationAvailable()) {
             ItemStack main = boss.getMainHandItem();
             if (this.bladeModeTicks > 0) {
@@ -218,14 +224,18 @@ final class WeaponManager {
 
     boolean tryGuardBlock(DamageSource source) {
         if (boss.bossState.isVoteOrTransition()) return false;
-        if (this.guardCooldownTicks > 0) return false;
         if (source == null) return false;
+        // 虚空 / 9bypass 真伤不可格挡（`isTrueDamage` 已于 2026-09-10 收窄为 bypasses_invulnerability 标签，
+        // 普通魔法/弹射物不再免格挡——与设计稿 L636「格挡不属于防御判定，弹射物穿透失效，覆盖全身」一致）。
         if (boss.isVoidDamage(source) || boss.isTrueDamage(source)) return false;
 
         LivingEntity attacker = boss.tryResolveDamageAttacker(source);
         if (attacker == null) return false;
         if (attacker instanceof Player p && (p.isCreative() || p.isSpectator())) return false;
 
+        // 采样在冷却判定之前：每次有效攻击都更新命中节奏（不受 guardCooldown 影响），
+        // 否则冷却期（成功格挡后 40tick）内不采样，EMA 会收敛到 Boss 自己的冷却而非玩家攻速，
+        // "快攻→0.85"档几乎不可达。冷却只决定"本次是否允许格挡"（见下方）。
         UUID id = attacker.getUUID();
         Integer last = this.guardLastHitTick.get(id);
         int nowTick = boss.tickCount;
@@ -236,6 +246,9 @@ final class WeaponManager {
             this.guardAvgInterval.put(id, next);
         }
         this.guardLastHitTick.put(id, nowTick);
+
+        // 冷却中：本次不格挡（采样已在上面完成）
+        if (this.guardCooldownTicks > 0) return false;
 
         double avg = this.guardAvgInterval.getOrDefault(id, 20.0);
         double triggerThreshold = 20.0 / Math.max(1, RediosRules.adaptiveBlockTriggerHitsPerSecond());
@@ -413,6 +426,11 @@ final class WeaponManager {
         this.guardActiveTicks = tag.getInt("SilentSunGuardActive");
         this.stageDigCooldownTicks = tag.getInt("SilentSunDigCooldown");
         this.stageBlockBombCooldownTicks = tag.getInt("SilentSunBlockBombCooldown");
+        // M20：刀窗口/疾驰冷却持久化（此前缺失，重载后冷却清空、热身重跑）
+        this.bladeModeTicks = tag.getInt("SilentSunBladeModeTicks");
+        this.bladeModeCooldownTicks = tag.getInt("SilentSunBladeModeCooldown");
+        this.bladeModeWarmupDone = tag.getBoolean("SilentSunBladeModeWarmupDone");
+        this.uncontrolledSprintExtraCooldownTicks = tag.getInt("SilentSunSprintExtraCooldown");
 
         this.stageMinedBlocks.clear();
         ListTag minedList = tag.getList("SilentSunMinedBlocks", 8);
@@ -433,6 +451,11 @@ final class WeaponManager {
         tag.putInt("SilentSunGuardActive", this.guardActiveTicks);
         tag.putInt("SilentSunDigCooldown", this.stageDigCooldownTicks);
         tag.putInt("SilentSunBlockBombCooldown", this.stageBlockBombCooldownTicks);
+        // M20：刀窗口/疾驰冷却持久化
+        tag.putInt("SilentSunBladeModeTicks", this.bladeModeTicks);
+        tag.putInt("SilentSunBladeModeCooldown", this.bladeModeCooldownTicks);
+        tag.putBoolean("SilentSunBladeModeWarmupDone", this.bladeModeWarmupDone);
+        tag.putInt("SilentSunSprintExtraCooldown", this.uncontrolledSprintExtraCooldownTicks);
 
         ListTag minedList = new ListTag();
         for (BlockState state : this.stageMinedBlocks) {

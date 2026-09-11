@@ -4,7 +4,7 @@
       {
         "name": "silent_sun:music/redios_phase1",
         "stream": true,
-        "attenuation_distance": 256
+        "attenuation_distance": 64
       }
     ]
   },
@@ -13,7 +13,7 @@
       {
         "name": "silent_sun:music/redios_phase2",
         "stream": true,
-        "attenuation_distance": 256
+        "attenuation_distance": 64
       }
     ]
   },
@@ -24,6 +24,14 @@
         "name": "silent_sun:starfall_salvo_pre_explosion",
         "stream": false,
         "attenuation_distance": 2147483647
+      }
+    ]
+  },
+  "redios_summon": {
+    "subtitle": "subtitles.silent_sun.redios_summon",
+    "sounds": [
+      {
+        "name": "minecraft:block/end_portal/endportal"
       }
     ]
   }

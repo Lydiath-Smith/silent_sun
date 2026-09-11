@@ -84,9 +84,9 @@ extends SimpleJsonResourceReloadListener {
             RediosRules.setVoteTieAsYes(false);
             RediosRules.setAdaptiveBlockTriggerHitsPerSecond(6);
             RediosRules.setAdaptiveBlockDurationTicks(20);
-            RediosRules.setAdaptiveBlockDamageReduction(0.8);
+            RediosRules.setAdaptiveBlockDamageReduction(1.0);
             RediosRules.setAdaptiveBlockCooldownTicks(40);
-            RediosRules.setBattleRadiusBlocks(32);
+            RediosRules.setBattleRadiusBlocks(72);
             RediosRules.setBattleExpelTimeoutSeconds(60);
             RediosRules.setPushAwayDistance(17.0);
             RediosRules.setPushAwayStrength(2.0);
@@ -547,13 +547,13 @@ extends SimpleJsonResourceReloadListener {
                 adaptiveBlockDurationTicks = 20;
             }
         }
-        double adaptiveBlockDamageReduction = 0.8;
+        double adaptiveBlockDamageReduction = 1.0;
         if (root.has("adaptive_block_damage_reduction")) {
             try {
                 adaptiveBlockDamageReduction = root.get("adaptive_block_damage_reduction").getAsDouble();
             }
             catch (RuntimeException e) {
-                adaptiveBlockDamageReduction = 0.8;
+                adaptiveBlockDamageReduction = 1.0;
             }
         }
         int adaptiveBlockCooldownTicks = 40;
@@ -565,13 +565,13 @@ extends SimpleJsonResourceReloadListener {
                 adaptiveBlockCooldownTicks = 40;
             }
         }
-        int battleRadiusBlocks = 32;
+        int battleRadiusBlocks = 72;
         if (root.has("battle_radius_blocks")) {
             try {
                 battleRadiusBlocks = root.get("battle_radius_blocks").getAsInt();
             }
             catch (RuntimeException e) {
-                battleRadiusBlocks = 32;
+                battleRadiusBlocks = 72;
             }
         }
         int battleExpelTimeoutSeconds = 60;

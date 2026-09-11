@@ -167,8 +167,15 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     private static final String OUTCOME_BOOK_LEGACY_TITLE = "\u6210\u4e66";
     private static final String DROP_LIST_BOOK_TITLE = "\u5217\u8868";
     private static final String DROP_STATS_BOOK_TITLE = "\u7edf\u8ba1\u7269\u54c1";
-    private static final int VOID_BATTLE_RANGE_BLOCKS = 512;
-    private static final int VOID_BATTLE_RANGE_BLOCKS_SQR = 262144;
+    // 战斗区域统一 64 格（2026-09-08 用户裁决：整合包优化状况下够大）
+    // 2.9「空无万象」专属的**即时逐出**半径（无 60 秒宽限，见 checkVoidBattleRange，只被 tickVoidAllThings 调用）。
+    // 与通用脱战口径的关系（2026-09-10 明确，见 RediosRules.battleRadiusBlocks 注释）：
+    //   · 通用脱战 = RediosRules.battleRadiusBlocks（默认 72）+ 60 秒宽限（tickBattleAreaCheck）；
+    //   · 2.9 专属 = 本常量 64，超出即逐出、不给宽限 → 2.9 期间更严，两者刻意不同值。
+    private static final int VOID_BATTLE_RANGE_BLOCKS = 64;
+    private static final int VOID_BATTLE_RANGE_BLOCKS_SQR = 4096;
+    /** Boss 数据版本：NBT 结构变更时 +1，用于 EntityJoinLevelEvent 剔除旧版本残留 Boss。 */
+    private static final int BOSS_DATA_VERSION = 1;
     private static final long FAILSAFE_TICK_SPIKE_NANOS = 2000000000L;
     private static final int FAILSAFE_TICK_SPIKES_TO_TRIGGER = 2;
     private static final double FAILSAFE_HIGH_MEMORY_RATIO = 0.95;
@@ -230,10 +237,9 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     int transitionTicks = 0;
     private int transitionTotalTicks = 0;
     private long soulSeverY = 0L;
-    boolean wrongInterferenceActive = false;
-    boolean chaosRuinActive = false;
+    // 2026-09-10（批次 2.7）：原 wrongInterferenceActive / chaosRuinActive / ashDawnActive 三个字段已删除，
+    // 改为由 phase/titleIndex 派生的方法 isWrongInterferenceActive() / isChaosRuinActive() / isAshDawnActive()。
     private boolean chaosRuinAbsoluteAttacks = false;
-    private boolean ashDawnActive = false;
     private boolean ashDawnUnlocked = false;
     private boolean darkStarFired = false;
     private boolean darkStarFlightUnlocked = false;
@@ -260,6 +266,16 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     private final Map<ResourceLocation, Double> damageTypeTotals = new HashMap<ResourceLocation, Double>();
     /** 每玩家累计净伤害（仇恨值），用于繁星爆闪按仇恨分配星星。 */
     private final Map<UUID, Double> playerNetDamageTotals = new HashMap<UUID, Double>();
+    // ── 威胁值索敌（设计 §582-583；设计注明「硬编码」，故不设配置键）──
+    /** 目标切换阈值：新目标威胁 ≥ 当前目标 × 1.3 才切换。 */
+    private static final double TARGET_SWITCH_THRESHOLD = 1.3;
+    /** 目标切换冷却：切换后 40 tick（2 秒）内不再切换，防抖。 */
+    private static final int TARGET_SWITCH_COOLDOWN_TICKS = 40;
+    /** 威胁值衰减：每 20 tick（1 秒）全表 ×0.95（即 -5%）。 */
+    private static final int THREAT_DECAY_INTERVAL_TICKS = 20;
+    private static final double THREAT_DECAY_FACTOR = 0.95;
+    /** 目标切换冷却剩余 tick（仅内存态，不入档）。 */
+    private int targetSwitchCooldownTicks = 0;
     /** 每玩家最近一次范围性伤害的 tick，用于判定「持续范围轰炸」。仅内存态，不落地。 */
     private final Map<UUID, Integer> playerAreaDamageTick = new HashMap<UUID, Integer>();
     /** 范围轰炸窗口：该窗口内受过范围性伤害即视为「正在持续范围轰炸」。 */
@@ -327,8 +343,10 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     boolean phaseMaxHealthApplied = false;
     private int battleMusicPhase = 0;
     private final Map<UUID, Integer> battleMusicPlaying = new HashMap<UUID, Integer>();
-    private static final double MUSIC_FADE_OUT_DIST_SQR = 16384.0;
+    private static final double MUSIC_FADE_OUT_DIST_SQR = 4096.0;
     private static final int STARFALL_SALVO_SETTLE_TIMEOUT_TICKS = 160;
+    /** 集中轰炸目标的星星散布半径（设计稿 §7.3：集中轰炸保持 5.0，非集中才用配置的散射半径）。 */
+    private static final double STARFALL_SALVO_CONCENTRATED_RADIUS = 5.0;
     private static final int STARFALL_SALVO_FALL_FROM_BLOCKS = 30;
     private static final int STARFALL_SALVO_HOVER_BLOCKS = 2;
     private int starfallSalvoCooldownTicks = 900;
@@ -344,6 +362,9 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     final Set<UUID> battleParticipants = new HashSet<UUID>();
     final Set<UUID> expelledPlayers = new HashSet<UUID>();
     private boolean allExpelledLeavePending = false;
+    /** 管理员清理命令标记：tick 时若为 true 立即无掉落退场（区块静止的 Boss 解冻恢复 tick 后自动生效）。 */
+    private boolean pendingCommandLeave = false;
+    private int bossDataVersion = BOSS_DATA_VERSION;
     private boolean settlementDone = false;
     final Set<UUID> hardcoreProtectedPlayers = new HashSet<UUID>();
     final Set<UUID> twilightExpelled = new HashSet<UUID>();
@@ -365,6 +386,16 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     private boolean summonScatterFired = false;
     /** 重建自战斗账本记录的标记：仅作语义区分，不影响结算 CD（照常设 CD）。 */
     private boolean rebuiltAsSettled = false;
+    /** 2026-09-10（用户裁决 D5）：强制本次结算发放「一阶段奖励」。
+     *  用于 2.5 断光之刻全体被传送导致战斗终止的场景——设计 §2.5 要求发一阶段奖励，
+     *  而该路径处于 phase==2，settleBattle 默认会走 dropPhase2Reward。 */
+    private boolean forcePhase1Reward = false;
+    /** 2026-09-10（用户裁决 C3 / Q13）：一阶段断魂已被 1.7 清除 → 一阶段剩余头衔（1.8/1.9）不再重挂。
+     *  <p>
+     *  1.7「愿予必成」每秒 {@code restorePlayerToFull} 会清掉玩家全部负面效果（含断魂），作者裁定
+     *  该清除**保持到一阶段结束**，因此 1.8「磨锐试炼」的每 20 tick 重挂与入场挂都必须让路。
+     *  进入二阶段时复位（二阶段断魂由 2.0「海天之隙」独立授予）。 */
+    private boolean soulSeverRetiredInPhase1 = false;
     private LeaveReason leaveReason = LeaveReason.NONE;
     private BlockPos battleAnchorPos = null;
     private ResourceLocation battleAnchorDim = null;
@@ -385,7 +416,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     }
 
     public static AttributeSupplier.Builder createAttributes() {
-        return PathfinderMob.createMobAttributes().add(Attributes.MAX_HEALTH, 2000.0).add(Attributes.MOVEMENT_SPEED, 0.3).add(Attributes.ATTACK_DAMAGE, 30.0).add(Attributes.ATTACK_SPEED, 4.0).add(Attributes.ARMOR, 20.0).add(Attributes.KNOCKBACK_RESISTANCE, 1.0);
+        return PathfinderMob.createMobAttributes().add(Attributes.MAX_HEALTH, 2000.0).add(Attributes.MOVEMENT_SPEED, 0.3).add(Attributes.ATTACK_DAMAGE, 30.0).add(Attributes.ATTACK_SPEED, 4.0).add(Attributes.ARMOR, 20.0).add(Attributes.KNOCKBACK_RESISTANCE, 1.0).add(Attributes.EXPLOSION_KNOCKBACK_RESISTANCE, 1.0);
     }
 
     public boolean shouldDespawnInPeaceful() {
@@ -512,8 +543,13 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         });
     }
 
+    /**
+     * 主动索敌是否允许（2026-09-09 用户裁决：与 titleLock 解耦——titleLock 只承担"锁血/防跳段"，
+     * 不再连带关闭就近索敌，消除"更换头衔后 Boss 站桩 15~30s"的索敌停顿）：
+     * 仅投票/转阶段等冻结窗口关闭；HurtByTarget 复仇仇恨本就不受此门控。
+     */
     private boolean isTargetingAllowed() {
-        return !this.bossState.isVoteOrTransition() && this.titleLockTicks <= 0;
+        return !this.bossState.isVoteOrTransition();
     }
 
     public void tick() {
@@ -542,6 +578,12 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             this.bossLeaveNoLoot();
             return;
         }
+        // 管理员清理命令（/silent_sun redios reset_summon_cd 扩展）：标记后下一 tick 无掉落退场
+        if (this.pendingCommandLeave) {
+            this.pendingCommandLeave = false;
+            this.bossLeaveNoLoot();
+            return;
+        }
         if (this.anticheat.tickCreativeRelated(serverLevel)) {
             MutableComponent leaveMsg = Component.translatable("message.silent_sun.redios.creative_leave").withStyle(ChatFormatting.GOLD);
             for (UUID id2 : new HashSet<UUID>(this.anticheat.creativeStrikers)) {
@@ -550,14 +592,29 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
                 if (cp == null || (sp = cp).isCreative() || !sp.isAlive()) continue;
                 this.anticheat.creativeStrikers.remove(id2);
             }
-            this.bossLeaveFriendly(serverLevel, leaveMsg);
+            // 2026-09-11 用户裁决（§2.4 口径，选项 A）：创造离场**不发惩罚**——
+            //   已清一阶段 → 正常发奖励 + 冷却 0；未清一阶段 → 无奖励（没打到就是没打到）+ 冷却 0。
+            // 原实现走 bossLeaveFriendly（= leaveBattle(..., setCooldown=true)）→ 无掉落 + 3 天冷却，
+            // 与设计 §2.4（0 冷却 + 已清 P1 发奖励）和 §3.5（一小时）三处矛盾。
+            if (this.hasClearedPhase1ForLoot()) {
+                this.settleBattle(serverLevel, 0L, true, this.phase == 2);
+            } else {
+                this.leaveBattle(serverLevel, leaveMsg, false);
+            }
             return;
         }
         if (this.colorlessChallengeTicks > 0) {
-            --this.colorlessChallengeTicks;
-            if (this.colorlessChallengeTicks <= 0) {
-                this.resolveColorlessChallengeSuccess(serverLevel);
-                return;
+            // 2026-09-10（用户裁决）：计时只在「真正能打」的时间累加——**冻结态不倒计时**。
+            //   ・冻结态 = bossState.isFrozen()：PHASE1_VOTE / PHASE1_TRANSITION / PHASE1_PENDING / PHASE2_PENDING
+            //     （投票 / 转场 / 两阶段濒死，玩家无法推进战斗进度）；
+            //   ・锁血期 = titleLockTicks > 0：段底不可越，玩家打不穿 → 同样不计入可打时间。
+            // 起算点仍为「进入 2.8 那一刻」（设计稿 §2.8 原义），回退后重进 2.8 **不重置**（保持现状）。
+            if (!this.bossState.isFrozen() && this.titleLockTicks <= 0) {
+                --this.colorlessChallengeTicks;
+                if (this.colorlessChallengeTicks <= 0) {
+                    this.resolveColorlessChallengeSuccess(serverLevel);
+                    return;
+                }
             }
         }
         if (!this.phaseMaxHealthApplied) {
@@ -616,17 +673,38 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         this.tickBossMissingInView(serverLevel);
         this.tickBattleAreaCheck(serverLevel);
         this.tickHeightFlight(serverLevel);
-        if (this.isBladeAttackAllowed()) {
-            IntegrationContract.sanitizeBossBladeEntities(this);
-            if (this.isBladeModeActive()) {
-                IntegrationContract.tryTickBossBladePlayerHits(this);
-                IntegrationContract.tryFireBossPhantomSwords(this);
-            }
+        // 2026-09-10（实测崩服修复）：拔刀剑崩溃防护**不随刀窗口开关**——它是防崩服护栏，不是攻击机制。
+        // 原先它挂在 `if (isBladeAttackAllowed())` 内，而该方法在 1.7「谁人之愿」/ PHASE1_VOTE / PHASE1_TRANSITION
+        // 期间为 false → 这些窗口里只剩 CommonEvents 的 100 tick 全局兜底（最长 5 秒空窗）。
+        // 实测崩溃（EntityDrive.onHitEntity:303 nextInt(负)）即落在该空窗内：Boss 与崩溃剑气相距仅约 20 格，
+        // 本应被每 tick 的 64 格扫描覆盖。移动到此处的代价只是一次实体 AABB 查询，远低于崩服代价。
+        IntegrationContract.sanitizeBossBladeEntities(this);
+        if (this.isBladeAttackAllowed() && this.isBladeModeActive()) {
+            IntegrationContract.tryTickBossBladePlayerHits(this);
+            IntegrationContract.tryFireBossPhantomSwords(this);
         }
         this.hardcoreProtectedPlayers.removeIf(id -> {
             ServerPlayer p = this.getServerPlayer((UUID)id);
             return p == null || !p.isAlive() || p.level() != this.level();
         });
+        // 非法坐标兜底（2026-09-10 实测：寰宇支配之剑把 Boss 甩到 999999,999999,999999）：
+        // 外部把位置写成世界边界之外的荒谬值时直接拉回战斗锚点，避免 Boss 被"流放"后触发
+        // 脱战/区域卸载等误判，随后还会被判 externally removed（回场 + 流程空窗）。
+        if (Math.abs(this.getX()) > 3.0E7 || Math.abs(this.getZ()) > 3.0E7 || Math.abs(this.getY()) > 2.0E4) {
+            SilentSunMod.LOGGER.warn("[Redios] 非法坐标拦截：位置=({}, {}, {}) → 拉回战斗锚点 {}",
+                (int)this.getX(), (int)this.getY(), (int)this.getZ(), this.battleAnchorPos);
+            this.moveTo((double)this.battleAnchorPos.getX() + 0.5, (double)this.battleAnchorPos.getY(),
+                (double)this.battleAnchorPos.getZ() + 0.5, this.getYRot(), this.getXRot());
+            this.setDeltaMovement(0.0, 0.0, 0.0);
+        }
+        // 防死兜底（2026-09-10 实测修复）：防死窗口内若有任何路径把血量写到 <1（前置模组断魂
+        // 在 LivingDamageEvent.Post 里直写血量数据、绕过 setHealth），每 tick 钳回 1 血并同步
+        // 反作弊基线——既保住 isDeadOrDying() 拦不住的"血量本身合法性"，也避免把玩家自己模组的
+        // 合法机制（断魂 DoT）误判成作弊惩罚。放在 anticheat.tick 之前，保证基线一致。
+        if (this.isProtectedFromDeath() && this.getHealth() < 1.0f) {
+            this.forceSetHealth(1.0f);
+            this.anticheat.markLegalHealthChange(1.0f);
+        }
         this.anticheat.tick(serverLevel);
         if (this.deathTime > 0 && !this.legitRemoval && !this.isLegitDeathFlow()) {
             this.deathTime = 0;
@@ -690,9 +768,15 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         if (this.getPose() == Pose.SITTING) {
             this.setPose(Pose.STANDING);
         }
+        // 威胁值衰减 / 目标切换冷却（独立于头衔逻辑，冻结态也照常计时）
+        this.tickThreatSystem();
         if (this.bossState == BossState.PHASE1_TRANSITION) {
             --this.transitionTicks;
-            if (this.transitionTicks == 0) {
+            // 2026-09-11 实测修复（S1）：判等改 `<= 0`。原为 `== 0` 精确判等，而回场重建时
+            // SilentSunTransition 不在账本键清单里 → 读回 0 → 自减成 -1 → 永不命中 →
+            // **Boss 永久停在转场态**（无敌 + die 被防死拦截 + failsafe 安全窗口豁免），无奖励卡死。
+            // 配置 phaseTransitionSeconds = 0 时会踩同一条。
+            if (this.transitionTicks <= 0) {
                 this.enterPhase2();
             } else if (this.transitionTicks == Math.max(1, this.transitionTotalTicks) - 6) {
                 this.spawnTransitionImpact(serverLevel);
@@ -721,6 +805,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             this.tickEnrage();
             this.tickEnrageStacking();
             this.tickWeaknessCurse();
+            this.tickFragileBinding();
             this.tickStarfallSalvo(serverLevel);
         }
         if (this.tickCount % 4 == 0) {
@@ -872,8 +957,11 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     }
 
     private void spawnStarfallSalvo(ServerLevel serverLevel) {
-        double concentratedRadius = 5.0;
-        double dispersedRadius = 20.0;
+        // 2026-09-10（B1 配置接线）：原先是硬编码 5.0 / 20.0，导致 SilentSunConfig.STARFALL_SALVO_RADIUS
+        // 成了死配置（整合包把 starfallSalvoRadius 改成 7.0 也毫无效果）。
+        // 设计稿 §7.3：非集中轰炸散布半径 = 配置值（默认 20）；集中轰炸目标保持 5.0。
+        double concentratedRadius = STARFALL_SALVO_CONCENTRATED_RADIUS;
+        double dispersedRadius = SilentSunConfig.STARFALL_SALVO_RADIUS.get();
         int minCount = SilentSunConfig.STARFALL_SALVO_MIN_COUNT.get();
         int maxCount = SilentSunConfig.STARFALL_SALVO_MAX_COUNT.get();
         int maxDelay = SilentSunConfig.STARFALL_SALVO_MAX_DELAY_TICKS.get();
@@ -943,7 +1031,11 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     private List<LivingEntity> collectStarfallTargets(ServerLevel serverLevel) {
         // 2026-09-01 用户裁决：大招直接对视距内（reach×4）全部合法目标索敌，
         // 不再「8 格内有目标就只打 8 格内」的两级回退（避免忽略 8~32 格目标）。
-        double viewDist = this.getCurrentAttackReach() * 4.0;
+        // 2026-09-10（B2）：半径接入配置 starfallSalvoAttackRadius（设计稿 §8.2 = 24），
+        // 取 max(配置值, 攻击距离×4) 作下限——落实设计值的同时不削弱上述裁定
+        //（攻击距离随阶段/激怒上升时，收集半径同步放大）。
+        double viewDist = Math.max(SilentSunConfig.STARFALL_SALVO_ATTACK_RADIUS.get(),
+            this.getCurrentAttackReach() * 4.0);
         return serverLevel.getEntitiesOfClass(LivingEntity.class,
             this.getBoundingBox().inflate(viewDist), e -> BossTargeting.isValidAttackTarget(this, e));
     }
@@ -1156,6 +1248,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
 
     private void applyPhaseMaxHealth(ServerLevel serverLevel) {
         AttributeInstance kbInst;
+        AttributeInstance ekbInst;
         AttributeInstance attackInst;
         RediosEntity.ensureMaxHealthUncapped();
         double desired = (SilentSunConfig.PHASE_MAX_HEALTH.get()).intValue();
@@ -1193,6 +1286,11 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         }
         if ((kbInst = this.getAttribute(Attributes.KNOCKBACK_RESISTANCE)) != null) {
             kbInst.setBaseValue((SilentSunConfig.KNOCKBACK_RESISTANCE.get()).doubleValue());
+        }
+        // 2026-09-10（用户裁决 D7）：爆炸击退不走 push（Explosion 自己算完直接 setDeltaMovement），
+        // 只能靠该属性挡。与 KNOCKBACK_RESISTANCE 共用同一个配置键，保证"免疫击退"是一条口径。
+        if ((ekbInst = this.getAttribute(Attributes.EXPLOSION_KNOCKBACK_RESISTANCE)) != null) {
+            ekbInst.setBaseValue((SilentSunConfig.KNOCKBACK_RESISTANCE.get()).doubleValue());
         }
         this.anticheat.lastObservedMaxHealth = this.anticheat.expectedMaxHealth = (double)this.getMaxHealth();
     }
@@ -1404,7 +1502,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             this.allowSelfTeleport = false;
         }
         this.setNoAi(false);
-        this.setTarget((LivingEntity)player);
+        this.forceSetTarget((LivingEntity)player);
         serverLevel.playSound(null, this.blockPosition(), SoundEvents.WARDEN_SONIC_CHARGE, SoundSource.HOSTILE, 1.0f, 1.0f);
         serverLevel.playSound(null, this.blockPosition(), SoundEvents.WARDEN_DEATH, SoundSource.HOSTILE, 1.0f, 1.0f);
     }
@@ -1447,7 +1545,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
                 this.battleMusicPlaying.remove(id);
                 continue;
             }
-            if (this.distanceToSqr(player) > 16384.0) {
+            if (this.distanceToSqr(player) > MUSIC_FADE_OUT_DIST_SQR) {
                 this.stopBattleMusicFor(player);
                 this.battleMusicPlaying.remove(id);
                 continue;
@@ -1492,7 +1590,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             return;
         }
         if (!this.heightFlightMode) {
-            int diff = Math.max(0, Math.max(RediosRules.heightFlightDiffBlocks(), SilentSunConfig.HEIGHT_FLIGHT_DIFF_BLOCKS.get()));
+            int diff = Math.max(0, RediosRules.heightFlightDiffBlocks());
             if (diff <= 0) {
                 return;
             }
@@ -1518,7 +1616,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             return;
         }
         this.setNoGravity(true);
-        if (this.bossState.isVoteOrTransition() || this.isDarkStarActive()) {
+        if (this.bossState.isVoteOrTransition() || this.isDarkStarBlastOngoing()) {
             return;
         }
         LivingEntity target = this.getTarget();
@@ -1585,14 +1683,44 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             return;
         }
         this.aiWatchdogNoTargetTicks = 0;
-        LivingEntity nearest = this.pickNearestActiveParticipant(serverLevel);
-        if (nearest != null) {
-            this.setTarget(nearest);
+        // 设计 §583：当前目标失效 → 立即重新索敌；重新索敌以威胁值优先，
+        // 无人有威胁值时（例如全员零输出）才退回就近索敌。
+        LivingEntity next = this.pickHighestThreatTarget();
+        if (next == null) {
+            next = this.pickNearestActiveParticipant(serverLevel);
+        }
+        if (next != null) {
+            this.setTarget(next);
         }
     }
 
     private boolean isSeaSkyGapActive() {
         return this.phase == 2 && this.titleIndex == 0;
+    }
+
+    /**
+     * 2.2「错位干涉」是否生效（20% 命中率 + Boss 攻击 50% 落空）。
+     * <p>
+     * 2026-09-10（用户裁决 Q1「重建补闪避」）：改为**由 phase/titleIndex 派生**，不再用字段缓存。
+     * 原实现只在 {@code onTitleChanged} 里赋值，而 {@code restoreStateFromNbt}（存档重载 / 外部删除后
+     * 重建）直接写 phase/titleIndex、不经过 onTitleChanged → 字段恒为 false，2.2 的两条效果静默失效。
+     * 派生写法天然随 NBT 持久化（phase/titleIndex 均已入档）。
+     * <p>
+     * 同源的另两项一并派生：{@link #isChaosRuinActive()}（2.3 混沌破败）与 {@link #isAshDawnActive()}（2.4 灰烬曙光）
+     * ——它们与 2.2 是同一种「只由 phase/titleIndex 决定却存成字段」的写法，重载后同样失效。
+     */
+    boolean isWrongInterferenceActive() {
+        return this.phase == 2 && this.titleIndex == 2;
+    }
+
+    /** 2.3「混沌破败」是否生效（见 {@link #isWrongInterferenceActive()} 的持久化说明）。 */
+    boolean isChaosRuinActive() {
+        return this.phase == 2 && this.titleIndex == 3;
+    }
+
+    /** 2.4「灰烬曙光」是否生效（见 {@link #isWrongInterferenceActive()} 的持久化说明）。 */
+    private boolean isAshDawnActive() {
+        return this.phase == 2 && this.titleIndex == 4;
     }
 
     private void applyOpponentEffect(Supplier<MobEffectInstance> effectFactory) {
@@ -1676,7 +1804,11 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         if (this.bossState.isFrozen()) {
             return true;
         }
-        if (this.phase == 1 && this.titleIndex == 6 && this.titleLockTicks > 0) {
+        if (this.phase == 1 && this.titleIndex == 6 && this.titleLockTicks > 0
+            && (source == null || !source.is(net.minecraft.tags.DamageTypeTags.BYPASSES_INVULNERABILITY))) {
+            // 2026-09-10（用户裁决）：1.6「竭力之悲」只免疫普通伤害，9bypass 真伤/断魂照常打血
+            //（与原版 Entity.isInvulnerableTo 的 bypass 语义一致）。isFrozen() 分支保持全免——
+            // 冻结期全免是「9pass 不得跳阶段」的防线，不可放行。
             return true;
         }
         return super.isInvulnerableTo(source);
@@ -2062,12 +2194,29 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         return null;
     }
 
+    /**
+     * 真伤判据（2026-09-10 用户裁决 A10「收窄判据」）。
+     * <p>
+     * 真伤 = 带 {@code #minecraft:bypasses_invulnerability} 标签的伤害（断魂 soul_sever、
+     * 2.7 全属性 redios_spectrum、以及其它模组的 9bypass 真伤通道），**不再按 msgId 白名单判定**。
+     * <p>
+     * 原实现把 {@code magic / indirectMagic / sonic_boom / wither / dragonBreath} 也算真伤，造成两处偏差：
+     * <ol>
+     *   <li><b>P0</b>：拔刀剑刀光 / 幻影剑等普通魔法命中被 {@code DamagePipeline.stageHealImmunity}
+     *       判为「免疫并记录」——伤害被取消并转成 <b>Boss 回血 + 断魂 x</b>，玩家越打 Boss 越硬；</li>
+     *   <li>{@code WeaponManager.tryGuardBlock} 对普通魔法免于格挡，与设计稿 L636
+     *       「格挡不属于防御判定，弹射物穿透失效，覆盖全身」冲突。</li>
+     * </ol>
+     * 设计侧的判据是「免疫并记录<b>真实 / 虚空 / 窒息</b>伤害」（设计稿 L396 / L419 / L488），
+     * 普通魔法不属于这三类。
+     * <p>
+     * 注：本服标签文件（`data/minecraft/tags/damage_type/bypasses_invulnerability.json`）为<b>追加</b>式
+     * （无 `replace`），故原版的 {@code out_of_world} / {@code generic_kill} 仍在标签内——
+     * 这两者已由 {@code stageDirectKillGuard}（generic_kill 无实体直接取消）与
+     * {@link #isVoidDamage}（虚空走 1.6 记账）分别接管，不会误入本判据。
+     */
     boolean isTrueDamage(DamageSource source) {
-        if (source == null) {
-            return false;
-        }
-        String msgId = source.getMsgId();
-        return "magic".equals(msgId) || "indirectMagic".equals(msgId) || "sonic_boom".equals(msgId) || "wither".equals(msgId) || "dragonBreath".equals(msgId);
+        return source != null && source.is(DamageTypeTags.BYPASSES_INVULNERABILITY);
     }
 
     /**
@@ -2085,6 +2234,10 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
      */
     float applyDamageCap(float amount, DamageSource source) {
         float hardCap = (SilentSunConfig.DAMAGE_HARD_CAP.get()).floatValue();
+        // ⚠️ 裁决沿革（2026-09-11 用户裁决 N02 = **以现状为准**）：
+        //   代码现状 = 2026-09-01 裁决「9bypass 打穿：断魂/穿甲伤害不受动态减伤，只受硬上限约束」。
+        //   历史 A1 最终口径（`设计文稿合集.md:2391-2393`「玩家对 Boss 的伤害仍受 200 上限与动态减伤约束」）
+        //   本次**不采纳**（曾按"历史版本为准"试改并已回退），保留 2026-09-01 口径。
         // 9bypass 打穿：断魂/穿甲伤害不受动态减伤（用户裁决）
         if (source != null && source.is(DamageTypeTags.BYPASSES_INVULNERABILITY)) {
             return Math.min(amount, hardCap);
@@ -2104,24 +2257,30 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         return Math.min(reduced, hardCap);
     }
 
+    /**
+     * 「免疫并记录」判据（设计稿 L396 / L419 / L488）：**虚空 / 窒息**伤害被 Boss 免疫并等额记入断魂 x。
+     * <p>
+     * {@code stageHealImmunity} 的 {@code setHeal(ctx.amount)} 就是"免疫"的实现——取消本次伤害后
+     * 等额回血，净效果为零（1.6 光环自损即净零 + 记账）；这不是额外奖励，故保留。
+     * <p>
+     * <b>2026-09-10 修正（实测回归，必须记住）</b>：**不得**把 9bypass 真伤
+     * （`#minecraft:bypasses_invulnerability`）计入本判据。2.5 收窄 {@link #isTrueDamage} 时
+     * 改成标签判定，而灭却之日的 `soul_sever`（断魂 / calamity 打击）**也带该标签** →
+     * 被误判为"免疫并记录" → **伤害被取消、Boss 反而回血 + 记 y**，等于把断魂这条主伤害通道
+     * 吃成了治疗。实测证据（`latest.log`）：
+     * {@code [calamityRound] strike: target=碎镜之影·莱德厄斯 hpBefore=859.999 hpAfter=959.999}。
+     * <p>
+     * 设计里"免疫并记录**真实**伤害"指的是 **1.6 光环自身的 1 点真伤**，而它的实现走
+     * {@code fellOutOfWorld}（虚空）→ 已被虚空分支覆盖，所以删掉真伤分支**不损失设计原意**。
+     * 真伤判据 {@link #isTrueDamage} 本身仍保留（供 `WeaponManager.tryGuardBlock` 的"真伤不可格挡"用）。
+     */
     boolean isHealImmunityDamage(DamageSource source) {
         if (source == null) {
             return false;
         }
-        int flags = 0;
-        if (this.isVoidDamage(source)) {
-            ++flags;
-        }
-        if (this.isTrueDamage(source)) {
-            ++flags;
-        }
-        if (this.isDrowningDamage(source)) {
-            ++flags;
-        }
-        if (this.isSuffocationDamage(source)) {
-            ++flags;
-        }
-        return flags >= 1;
+        // 虚空（含 1.6 光环自损的 fellOutOfWorld）/ 淹没 / 窒息：免疫 + 记账。
+        // 断魂、2.7 全属性、以及其它 9bypass 真伤一律**不**走本判据——它们必须照常打血。
+        return this.isVoidDamage(source) || this.isDrowningDamage(source) || this.isSuffocationDamage(source);
     }
 
     private boolean isDrowningDamage(DamageSource source) {
@@ -2326,6 +2485,11 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             return;
         }
         this.settlementDone = true;
+        // 2026-09-10：无掉落离场诊断日志（`拜拜了您嘞` 这类静默退场原先不留任何痕迹）。
+        SilentSunMod.LOGGER.warn("[Redios] 无掉落离场：原因={} 阶段={} 头衔={} 设冷却={} 参战={} 位置={}",
+            this.leaveReason, this.phase, this.titleIndex, setCooldown, this.battleParticipants.size(), this.blockPosition());
+        // 退场秩序化（M4）：先清账本再执行可能抛异常的清理（含外部模组直调），防幽灵重建
+        this.clearBattleRecord(serverLevel);
         this.anticheat.antiCheatNoLoot = true;
         if (setCooldown && BossTargeting.playerOnlyMode()) {
             this.applySummonCooldown(serverLevel, (long)(SilentSunConfig.COOLDOWN_DAYS.get()).intValue() * 24000L);
@@ -2337,7 +2501,6 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         this.broadcastToParticipants(this.rediosSigned(farewellMsg));
         this.cleanupPlayersAfterBattle(serverLevel);
         this.bossEvent.setVisible(false);
-        this.clearBattleRecord(serverLevel);
         this.safeDiscard();
     }
 
@@ -2353,12 +2516,46 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         return 0.0f;
     }
 
+    /**
+     * 防死窗口判定（2026-09-10 实测修复）：落在这些状态下时 Boss 绝不允许死亡。
+     * <p>
+     * 背景（23:03:48 实测现场）：前置模组断魂（soul_sever）在 {@code LivingDamageEvent.Post}
+     * 里把「差额」直接写进血量数据，**绕过 {@link #setHealth}**——单 tick 内血量即被写到 ≤0，
+     * 而 vanilla {@code LivingEntity.hurt} 收尾判定（hurt 尾部 isDeadOrDying → die）随即以该
+     * 伤害源结算击杀。1.9 的锁血钳制（setHealth 钳 1 + stagePhase1Lock）因此被整条绕过：
+     * 一阶段未清却已死亡 → 无掉落、不进投票。
+     * <p>
+     * vanilla 全部死亡判定都经 {@link #isDeadOrDying()}（hurt:1147/1259、handleEntityEvent:3
+     * 等），那是唯一可靠拦截点：本方法同时作为 isDeadOrDying / setHealth 钳制 / 每 tick 回血
+     * 兜底 / die 拦截的共同判据。pendingLockReleased（P2 锁血解除）后不再保护，玩家可正常击杀。
+     */
+    private boolean isProtectedFromDeath() {
+        if (this.bossState == BossState.PHASE1_PENDING
+            || this.bossState == BossState.PHASE1_VOTE
+            || this.bossState == BossState.PHASE1_TRANSITION
+            || this.bossState == BossState.PHASE2_PENDING) {
+            return true;
+        }
+        if (this.bossState == BossState.PHASE1_COMBAT) {
+            // 一阶段只看头衔：pendingLockReleased 是二阶段字段，绝不可影响一阶段判定
+            // （跨阶段泄漏会让 1.9 防死窗口悄悄失效）。
+            return this.titleIndex == PHASE1_TITLES.size() - 1;
+        }
+        if (this.bossState == BossState.PHASE2_COMBAT) {
+            // 解除锁血（pendingLockReleased）后允许玩家正常击杀 → 不再保护。
+            return !this.pendingLockReleased && this.titleIndex == PHASE2_TITLES.size() - 1;
+        }
+        return false;
+    }
+
     private boolean isLegitDeathFlow() {
         // P2 濒死锁血是「防击杀窗口」：处于 P2_PENDING 时恒不合法。pendingLockReleased 只在
         // onPendingLockExpired 离开 PENDING（transitionTo PHASE2_COMBAT）时才置 true，所以本分支
         // 在真正处于 P2_PENDING 时恒为 false，等价于 return false；允许击杀发生在切回 COMBAT 之后，
         // 走下方 inHurtProcessing 判定。锁血未到期直调 setHealth(≤0)/kill() 一律视为篡改拦截。
-        if (this.bossState == BossState.PHASE2_PENDING) {
+        // 2026-09-10：全部防死窗口（含 1.9 COMBAT/PENDING/VOTE/TRANSITION、2.9 未解除锁血）统一走
+        // isProtectedFromDeath —— 即使伤害绕过管线直写血量到 ≤0，也不得判为合法死亡。
+        if (this.isProtectedFromDeath()) {
             return false;
         }
         if (this.inHurtProcessing) {
@@ -2372,6 +2569,16 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     }
 
     public void setHealth(float health) {
+        // 濒死锁血钳 1（M11：先于 ≤0 篡改拦截）——x.9（1.9/2.9）头衔锁血 + PENDING 期间
+        // 最低血量 1、不允许 ≤0：即使前置模组断魂 9pass 直接改血（非 hurt 链路）到 ≤0 也钳 1；
+        // 回血/改血到 >1 允许（保底不封顶）。先钳再拦，避免 9pass 直扣 ≤0 被判篡改而非钳 1。
+        //   非 x.9 头衔（1.0~1.8/2.0~2.8）：**不钳 1 血**——大伤害交 updateTitle 逐格推进。
+        // 2026-09-10：判据统一为 isProtectedFromDeath —— 原名单漏了 PHASE1_VOTE /
+        // PHASE1_TRANSITION（1.9 转场/投票窗口），实测死亡正是发生在这些窗口。
+        boolean protectedFromDeath = this.isProtectedFromDeath();
+        if (protectedFromDeath && health < 1.0f) {
+            health = 1.0f;
+        }
         if (health <= 0.0f && !this.isLegitDeathFlow()) {
             Level level = this.level();
             if (level instanceof ServerLevel) {
@@ -2380,30 +2587,12 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             }
             return;
         }
-        // 濒死锁血保底（2026-08-30 用户规范）：
-        //   封锁（生效期间）= x.9（1.9/2.9）头衔锁血时间未结束前（COMBAT 最后头衔 + PENDING）；
-        //   解除（失效条件）= 1.9/2.9 锁血时间结束 → VOTE/TRANSITION（不再钳底）。
-        //   非 x.9 头衔（1.0~1.8/2.0~2.8）：**不钳 1 血**——大伤害交 updateTitle 逐格推进
-        //   （头衔锁血逐段生效，血量被段顶钳住），避免「卡死在 1 血 + 非 x.9 头衔」的脱节。
-        //   x.9 濒死锁血期间：最低血量 1、不允许 ≤0——即使前置模组断魂 9pass 直接改血
-        //   （非 hurt 链路）也钳到 1；回血/改血到 >1 允许（保底不封顶）。
-        boolean phase1Last = this.bossState == BossState.PHASE1_COMBAT
-            && this.titleIndex == RediosEntity.PHASE1_TITLES.size() - 1;
-        boolean phase2Last = this.bossState == BossState.PHASE2_COMBAT
-            && !this.pendingLockReleased
-            && this.titleIndex == RediosEntity.PHASE2_TITLES.size() - 1;
-        if ((phase1Last || this.bossState == BossState.PHASE1_PENDING
-            || phase2Last || this.bossState == BossState.PHASE2_PENDING)
-            && health < 1.0f) {
-            health = 1.0f;
-        }
         // 非 x.9 段底钳制（2026-09-01）：前置模组 9pass 断魂（soul_sever 无视无敌帧，每 tick
         // 结算）的「差额 setHealth 直扣」绕过 DamagePipeline——这里兜底：COMBAT 非最后头衔且
         // 血量下降时，若低于当前头衔段底则钳回段底（推进由管线/updateTitle 按锁血节奏负责，
         // setHealth 只保底不推进）。回血（setHeal → setHealth 上调）与系统推进（tryForceAdvanceOnLockEnd
         // 压血至新段内）不受影响；P2 解除锁血后（pendingLockReleased）不再钳，允许击杀。
-        if (health < this.getHealth() && !phase1Last && !phase2Last
-            && !this.pendingLockReleased
+        if (health < this.getHealth() && !protectedFromDeath
             && (this.bossState == BossState.PHASE1_COMBAT || this.bossState == BossState.PHASE2_COMBAT)) {
             List<Component> titles = this.phase == 1 ? PHASE1_TITLES : PHASE2_TITLES;
             float maxHealth = this.getMaxHealth();
@@ -2431,16 +2620,25 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         return super.isDeadOrDying();
     }
 
+    /**
+     * 说明：原版 {@code Entity.setRemoved(RemovalReason)} 在 1.21.1 是 **final**，无法覆写——
+     * 第三方模组若绕过 {@link #remove} 直调它（区块卸载/换维度也走这里），本模组只能靠账本
+     * 的 externally-removed 回场重建兜底（见 RediosBattleData 的重建分支）。因此这里的
+     * remove() 收紧是"尽量在源头拦"，直调 setRemoved 的情形由"回场后不被立刻踢走"（
+     * AntiCheatLayer#rearmCreativeLeaveAfterRestore）保证战斗能继续。
+     */
     public void remove(Entity.RemovalReason reason) {
-        // 退场秩序化（2026-08-30）：1.21.1 的 RemovalReason 仅 KILLED / DISCARDED 两值
-        // （无 UNLOAD_CHUNK——chunk 卸载走「chunk NBT 保存 + 实体列表清空」，不触发本覆写）。
-        // 因此本覆写只需放行 KILLED/DISCARDED 与 legitRemoval；其余原因（在线指令删实体等）
-        // 仍按防作弊判定拦截。卸载退场的误判源不在此处，而在账本重建链（见 settleBattle/
-        // leaveBattle/die 先标记 settled 的改动）。
-        if (!(reason != Entity.RemovalReason.KILLED && reason != Entity.RemovalReason.DISCARDED || this.legitRemoval || this.level().isClientSide)) {
+        // 退场秩序化（2026-08-30）；2026-09-10 收紧（实测：寰宇支配之剑的"清除实体"直接删掉 Boss）：
+        // 原判定只拦「非 KILLED/DISCARDED」，于是第三方模组走 remove(KILLED) / discard() 就能删掉
+        // 战斗中的 Boss → 账本判为 externally removed → 回场重建 + 一段流程空窗。
+        // 现在一律以 legitRemoval 为准：本模组自己的合法离场（die/settle/leave/purge）都会先置位，
+        // 其余任何来源的删除（含 KILLED/DISCARDED）一律拦截并记篡改。
+        // 区块卸载与换维度不走本方法（它们直调 final 的 setRemoved，按原版生命周期放行）。
+        if (!this.legitRemoval && !this.level().isClientSide) {
             Level level = this.level();
             if (level instanceof ServerLevel) {
                 ServerLevel serverLevel = (ServerLevel)level;
+                SilentSunMod.LOGGER.warn("[Redios] 外部删除拦截(remove)：reason={} 位置={}", reason, this.blockPosition());
                 this.onTamperAttempt(serverLevel, false);
             }
             return;
@@ -2476,13 +2674,30 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         this.discard();
     }
 
-    /** 召唤前暴力清除残留 Boss 的静默剔除：绕过反作弊拦截，不结算、不设 CD、不广播。 */
-    public void forceDiscardSilently() {
+    /** 召唤前暴力清除残留 Boss 的静默剔除：绕过反作弊拦截，不结算、不设 CD、不广播。
+     *  2026-09-09 防打穿收紧：改为 private——不再暴露为公开「任意静默移除」API，
+     *  仅经 {@link #purgeAllResidualBosses}（服务端启动清理入口）调用。 */
+    private void forceDiscardSilently() {
         if (this.isRemoved()) {
             return;
         }
         this.legitRemoval = true;
         this.discard();
+    }
+
+    /** 服务端启动清理全版本遗留莱德厄斯（2026-08-30 裁决；2026-09-09 收紧为唯一合法入口）：
+     *  逐维度剔除未移除的 RediosEntity。走合法标记 + discard，不结算掉落、不设 CD、不广播。 */
+    public static void purgeAllResidualBosses(MinecraftServer server) {
+        if (server == null) {
+            return;
+        }
+        for (ServerLevel sl : server.getAllLevels()) {
+            for (Entity e : sl.getEntities().getAll()) {
+                if (e instanceof RediosEntity redios && !redios.isRemoved()) {
+                    redios.forceDiscardSilently();
+                }
+            }
+        }
     }
 
     private void onTamperAttempt(ServerLevel serverLevel, boolean applyCooldowns) {
@@ -2506,6 +2721,9 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
      * <p>
      * 与 {@link AntiCheatLayer#counterCheatAttacker}（物品冷却 + 刷屏警告）不同，这里复用
      * 骑乘惩罚的绝对伤害链路，只补刀、不打扰其它参战者。
+     * <p>
+     * 2026-09-10 恢复（W2 回归）：本批曾把这条链连同 StarfallSalvo/Curtain 的 remove() 检测
+     * 一起删除，导致"星星/幕布被外部清除"再也不会补刀（`silentRetaliate` 一度全项目无定义）。
      */
     void silentRetaliate(ServerPlayer cheater) {
         if (cheater == null || !cheater.isAlive() || cheater.isSpectator()) return;
@@ -2527,6 +2745,17 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             Level level = this.level();
             if (level instanceof ServerLevel) {
                 ServerLevel sl = (ServerLevel)level;
+                if (this.isProtectedFromDeath()) {
+                    // 防死拦截（2026-09-10 实测修复）：防死窗口内的击杀一律无效——钳回 1 血继续
+                    // 流程（1.9 → 锁血到期 → 投票 → 转场 → 二阶段），且**不做作弊惩罚**：走这条路
+                    // 的常见原因是前置模组断魂等直写血量的合法机制，牵连玩家会误伤。
+                    this.forceSetHealth(1.0f);
+                    this.anticheat.markLegalHealthChange(1.0f);
+                    SilentSunMod.LOGGER.warn("[Redios] 防死拦截：状态={} 头衔={} 伤害源={} —— 已钳回 1 血继续流程",
+                        this.bossState, this.titleIndex,
+                        damageSource == null ? "null" : damageSource.getMsgId());
+                    return;
+                }
                 this.onTamperAttempt(sl, false);
                 this.forceSetHealth(Math.max(1.0f, this.getHealth()));
             }
@@ -2543,6 +2772,14 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             return;
         }
         ServerLevel serverLevel = (ServerLevel)level;
+        // 2026-09-10：击杀路径的诊断日志（实测补漏——击杀走 die() 而非 settleBattle/leaveBattle，
+        // 原先这条**最常见的结束方式反倒一条日志都没有**，导致"这场怎么结束的"无从判断）。
+        SilentSunMod.LOGGER.warn("[Redios] 被击杀结算：阶段={} 头衔={} 一阶段已清={} 无掉落标记={} 伤害源={} 参战={} 位置={}",
+            this.phase, this.titleIndex, this.hasClearedPhase1ForLoot(), this.anticheat.antiCheatNoLoot,
+            damageSource == null ? "null" : damageSource.getMsgId(), this.battleParticipants.size(),
+            this.blockPosition());
+        // 退场秩序化（M5）：先清账本再执行可能抛异常的清理/掉落，防幽灵重建
+        this.clearBattleRecord(serverLevel);
         if (this.anticheat.antiCheatNoLoot) {
             this.disableBossOutline(serverLevel);
             this.cleanupNearbyLivingAfterBattle(serverLevel);
@@ -2704,7 +2941,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
                         if (this.distanceToSqr(livingTarget) > reach * reach + 9.0) {
                             return false;
                         }
-                        if (this.wrongInterferenceActive && this.random.nextFloat() > 0.5f) {
+                        if (this.isWrongInterferenceActive() && this.random.nextFloat() > 0.5f) {
                             var8_4 = this.level();
                             if (var8_4 instanceof ServerLevel) {
                                 sl = (ServerLevel)var8_4;
@@ -2738,7 +2975,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
                         if (this.isWhoseWishActive()) {
                             return false;
                         }
-                        if (!this.chaosRuinActive && !this.chaosRuinAbsoluteAttacks && !this.isSharpenTrialActiveNow()) break block27;
+                        if (!this.isChaosRuinActive() && !this.chaosRuinAbsoluteAttacks && !this.isSharpenTrialActiveNow()) break block27;
                         damage = (float)this.getAttributeValue(Attributes.ATTACK_DAMAGE);
                         src = this.buildAttackSource();
                         if (livingTarget instanceof ServerPlayer && (sp = (ServerPlayer)livingTarget).level().getLevelData().isHardcore() && damage >= sp.getHealth()) {
@@ -2962,7 +3199,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     }
 
     private boolean damageMultiPart(Entity part, DamageSource src, float damage) {
-        if (this.chaosRuinActive || this.chaosRuinAbsoluteAttacks || this.isSharpenTrialActiveNow()) {
+        if (this.isChaosRuinActive() || this.chaosRuinAbsoluteAttacks || this.isSharpenTrialActiveNow()) {
             if (part instanceof LivingEntity) {
                 return AbsoluteDamageUtil.damage((LivingEntity)part, src, damage);
             }
@@ -3061,6 +3298,10 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
 
     private void tickSharpenTrial() {
         if (!this.isSharpenTrialActive()) {
+            return;
+        }
+        // 2026-09-10（用户裁决 C3 / Q13）：断魂已在 1.7 被清除，一阶段剩余时间不再重挂。
+        if (this.soulSeverRetiredInPhase1) {
             return;
         }
         if (this.tickCount % 20 == 0 && this.level() instanceof ServerLevel) {
@@ -3180,6 +3421,11 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             if (effect.getEffect().value().isBeneficial()) continue;
             player.removeEffect(effect.getEffect());
         }
+        // 2026-09-10（用户裁决 C3 / Q13）：这里连带清掉了玩家的断魂，裁定"该清除保持到一阶段结束"
+        // → 置退场标记，并同时退掉 `CommonEvents.onPlayerTick` 每 tick 补挂所用的 NBT 标记
+        //（不置标记的话，1.8/1.9 会把断魂原样补回来，裁定落空）。
+        this.soulSeverRetiredInPhase1 = true;
+        CommonEvents.clearSharpenSoulSever(player);
         for (ItemStack stack : player.getInventory().items) {
             if (stack.isEmpty()) continue;
             player.getCooldowns().removeCooldown(stack.getItem());
@@ -3409,15 +3655,92 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         AABB box = this.getBoundingBox().inflate(r);
         List<LivingEntity> entities = serverLevel.getEntitiesOfClass(LivingEntity.class, box, e -> e.isAlive() && e.distanceToSqr(this) <= r * r);
         for (LivingEntity living : entities) {
-            if (living == this || !BossTargeting.playerOnlyMode() && this.isFriendlyEntity(living)) continue;
+            // 2026-09-11 用户裁决（A08 = 以历史为准）：按历史 A10 裁定（`设计文稿合集.md:2432-2439`）
+            // 过滤目标——Mode1：参战玩家 + 被参战玩家驯服的友好生物；Mode2：数据包白名单。
+            if (!this.isAuraTarget(living)) continue;
             // 真伤光环：走 9bypass 改血（2026-09-01 用户裁决——完整 hurt + 差额 setHealth，
             // 与灭却之日 applyTrueDamage 同款，防第三方限伤/次数盾吞伤）
             this.applyTrueDamageAura(living, 1.0f);
             this.markSoulSeverIfUnlocked(living);
         }
-        if (this.getHealth() > 1.0f) {
-            this.setHealth(this.getHealth() - 1.0f);
-            this.anticheat.markLegalHealthChange(this.getHealth());
+        // 2026-09-11（A08 → 历史 A10 第二口径落地）：Mode1 下把半径内的**无主生物**按「脱战玩家同款
+        // 推离」清场（§6.5：水平 <17 格推开、前方有墙改垂直上推）。此前这条**完全没有实现**。
+        this.clearOwnerlessMobsFromAura(serverLevel);
+        // 2026-09-10（用户裁决 C5）：光环自损改为走「虚空伤害免疫 + 记账」管线——
+        // 由 DamagePipeline.stageSorrowToil 记录断魂 x 后取消伤害（Boss 不再被自己的光环真实扣血），
+        // 与设计 §1.6 / §5.3「Boss 自身受虚空伤害免疫并记录断魂 x」一致。
+        // 临时清零无敌帧：避免刚被玩家命中（invulnerableTime > 0）时自损被 hurt 入口的无敌帧短路吞掉。
+        int savedAuraInvuln = this.invulnerableTime;
+        this.invulnerableTime = 0;
+        try {
+            this.hurt(this.damageSources().fellOutOfWorld(), 1.0f);
+        } finally {
+            this.invulnerableTime = savedAuraInvuln;
+        }
+    }
+
+    /**
+     * A10 光环目标过滤（2026-09-11 依历史 A10 裁定落地，`设计文稿合集.md:2432-2439`）：
+     * <ul>
+     *   <li><b>Mode1</b>：参战玩家（合法、非创造/旁观/被逐出）+ **被参战玩家驯服的友好生物**
+     *       （§3.5：它们同为合法伤害来源，故光环也伤它们）；其余（村民、无主生物等）不受伤，
+     *       改由 {@link #clearOwnerlessMobsFromAura} 推离清场。</li>
+     *   <li><b>Mode2</b>：走数据包白名单（{@code isValidAttackTarget}），不伤玩家与友好生物。</li>
+     * </ul>
+     * 取代原先的 `!playerOnlyMode() && isFriendlyEntity(...)` 短路（那套在 Mode1 下形同虚设，
+     * 会连村民/宠物一起打，且不区分参战与否）。
+     */
+    private boolean isAuraTarget(LivingEntity living) {
+        if (living == null || living == this || !living.isAlive()) {
+            return false;
+        }
+        if (BossTargeting.playerOnlyMode()) {
+            if (living instanceof Player player) {
+                return BossTargeting.isValidAttackTarget(this, player);
+            }
+            if (living instanceof OwnableEntity ownable && ownable.getOwnerUUID() != null) {
+                return this.battleParticipants.contains(ownable.getOwnerUUID());
+            }
+            return false;
+        }
+        return BossTargeting.isValidAttackTarget(this, living);
+    }
+
+    /**
+     * A10 第二口径（历史原文：「无主生物较多时：按『脱战玩家同款推离』清场（见 §6.5）」）：
+     * Mode1 下，1.6 竭力之悲光环半径内**不属于光环目标**的生物（村民、无主怪等）按同一套推离规则
+     * 推开——水平距离 &lt; {@code push_away_distance}（默认 17）时推一次，前方 1 格有不可穿过方块则改
+     * 垂直上推，避免卡墙/窒息。每 10 tick 执行一次，避免每 tick 重复推。
+     */
+    private void clearOwnerlessMobsFromAura(ServerLevel serverLevel) {
+        if (!BossTargeting.playerOnlyMode() || this.tickCount % 10 != 0) {
+            return;
+        }
+        double pushDist = RediosRules.pushAwayDistance();
+        double pushDistSqr = pushDist * pushDist;
+        double strength = RediosRules.pushAwayStrength();
+        for (LivingEntity mob : serverLevel.getEntitiesOfClass(LivingEntity.class,
+                this.getBoundingBox().inflate(pushDist),
+                e -> e != this && e.isAlive() && !(e instanceof Player) && !this.isAuraTarget(e))) {
+            double dx = mob.getX() - this.getX();
+            double dz = mob.getZ() - this.getZ();
+            double distSqr = dx * dx + dz * dz;
+            if (distSqr >= pushDistSqr) {
+                continue;
+            }
+            double len = Math.sqrt(distSqr);
+            if (len < 1.0E-6) {
+                dx = 1.0;
+                dz = 0.0;
+                len = 1.0;
+            }
+            double nx = dx / len;
+            double nz = dz / len;
+            if (this.isPushDirectionBlocked(serverLevel, mob, nx, nz)) {
+                mob.push(0.0, 0.6, 0.0);
+            } else {
+                mob.push(nx * strength, 0.15, nz * strength);
+            }
         }
     }
 
@@ -3466,9 +3789,14 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         return this.isSharpenTrialActive() && this.bossState.isCombat();
     }
 
+    /** 2026-09-10（用户裁决 C3 / Q13）：一阶段断魂是否已退场（1.7 清除后 1.8/1.9 不再重挂）。 */
+    public boolean isSoulSeverRetiredInPhase1() {
+        return this.soulSeverRetiredInPhase1;
+    }
+
     private void tickChaosRuinAura(ServerLevel serverLevel) {
         boolean showVisuals;
-        showVisuals = this.chaosRuinActive || this.chaosRuinAbsoluteAttacks;
+        showVisuals = this.isChaosRuinActive() || this.chaosRuinAbsoluteAttacks;
         if (!showVisuals) {
             return;
         }
@@ -3493,14 +3821,15 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
                 serverLevel.sendParticles(ParticleTypes.ENCHANTED_HIT, x, y, z, 1, 0.0, 0.0, 0.0, 0.0);
             }
         }
-        if (!this.chaosRuinActive) {
+        if (!this.isChaosRuinActive()) {
             return;
         }
         if (this.tickCount % 20 == 0) {
             AABB box = this.getBoundingBox().inflate(radius);
             List<LivingEntity> entities = serverLevel.getEntitiesOfClass(LivingEntity.class, box, e -> e.isAlive() && e != this && e.distanceToSqr(this) <= radius * radius);
             for (LivingEntity living : entities) {
-                if (BossTargeting.playerOnlyMode() ? !(living instanceof ServerPlayer) : this.isFriendlyEntity(living)) continue;
+                // 2026-09-11 用户裁决（A08 = 以历史为准）：同 1.6 光环，2.3 混沌之墟也用 A10 目标过滤。
+                if (!this.isAuraTarget(living)) continue;
                 float auraDamage = 3.0f;
                 // 真伤光环：走 9bypass 改血（2026-09-01 用户裁决——完整 hurt + 差额 setHealth）
                 this.applyTrueDamageAura(living, auraDamage);
@@ -3523,7 +3852,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         for (UUID id : this.battleParticipants) {
             ServerPlayer other;
             if (this.expelledPlayers.contains(id) || (other = this.getServerPlayer(id)) == null || other == currentTarget || !other.isAlive() || this.isPlayerLowFps(other)) continue;
-            this.setTarget((LivingEntity)other);
+            this.forceSetTarget((LivingEntity)other);
             return;
         }
     }
@@ -3630,6 +3959,33 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         return super.removeEffect(effect);
     }
 
+    /**
+     * 防打穿（2026-09-09）：外部 removeAllEffects() 清不掉 Boss 常驻 Buff——
+     * 激怒（Enrage）与 2.8/2.9 colorless 永久的力量/迅捷/恢复在清除后立即重挂
+     * （与 clearAllExternalEffects 同一保护集）。合法离场/结算走各自既有流程，不受影响。
+     */
+    @Override
+    public boolean removeAllEffects() {
+        MobEffectInstance enrage = this.getEffect((Holder<MobEffect>)ModEffects.ENRAGE);
+        MobEffectInstance permanentBoost = this.colorlessUnlocked ? this.getEffect(MobEffects.DAMAGE_BOOST) : null;
+        MobEffectInstance permanentSpeed = this.colorlessUnlocked ? this.getEffect(MobEffects.MOVEMENT_SPEED) : null;
+        MobEffectInstance permanentRegen = this.colorlessUnlocked ? this.getEffect(MobEffects.REGENERATION) : null;
+        boolean cleared = super.removeAllEffects();
+        if (enrage != null) {
+            super.addEffect(enrage, this);
+        }
+        if (permanentBoost != null) {
+            super.addEffect(permanentBoost, this);
+        }
+        if (permanentSpeed != null) {
+            super.addEffect(permanentSpeed, this);
+        }
+        if (permanentRegen != null) {
+            super.addEffect(permanentRegen, this);
+        }
+        return cleared;
+    }
+
     protected void customServerAiStep() {
         if (this.bossState.isVoteOrTransition()) {
             this.getNavigation().stop();
@@ -3695,6 +4051,8 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         this.awaitingNoResurrectionPhase2 = tag.getBoolean("SilentSunAwaitingNoResurrectionPhase2");
         this.noResurrection = false;
         this.awaitingNoResurrectionPhase2 = false;
+        this.pendingCommandLeave = tag.getBoolean("SilentSunPendingCommandLeave");
+        this.bossDataVersion = tag.contains("SilentSunDataVersion") ? tag.getInt("SilentSunDataVersion") : 0;
         this.blackSunUnlocked = tag.getBoolean("SilentSunBlackSunUnlocked");
         this.weaknessCurseActive = tag.getBoolean("SilentSunWeaknessCurseActive");
         this.enrageStackingUnlocked = tag.getBoolean("SilentSunEnrageStackingUnlocked");
@@ -3706,6 +4064,21 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         this.pendingLockReleased = tag.contains("SilentSunPendingLockReleased")
             ? tag.getBoolean("SilentSunPendingLockReleased")
             : this.bossState == BossState.PHASE2_COMBAT && this.titleIndex == RediosEntity.PHASE2_TITLES.size() - 1;
+        // 2026-09-11（S3）：投票状态落盘/读回（写端见 addAdditionalSaveData 的同名键）。
+        this.phase2ChoiceTimeoutTicks = tag.getInt("SilentSunVoteTimeout");
+        this.phase2Choices.clear();
+        ListTag voteList = tag.getList("SilentSunVoteChoices", 10);
+        for (int vi = 0; vi < voteList.size(); ++vi) {
+            CompoundTag voteEntry = voteList.getCompound(vi);
+            if (!voteEntry.hasUUID("Id")) continue;
+            this.phase2Choices.put(voteEntry.getUUID("Id"),
+                voteEntry.contains("Yes") ? Boolean.valueOf(voteEntry.getBoolean("Yes")) : null);
+        }
+        // 兜底：投票态但计时为 0（旧档无键 / 被第三方清空）→ 补一整个 30 秒窗口，
+        // 避免"投票被整段跳过、全员的下次被吞"（P2 投票默认窗口 = 600 tick，与 beginPhase2Choice 一致）。
+        if (this.bossState == BossState.PHASE1_VOTE && this.phase2ChoiceTimeoutTicks <= 0) {
+            this.phase2ChoiceTimeoutTicks = 600;
+        }
         this.damageTypeTotals.clear();
         ListTag dtTotals = tag.getList("SilentSunDamageTypeTotals", 10);
         for (int di = 0; di < dtTotals.size(); ++di) {
@@ -3740,6 +4113,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         this.uncontrolledSprintUnlocked = tag.getBoolean("SilentSunUncontrolledSprintUnlocked");
         this.guardUnlocked = tag.getBoolean("SilentSunGuardUnlocked");
         this.chaosRuinAbsoluteAttacks = tag.getBoolean("SilentSunChaosRuinAbsoluteAttacks");
+        this.soulSeverRetiredInPhase1 = tag.getBoolean("SilentSunSoulSeverRetiredInPhase1");
         this.dodgeChance = tag.contains("SilentSunDodgeChance") ? (double)tag.getFloat("SilentSunDodgeChance") : 0.0;
         this.battleStartGameTime = tag.contains("SilentSunBattleStartTime") ? tag.getLong("SilentSunBattleStartTime") : -1L;
         this.initialParticipants.clear();
@@ -3769,6 +4143,9 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         this.voidTeleportCooldown = tag.getInt("SilentSunVoidTeleportCooldown");
         this.heightFlightMode = tag.getBoolean("SilentSunHeightFlightMode");
         this.anticheat.readAdditionalSaveData(tag);
+        // 回场/读档复核创造离场窗口（2026-09-10 实测修复）：不继承残留倒计时，否则被第三方删除
+        // 的 Boss 一旦重建回场，会因冻在删除期的计时器立刻"创造模式离场"（无掉落 + 设冷却）。
+        this.anticheat.rearmCreativeLeaveAfterRestore();
         this.starfallSalvoCooldownTicks = tag.contains("SilentSunStarfallCooldown") ? tag.getInt("SilentSunStarfallCooldown") : (SilentSunConfig.STARFALL_SALVO_INTERVAL_TICKS.get()).intValue();
         this.battleParticipants.clear();
         ListTag battleList = tag.getList("SilentSunBattleParticipants", 10);
@@ -3777,6 +4154,15 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             if (!entry.hasUUID("Id")) continue;
             this.battleParticipants.add(entry.getUUID("Id"));
         }
+        // 2026-09-10（批次 2.14 / B5）：与写入侧对称——恢复斗蛐蛐模式的参战生物（旧档无键 → 空集/false）。
+        this.mobParticipants.clear();
+        ListTag mobList = tag.getList("SilentSunMobParticipants", 10);
+        for (int mi = 0; mi < mobList.size(); ++mi) {
+            CompoundTag mobEntry = mobList.getCompound(mi);
+            if (!mobEntry.hasUUID("Id")) continue;
+            this.mobParticipants.add(mobEntry.getUUID("Id"));
+        }
+        this.mobBattleEngaged = tag.getBoolean("SilentSunMobBattleEngaged");
         if (tag.contains("SilentSunAnchorX")) {
             this.battleAnchorPos = new BlockPos(tag.getInt("SilentSunAnchorX"), tag.getInt("SilentSunAnchorY"), tag.getInt("SilentSunAnchorZ"));
             this.battleAnchorDim = tag.contains("SilentSunAnchorDim") ? ResourceLocation.tryParse((String)tag.getString("SilentSunAnchorDim")) : null;
@@ -3794,6 +4180,22 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         tag.putInt("SilentSunTitleIndex", this.titleIndex);
         tag.putInt("SilentSunTitleLock", this.titleLockTicks);
         tag.putInt("SilentSunTransition", this.transitionTicks);
+        // 2026-09-11 实测修复（S3）：投票（1.9 继续/下次）此前**完全不落盘**——
+        // 投票中区块卸载重载、或被第三方删除后回场，`phase2ChoiceTimeoutTicks` 读回 0 且
+        // `phase2Choices` 为空 → VOTE tick 的首个 `--` 就 `<= 0` → `finishPhase2Choice()`
+        // total=0 → 直接 startTransition，**投票被整段跳过、全员的「下次」被吞掉**。
+        // 写入实体 NBT 后，回场快照（snapshotUnlockFlags 整体搬运）也会一并带上。
+        tag.putInt("SilentSunVoteTimeout", this.phase2ChoiceTimeoutTicks);
+        ListTag voteList = new ListTag();
+        for (Map.Entry<UUID, Boolean> e : this.phase2Choices.entrySet()) {
+            CompoundTag entry = new CompoundTag();
+            entry.putUUID("Id", e.getKey());
+            if (e.getValue() != null) {
+                entry.putBoolean("Yes", e.getValue().booleanValue());
+            }
+            voteList.add(entry);
+        }
+        tag.put("SilentSunVoteChoices", voteList);
         tag.putInt("SilentSunBossState", this.bossState.ordinal());
         tag.putLong("SilentSunSoulSeverY", this.soulSeverY);
         tag.putBoolean("SilentSunAshDawnUnlocked", this.ashDawnUnlocked);
@@ -3818,6 +4220,8 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         tag.putBoolean("SilentSunNoResurrection", this.noResurrection);
         tag.putBoolean("SilentSunPendingLockReleased", this.pendingLockReleased);
         tag.putBoolean("SilentSunAwaitingNoResurrectionPhase2", this.awaitingNoResurrectionPhase2);
+        tag.putBoolean("SilentSunPendingCommandLeave", this.pendingCommandLeave);
+        tag.putInt("SilentSunDataVersion", this.bossDataVersion);
         tag.putBoolean("SilentSunBlackSunUnlocked", this.blackSunUnlocked);
         tag.putBoolean("SilentSunWeaknessCurseActive", this.weaknessCurseActive);
         tag.putBoolean("SilentSunEnrageStackingUnlocked", this.enrageStackingUnlocked);
@@ -3849,6 +4253,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         tag.putBoolean("SilentSunUncontrolledSprintUnlocked", this.uncontrolledSprintUnlocked);
         tag.putBoolean("SilentSunGuardUnlocked", this.guardUnlocked);
         tag.putBoolean("SilentSunChaosRuinAbsoluteAttacks", this.chaosRuinAbsoluteAttacks);
+        tag.putBoolean("SilentSunSoulSeverRetiredInPhase1", this.soulSeverRetiredInPhase1);
         tag.putFloat("SilentSunDodgeChance", (float)this.dodgeChance);
         if (this.battleStartGameTime >= 0L) {
             tag.putLong("SilentSunBattleStartTime", this.battleStartGameTime);
@@ -3895,6 +4300,17 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             listTag4.add(entry);
         }
         tag.put("SilentSunBattleParticipants", (Tag)listTag4);
+        // 2026-09-10（批次 2.14 / B5）：斗蛐蛐模式的参战生物一并落盘。
+        // 原先只存 battleParticipants，区块重载/存档重载后 mobParticipants 为空
+        // → getActiveMobParticipantCount()/退场判定与 2.0 的 mob 分支都会误判。
+        ListTag mobList = new ListTag();
+        for (UUID id : this.mobParticipants) {
+            CompoundTag mobTag = new CompoundTag();
+            mobTag.putUUID("Id", id);
+            mobList.add(mobTag);
+        }
+        tag.put("SilentSunMobParticipants", (Tag)mobList);
+        tag.putBoolean("SilentSunMobBattleEngaged", this.mobBattleEngaged);
     }
 
     private long getSoulSeverValue() {
@@ -3967,8 +4383,13 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     /**
      * 构建攻击 DamageSource（合并冗余，M2）：默认 rediosAttack，特化/随机类型时用解析出的 holder。
      * 衔接：doHurtTarget 分支 A/B 共用；见设计稿 §3.1（1.8 砺锋随机化 / 2.7 弱点特化）。
+     * 2026-09-08 用户裁决：2.7 弱点特化改为「单次攻击视为包内全部已注册攻击属性」——
+     * 一次全额命中且带全穿透标签（redios_spectrum，同断魂 9bypass 语义），优先于 1.8 随机化，永久生效。
      */
     private DamageSource buildAttackSource() {
+        if (this.attackSpecialized) {
+            return ModDamageTypes.rediosSpectrum(this.level(), this);
+        }
         DamageSource src = ModDamageTypes.rediosAttack(this.level(), this);
         Holder<DamageType> dmgHolder = this.resolveAttackDamageHolder();
         if (dmgHolder != null) {
@@ -4006,10 +4427,118 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
 
     private double hatredOf(LivingEntity target) {
         if (target instanceof Player player) {
+            // 设计 §582：离线 / 死亡 / 被逐出「立即清零」——读取侧即时归零
+            //（写入表每 20 tick 物理清理一次，语义上等效于立即生效）。
+            if (!this.isThreatTrackable(player.getUUID())) {
+                return 0.0;
+            }
             Double d = this.playerNetDamageTotals.get(player.getUUID());
             return d == null ? 0.0 : d.doubleValue();
         }
         return 0.0;
+    }
+
+    /** 该玩家是否仍在威胁值记账范围内（离线 / 死亡 / 被逐出 → 不再计）。 */
+    private boolean isThreatTrackable(UUID id) {
+        if (this.expelledPlayers.contains(id)) {
+            return false;
+        }
+        ServerPlayer player = this.getServerPlayer(id);
+        return player != null && player.isAlive();
+    }
+
+    /** 威胁值衰减与清理（设计 §582：停止造成伤害后每秒 -5%，每 20 tick 一次）。 */
+    private void tickThreatSystem() {
+        if (this.targetSwitchCooldownTicks > 0) {
+            --this.targetSwitchCooldownTicks;
+        }
+        if (this.tickCount % THREAT_DECAY_INTERVAL_TICKS != 0 || this.playerNetDamageTotals.isEmpty()) {
+            return;
+        }
+        this.playerNetDamageTotals.entrySet().removeIf(entry -> !this.isThreatTrackable(entry.getKey()));
+        this.playerNetDamageTotals.replaceAll((id, total) -> total * THREAT_DECAY_FACTOR);
+    }
+
+    /** 当前威胁值最高且仍可攻击的参战玩家；无人有威胁值时返回 null（回退到就近索敌）。 */
+    private LivingEntity pickHighestThreatTarget() {
+        LivingEntity best = null;
+        double bestHatred = 0.0;
+        for (UUID id : new HashSet<UUID>(this.battleParticipants)) {
+            ServerPlayer player = this.getServerPlayer(id);
+            if (player == null || this.expelledPlayers.contains(id) || player.isSpectator()
+                    || player.isCreative() || !player.isAlive() || player.level() != this.level()
+                    || !BossTargeting.isValidAttackTarget(this, player)) continue;
+            double hatred = this.hatredOf(player);
+            if (hatred > bestHatred) {
+                bestHatred = hatred;
+                best = player;
+            }
+        }
+        return best;
+    }
+
+    /**
+     * 威胁值索敌闸门（设计 §583）：新目标威胁 ≥ 当前目标 × 1.3 才切换，切换后 40 tick 冷却；
+     * 当前目标失效（死亡 / 脱战 / 被逐出）或威胁被反超时不设限；首次锁敌也取威胁最高者。
+     * <p>
+     * 原版 {@code NearestAttackableTargetGoal}（就近索敌）退化为"提案方"，本闸门决定是否接受——
+     * 因此「就近」只在无人有威胁值时（例如开战瞬间）才生效。内部机制需强制锁敌时走
+     * {@link #forceSetTarget(LivingEntity)} 绕过本闸门。
+     */
+    @Override
+    public void setTarget(LivingEntity target) {
+        LivingEntity current = this.getTarget();
+        if (target != null && target != current) {
+            if (current == null) {
+                LivingEntity highest = this.pickHighestThreatTarget();
+                if (highest != null) {
+                    target = highest;
+                }
+            } else if (!this.shouldSwitchTarget(current, target)) {
+                return;
+            }
+            if (target != current) {
+                this.targetSwitchCooldownTicks = TARGET_SWITCH_COOLDOWN_TICKS;
+            }
+        }
+        super.setTarget(target);
+    }
+
+    /** 是否允许从 {@code current} 切到 {@code next}（设计 §583 的阈值 + 冷却两条规则）。 */
+    private boolean shouldSwitchTarget(LivingEntity current, LivingEntity next) {
+        if (!BossTargeting.isValidAttackTarget(this, current)) {
+            return true;
+        }
+        if (this.targetSwitchCooldownTicks > 0) {
+            return false;
+        }
+        return this.hatredOf(next) >= this.hatredOf(current) * TARGET_SWITCH_THRESHOLD;
+    }
+
+    /** 绕过威胁值闸门的强制锁敌：仅限内部机制（传送贴身 / 低帧率规避）。 */
+    private void forceSetTarget(LivingEntity target) {
+        super.setTarget(target);
+    }
+
+    /**
+     * 免疫外部击退（2026-09-10 用户裁决 D7：「给 Boss 加免疫击退」，防被打飞后无法追击）。
+     * <p>
+     * {@code Entity.push(double,double,double)} 是原版**所有直接推力**的唯一汇聚点：
+     * <ul>
+     *   <li>实体互相推挤 —— {@code Entity.push(Entity)} 内部就是转调本方法（`Entity.java:1529`）；</li>
+     *   <li>液体流动推动；</li>
+     *   <li>第三方模组（含拔刀剑 SA 的 KnockBacks）直接调用的 {@code push} / {@code push(Vec3)}。</li>
+     * </ul>
+     * 此处一律忽略。攻击击退（{@code LivingEntity.knockback}）已由 {@code KNOCKBACK_RESISTANCE = 1.0}
+     * 挡掉；**爆炸击退不走 push**（`Explosion.java:294/304` 用 {@code EXPLOSION_KNOCKBACK_RESISTANCE}
+     * 算完直接 {@code setDeltaMovement}），故另设该属性为 1.0（与 KNOCKBACK_RESISTANCE 同一配置键）。
+     * <p>
+     * 自身机制（冲刺 / 高度飞行 / 传送 / 2.9 脱离）本来就不走 push，而是直接 {@code setDeltaMovement}，
+     * 因此本覆写不影响 Boss 的主动位移。
+     */
+    @Override
+    public void push(double x, double y, double z) {
+        // 刻意忽略：外部推力一律无效
     }
 
     private boolean isActiveAreaBombardment(LivingEntity target) {
@@ -4456,11 +4985,19 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             return;
         }
         ServerLevel serverLevel = (ServerLevel)level;
+        // 2026-09-10（用户裁决 D5）：2.5 全体被传送 → 战斗终止，按设计发「一阶段奖励」（非二阶段）。
+        this.forcePhase1Reward = true;
         this.settleBattle(serverLevel, (long)(SilentSunConfig.COOLDOWN_HALF_DAYS.get() * 24000.0), this.phase == 2, true);
     }
 
     private boolean isDarkStarActive() {
         return this.phase == 2 && this.titleIndex == 6;
+    }
+
+    /** 暗色天星「破方块窗口」（2026-09-09 用户裁决）：2.6 头衔内仅在 27³ 破坏进行中
+     * （darkStarBlastOrigin 非空）才站桩+推开；破方块完成后恢复正常索敌/追击/近战，不再全程推人。 */
+    private boolean isDarkStarBlastOngoing() {
+        return this.isDarkStarActive() && this.darkStarBlastOrigin != null;
     }
 
     private void performDarkStarBlast() {
@@ -4498,11 +5035,12 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
                 entry.putInt("Y", pos.getY());
                 entry.putInt("Z", pos.getZ());
                 entry.putInt("StateId", Block.getId((BlockState)state));
-                if (RediosRules.restoreNbt() && (blockEntity = serverLevel.getBlockEntity(pos)) instanceof CommandBlockEntity) {
-                    CommandBlockEntity cbe = (CommandBlockEntity)blockEntity;
-                    BaseCommandBlock cmd = cbe.getCommandBlock();
-                    entry.putString("Cmd", cmd.getCommand());
-                    entry.put("BlockEntity", (Tag)cbe.saveWithoutMetadata((HolderLookup.Provider)serverLevel.registryAccess()));
+                // 2026-09-10（用户裁决 Q3）：NBT 回填从「只覆盖命令方块」扩到白名单内**任意带方块实体**的方块
+                //（structure_block 的 mode/name、jigsaw 的 pool/target 等）。
+                // 无方块实体的方块（如 end_portal_frame 的 eye 位）无需额外处理——BlockState 的全部属性
+                // 都已由 StateId（Block.getId 的全局状态调色板 ID）承载，天然保留。
+                if (RediosRules.restoreNbt() && (blockEntity = serverLevel.getBlockEntity(pos)) != null) {
+                    entry.put("BlockEntity", blockEntity.saveWithoutMetadata(serverLevel.registryAccess()));
                 }
                 this.darkStarRestoreBlocks.put(pos, entry);
             }
@@ -4515,7 +5053,12 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     }
 
     private boolean isDarkStarSpecialBlock(BlockState state) {
-        return state.is(Blocks.BEDROCK) || state.is(Blocks.BARRIER) || state.is(Blocks.END_PORTAL_FRAME) || state.is(Blocks.COMMAND_BLOCK) || state.is(Blocks.CHAIN_COMMAND_BLOCK) || state.is(Blocks.REPEATING_COMMAND_BLOCK);
+        // 2026-09-10（用户裁决 D6）：记录端与恢复端统一读同一份白名单（RediosRules.restoredBlocksWhitelist）。
+        // 原实现记录集合（bedrock/barrier/end_portal_frame/三种命令方块）与配置白名单不一致，导致
+        // barrier / end_portal_frame「记录了却不恢复」（永久摧毁）、structure_block / jigsaw「白名单空转」。
+        ResourceLocation id = BuiltInRegistries.BLOCK.getKey(state.getBlock());
+        List<String> whitelist = RediosRules.restoredBlocksWhitelist();
+        return !whitelist.isEmpty() && whitelist.contains(id.toString());
     }
 
     private void restoreDarkStarSpecialBlocks(ServerLevel serverLevel) {
@@ -4532,16 +5075,20 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             ResourceLocation blockId = BuiltInRegistries.BLOCK.getKey(state.getBlock());
             if (!whitelist.isEmpty() && !whitelist.contains(blockId.toString())) continue;
             serverLevel.setBlock(pos, state, 3);
-            if (!RediosRules.restoreNbt() || !((blockEntity = serverLevel.getBlockEntity(pos)) instanceof CommandBlockEntity)) continue;
-            CommandBlockEntity cbe = (CommandBlockEntity)blockEntity;
+            // 2026-09-10（用户裁决 Q3）：恢复端同样放开到任意方块实体（原为只认 CommandBlockEntity）。
+            if (!RediosRules.restoreNbt() || (blockEntity = serverLevel.getBlockEntity(pos)) == null) continue;
             if (tag.contains("BlockEntity", 10)) {
-                cbe.loadWithComponents(tag.getCompound("BlockEntity"), (HolderLookup.Provider)serverLevel.registryAccess());
-                cbe.setChanged();
+                blockEntity.loadWithComponents(tag.getCompound("BlockEntity"), (HolderLookup.Provider)serverLevel.registryAccess());
+                blockEntity.setChanged();
                 continue;
             }
-            if (!tag.contains("Cmd")) continue;
-            cbe.getCommandBlock().setCommand(tag.getString("Cmd"));
-            cbe.setChanged();
+            if (blockEntity instanceof CommandBlockEntity) {
+                CommandBlockEntity cbe = (CommandBlockEntity)blockEntity;
+                // 旧档兼容：2026-09-10 之前的记录只存命令字符串（没有方块实体整体 NBT）
+                if (!tag.contains("Cmd")) continue;
+                cbe.getCommandBlock().setCommand(tag.getString("Cmd"));
+                cbe.setChanged();
+            }
         }
         this.darkStarRestoreBlocks.clear();
     }
@@ -4564,36 +5111,22 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             return;
         }
         serverLevel = (ServerLevel)level;
-        this.tickDarkStarBlast(serverLevel);
-        this.getNavigation().stop();
-        this.setDeltaMovement(0.0, this.getDeltaMovement().y, 0.0);
-        double r = 13.5;
-        AABB box = new AABB(this.getX() - r, this.getY() - r, this.getZ() - r, this.getX() + r, this.getY() + r, this.getZ() + r);
-        List<ServerPlayer> players = serverLevel.getEntitiesOfClass(ServerPlayer.class, box, p -> !p.isSpectator() && !p.isCreative());
-        for (ServerPlayer player : players) {
-            Vec3 diff = player.position().subtract(this.position());
-            if (diff.lengthSqr() < 1.0E-6) {
-                diff = new Vec3(1.0, 0.0, 0.0);
-            }
-            Vec3 push = diff.normalize().scale(1.5);
-            player.push(push.x, 0.2, push.z);
-        }
-        this.forEachMobOpponent(target -> {
-            if (!target.getBoundingBox().intersects(box)) {
-                return;
-            }
-            Vec3 diff = target.position().subtract(this.position());
-            if (diff.lengthSqr() < 1.0E-6) {
-                diff = new Vec3(1.0, 0.0, 0.0);
-            }
-            Vec3 push = diff.normalize().scale(1.5);
-            target.push(push.x, 0.2, push.z);
-        });
+        // 2026-09-10 实测修复（DR-01）：坠落兜底必须放在下方早退**之前**。原实现把它放在
+        // `darkStarBlastOrigin == null` 早退之后，而该字段在破方块（约 33 tick）结束后即清空 →
+        // 2.6 剩余期间这段永不执行（HEAD 里它在方法末尾、每 tick 都跑），Boss 掉到 y<0 也不会
+        // 解锁飞行/补基岩。
         if (!this.darkStarFlightUnlocked && this.getY() < 0.0) {
             this.darkStarFlightUnlocked = true;
             this.setNoGravity(true);
             this.repairBedrockLayer(serverLevel);
         }
+        // 2026-09-09：站桩+推开只在破方块进行中；破完后立即恢复正常战斗（不再每 tick 停导航/推人）
+        if (this.darkStarBlastOrigin == null) {
+            return;
+        }
+        this.tickDarkStarBlast(serverLevel);
+        this.getNavigation().stop();
+        this.setDeltaMovement(0.0, this.getDeltaMovement().y, 0.0);
     }
 
     private void repairBedrockLayer(ServerLevel serverLevel) {
@@ -4654,7 +5187,9 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             return;
         }
         int active = this.getActiveParticipantCount();
-        int retained = active + this.twilightExpelled.size();
+        // 2026-09-10（用户裁决 D8）：2.5「断光之刻」被传送者（twilightExpelled）计入「已减少」，
+        // 不再加回留存；与设计 §7.1 A7「被传送（2.5）计入已减少」一致。
+        int retained = active;
         if (retained > (threshold = (int)Math.floor((double)initial * (ratio = Mth.clamp((double)RediosRules.blackSunDefeatRatio(), 0.0, 1.0))))) {
             return;
         }
@@ -4691,12 +5226,18 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         }
         this.ensureMandatoryLoot(loot, includeDefeatBook ? RediosBookOutcome.PHASE1_WIN_PHASE2_LOSE : RediosBookOutcome.PHASE1_WIN_ONLY);
         loot.add(new ItemStack(ModItems.REDIOS_DISC_PHASE1.get()));
-        // 灭却之日（required 前置）提供的一阶段掉落「长梦彼端的灾厄之影」：1~4 个随机
-        // （2026-08-30 用户裁决）。走注册表查找而非反射，避免编译期硬依赖；未提供时静默跳过。
-        List<ItemStack> lootFinal = loot;
-        BuiltInRegistries.ITEM.getOptional(ResourceLocation.fromNamespaceAndPath("extinction_day_mod_1784441698", "calamity_shadow"))
-            .ifPresent(calamityShadow -> lootFinal.add(new ItemStack(calamityShadow, 1 + serverLevel.random.nextInt(4))));
+        // 灭却之日（required 前置）提供的「长梦彼端的灾厄之影」：数量由配置决定（B6 数量配置化）。
+        this.addCalamityShadow(loot, serverLevel,
+            SilentSunConfig.CALAMITY_SHADOW_PHASE1_MIN.get(), SilentSunConfig.CALAMITY_SHADOW_PHASE1_MAX.get());
         if (loot.isEmpty()) {
+            return;
+        }
+        // 卸载退场（对应维度无玩家）：掉落直接发给参战玩家，不做世界放置（掉落地不可加载）
+        if (this.leaveReason == LeaveReason.CHUNK_UNLOAD) {
+            ItemStack box = ShulkerBoxUtil.createShulkerBox(Items.BROWN_SHULKER_BOX, loot, Component.translatable("container.silent_sun.phase1_reward"));
+            if (!this.deliverRewardToPlayer(serverLevel, box)) {
+                this.spawnAtLocation(box);
+            }
             return;
         }
         BlockPos placePos = this.findNearbyRewardPlacement(serverLevel);
@@ -4706,6 +5247,9 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         }
         if (!placed) {
             ItemStack box = ShulkerBoxUtil.createShulkerBox(Items.BROWN_SHULKER_BOX, loot, Component.translatable("container.silent_sun.phase1_reward"));
+            if (this.deliverRewardToPlayer(serverLevel, box)) {
+                return; // 已发玩家，无世界箱，跳过坐标播报
+            }
             this.spawnAtLocation(box);
             placePos = this.blockPosition();
         }
@@ -4731,16 +5275,15 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
 
     /**
      * 战斗账本心跳（每 tick upsert）。见 `docs/实现计划-2026-08-27-判定秩序化.md`。
-     * 衔接：RediosBattleData.upsert → tickServer 扫描（实体缺失 + chunk 加载 + 时间窗 → 重建）。
-     * ⚠️ 判定秩序化待办：本方法缺 settlementDone/isRemoved 守卫（结算后残余 tick 会残留账本记录，
-     * 被 tickServer 误判为实体异常而重建——见判定秩序化计划方案 1）。
+     * 衔接：RediosBattleData.upsert → tickServer 扫描（实体缺失 + 位置正在实体 tick + 宽限窗 → 重建）。
+     * <p>
+     * 守卫已在（2026-09-10 复核）：{@code settlementDone || isRemoved()} 时不再写账本，
+     * 因此结算后的残余 tick 不会残留记录、也不会被 tickServer 误判为实体异常而重建。
      */
     private void updateBattleRecord(ServerLevel serverLevel) {
         double dz;
         double dy;
         double dx;
-        // 判定秩序化（A2）：已结算/已移除 → 不再写账本。结算后残余 tick 若继续 upsert，
-        // 会残留记录并被 RediosBattleData.tickServer 误判为实体异常而重建（幽灵 Boss）。
         if (this.settlementDone || this.isRemoved()) {
             return;
         }
@@ -4754,8 +5297,53 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             this.battleAnchorPos = this.blockPosition();
         }
         ResourceLocation dim = serverLevel.dimension().location();
-        RediosBattleData.get(serverLevel).upsert(this.getUUID(), dim, this.blockPosition(), this.phase, this.titleIndex, serverLevel.getGameTime(), this.getHealth(), this.soulSeverY, this.bossState.ordinal(), this.titleLockTicks, this.colorlessChallengeTicks, this.battleParticipants, this.expelledPlayers);
+        RediosBattleData.get(serverLevel).upsert(this.getUUID(), dim, this.blockPosition(), this.phase, this.titleIndex, serverLevel.getGameTime(), this.getHealth(), this.soulSeverY, this.bossState.ordinal(), this.titleLockTicks, this.colorlessChallengeTicks, this.battleParticipants, this.expelledPlayers,
+            this.battleStartGameTime, this.initialParticipants, this.twilightExpelled,
+            this.playerNetDamageTotals, this.damageTypeTotals, this.darkStarRestoreBlocks,
+            this.snapshotUnlockFlags());
     }
+
+    /**
+     * 解锁旗标快照（2026-09-10 实测修复 L1）：把"回场重建必须原样恢复"的解锁旗标打成复合标签，
+     * 由账本随心跳一起存，`rebuildFromRecord` 写回实体 NBT —— 读端仍是
+     * {@link #restoreStateFromNbt}（键名与 {@code addAdditionalSaveData} 完全一致，此处不另造键名）。
+     * <p>
+     * 背景：原重建只带 15 个键，这些旗标全部回落 false → Boss 一旦被外部删除（寰宇支配之剑之类）
+     * 回场后就变成"残废版"：断魂收割 / 无色挑战 / 格挡 / 虚空传送 / 2.7 全属性 / 激怒叠加全失效，
+     * 且 2.9 锁血解除位丢失会被推导成"已解除"→ 可被一击必杀。
+     * <p>
+     * 维护约定：**新增解锁类旗标时，只在这里与 {@code addAdditionalSaveData}/{@code restoreStateFromNbt}
+     * 三处同步即可**，账本侧无需改动（它整包搬运）。
+     */
+    private CompoundTag snapshotUnlockFlags() {
+        // 2026-09-11 重做（"回场漏键"根治）：改为「整体搬运实体自身 NBT，再剔除账本已单独携带 /
+        // 必须重置的键」。键名与类型由 addAdditionalSaveData ↔ restoreStateFromNbt 天然对齐，**不可能
+        // 再出现漏键或类型错配**；以后新增持久化字段自动覆盖。
+        // 旧实现逐键手写 13 个旗标，接连漏掉 25 个键，后果实测可见：
+        //   · SilentSunTransition → 回场后永久卡在转场态（无敌 + 无奖励，S1）
+        //   · SilentSunMobParticipants / MobBattleEngaged → Mode 2 回场后全灭/卸载/区块保留守卫全 early-return
+        //   · SilentSunDodgeChance(2.2) / SilentSunChaosRuinAbsoluteAttacks(2.3) → 保底闪避与永久绝对伤害丢失
+        //   · weapons/anticheat 子标签 → 刀窗口与反作弊状态重置
+        CompoundTag snapshot = new CompoundTag();
+        this.addAdditionalSaveData(snapshot);
+        for (String key : LEDGER_CARRIED_KEYS) {
+            snapshot.remove(key);
+        }
+        // 必须重置：重建出的 Boss 还要能重新结算；管理员的离场意图与一次性命令标记不继承。
+        snapshot.remove("SilentSunSettlementDone");
+        snapshot.remove("SilentSunPendingCommandLeave");
+        return snapshot;
+    }
+
+    /** 账本已单独携带的键（rebuildFromRecord 会显式写它们，快照里剔除以免重复存储与覆盖冲突）。 */
+    private static final String[] LEDGER_CARRIED_KEYS = new String[]{
+        "SilentSunDataVersion", "SilentSunPhase", "SilentSunTitleIndex", "SilentSunSoulSeverY",
+        "SilentSunBossState", "SilentSunTitleLock", "SilentSunColorlessChallengeTicks",
+        "SilentSunBattleParticipants", "SilentSunExpelledPlayers", "SilentSunBattleStartTime",
+        "SilentSunInitialParticipants", "SilentSunTwilightExpelled", "SilentSunPlayerNetDamage",
+        "SilentSunDamageTypeTotals", "SilentSunDarkStarRestore",
+        "SilentSunAnchorX", "SilentSunAnchorY", "SilentSunAnchorZ", "SilentSunAnchorDim"
+    };
 
     /*
      * WARNING - Removed try catching itself - possible behaviour change.
@@ -4831,10 +5419,10 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     }
 
     private void clearBattleRecord(ServerLevel serverLevel) {
-        // 判定秩序化（A3）：先标记「已合法离场」再移除——双保险：
-        // 即使移除后竞态残留记录，tickServer 也按 settled 清理而非重建（幽灵 Boss 防线）。
+        // 合法离场防线：settlementDone 守卫已阻止结算后再心跳上报；此处直接移除账本。
+        // 2026-09-10（用户裁决 A8）：记录被移除即代表该场战斗已结算——
+        // RediosBattleData.tickServer 的终态闸门只认「账本里还有记录」，记录已删 → 永不重建。
         RediosBattleData data = RediosBattleData.get(serverLevel);
-        data.markSettled(this.getUUID());
         data.remove(this.getUUID());
         this.clearDamageDebugCaches();
     }
@@ -4850,10 +5438,15 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             return;
         }
         this.settlementDone = true;
+        // 2026-09-10：离场诊断日志（实测「Boss 不知道为什么就不见了」时全靠这条定位）。
+        SilentSunMod.LOGGER.warn("[Redios] 结算离场：原因={} 阶段={} 头衔={} 发一阶段奖励={} 冷却tick={} 结局书={} 参战={} 位置={}",
+            this.leaveReason, this.phase, this.titleIndex, dropPhase1Reward, cooldownTicks, includeDefeatBook,
+            this.battleParticipants.size(), this.blockPosition());
         // 退场秩序化（2026-08-30）：先标记账本「已合法离场」再执行掉落等可能抛异常的步骤。
         // 顺序颠倒（先 clearBattleRecord 再掉落）能保证：即使掉落/音效/清理中抛异常中断，
-        // 账本记录也已是 settled——RediosBattleData.tickServer 只会清理残留、绝不重建
-        // （「先确认是合法离场再做复活」，杜绝账本位置与击杀地相距很远时的误判复活）。
+        // 账本记录也已移除——这是「终态闸门」的实现基础：记录存在 ⟺ 未结算，已结算场次
+        // 不可能再被 RediosBattleData.tickServer 重建（「先确认是合法离场再做复活」，
+        // 杜绝账本位置与击杀地相距很远时的误判复活）。
         this.clearBattleRecord(serverLevel);
         this.restoreDarkStarSpecialBlocks(serverLevel);
         if (dropPhase1Reward) {
@@ -4862,7 +5455,9 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             // P2（二阶段击杀/计时）→ dropPhase2Reward（WHITE 箱 + P2 唱片 + 二阶段战利品）。
             // 原实现统一调 dropPhase1Reward（其内部 phase==2 时回退 P1 配置），
             // 导致二阶段击杀/计时掉落成 P1 的箱子——「箱子调用脱节」。
-            if (this.phase == 2) {
+            // 2026-09-10（用户裁决 D5）：forcePhase1Reward 时（2.5 全体被传送致战斗终止）
+            // 按设计 §2.5 发一阶段奖励，即使当前 phase==2。
+            if (this.phase == 2 && !this.forcePhase1Reward) {
                 this.dropPhase2Reward(serverLevel, includeDefeatBook);
             } else {
                 this.dropPhase1Reward(serverLevel, includeDefeatBook);
@@ -4898,6 +5493,14 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         if (loot.isEmpty()) {
             return;
         }
+        // 卸载退场（对应维度无玩家）：掉落直接发给参战玩家，不做世界放置（掉落地不可加载）
+        if (this.leaveReason == LeaveReason.CHUNK_UNLOAD) {
+            ItemStack box = ShulkerBoxUtil.createShulkerBox(Items.WHITE_SHULKER_BOX, loot, Component.translatable("container.silent_sun.redios_loot"));
+            if (!this.deliverRewardToPlayer(serverLevel, box)) {
+                this.spawnAtLocation(box);
+            }
+            return;
+        }
         BlockPos placePos = this.findNearbyRewardPlacement(serverLevel);
         boolean placed = false;
         if (placePos != null) {
@@ -4905,6 +5508,9 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         }
         if (!placed) {
             ItemStack box = ShulkerBoxUtil.createShulkerBox(Items.WHITE_SHULKER_BOX, loot, Component.translatable("container.silent_sun.redios_loot"));
+            if (this.deliverRewardToPlayer(serverLevel, box)) {
+                return; // 已发玩家，无世界箱，跳过坐标播报
+            }
             this.spawnAtLocation(box);
             placePos = this.blockPosition();
         }
@@ -4937,6 +5543,10 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         cn.autoforged.extinction_day_mod_1784441698.effect.SoulSeverMobEffect.clearSoulSeverLedgers(player);
         player.removeEffect(MobEffects.DARKNESS);
         player.removeEffect(MobEffects.WEAKNESS);
+        // 2026-09-11 实测修复（R-2.8）：脆弱（FRAGILE）是 INFINITE_DURATION 挂上去的，而全项目
+        // 原先**没有任何一处移除它** → 战斗结束后玩家永久带 +50% 受伤（最高 10 级）。设计 §3.9
+        // 要求「持续时间与激怒绑定（激怒结束则脆弱结束）」，战后清理必须清掉。
+        player.removeEffect(ModEffects.FRAGILE);
     }
 
     private void removeAntiCheatCooldowns() {
@@ -4949,6 +5559,9 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             entity.removeEffect(ModEffects.SOUL_SEVER);
             entity.removeEffect(MobEffects.DARKNESS);
             entity.removeEffect(MobEffects.WEAKNESS);
+            // 2026-09-11（R-2.8 同批）：附近生物同样清脆弱——Mode 1 下这些生物会被光环挂上脆弱，
+            // 不清则战后永久 +50% 受伤。
+            entity.removeEffect(ModEffects.FRAGILE);
         }
     }
 
@@ -5022,6 +5635,14 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         }
         boss.setUUID(record.bossId);
         CompoundTag recordTag = new CompoundTag();
+        // 2026-09-10（**实测崩坏修复：重建风暴**）：必须写入数据版本键，否则重建出的 Boss 会被
+        // onEntityJoinLevel 的 M16 守卫判为「旧版本残留 Boss」而**拒绝入世**：
+        //   restoreStateFromNbt 把缺失的 "SilentSunDataVersion" 读成 0（`:3877`）
+        //   → isLegacyData() == true（`bossDataVersion < BOSS_DATA_VERSION`）
+        //   → CommonEvents.onEntityJoinLevel: `event.setCanceled(true)`
+        //   → 实体从未真正加入 → tickServer 下一 tick 又判定"实体缺失 + 正在实体 tick" → 又重建
+        //   → **每 tick 一次的重建风暴 + 聊天栏被「来！不打到痛快不罢休！」刷爆**（实测日志 22:46:11 起）。
+        recordTag.putInt("SilentSunDataVersion", BOSS_DATA_VERSION);
         recordTag.putInt("SilentSunPhase", record.phase);
         recordTag.putInt("SilentSunTitleIndex", record.titleIndex);
         recordTag.putLong("SilentSunSoulSeverY", record.soulSeverY);
@@ -5042,6 +5663,53 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             expelled.add(entry);
         }
         recordTag.put("SilentSunExpelledPlayers", expelled);
+        // 2026-09-10：**补齐重建必需状态** —— 原先只写 9 个键，导致重建后这些回落默认值，
+        // 其中有实际影响的：2.6 破坏方块的恢复表（丢了 = 那些方块永久不恢复）、战斗开始时间
+        // （丢了 = 动态减伤从 80% 重新计时，Boss 突然变硬）、初始参战者（2.7 分母清零）、
+        // 2.5 被传送名单、仇恨统计（威胁值清零 → 索敌退回就近）、伤害类型统计（2.7 特化丢失）。
+        // 键名与结构**与 addAdditionalSaveData 完全一致**，否则读端(getList/getLong)取不到。
+        recordTag.putLong("SilentSunBattleStartTime", record.battleStartGameTime);
+        ListTag initialList = new ListTag();
+        for (UUID id : record.initialParticipants) {
+            CompoundTag entry = new CompoundTag();
+            entry.putUUID("Id", id);
+            initialList.add(entry);
+        }
+        recordTag.put("SilentSunInitialParticipants", initialList);
+        ListTag twilightList = new ListTag();
+        for (UUID id : record.twilightExpelled) {
+            CompoundTag entry = new CompoundTag();
+            entry.putUUID("Id", id);
+            twilightList.add(entry);
+        }
+        recordTag.put("SilentSunTwilightExpelled", twilightList);
+        ListTag netTotals = new ListTag();
+        for (Map.Entry<UUID, Double> netEntry : record.playerNetDamage.entrySet()) {
+            CompoundTag entry = new CompoundTag();
+            entry.putUUID("Id", netEntry.getKey());
+            entry.putDouble("Total", netEntry.getValue().doubleValue());
+            netTotals.add(entry);
+        }
+        recordTag.put("SilentSunPlayerNetDamage", netTotals);
+        ListTag dmgTotals = new ListTag();
+        for (Map.Entry<ResourceLocation, Double> dmgEntry : record.damageTypeTotals.entrySet()) {
+            CompoundTag entry = new CompoundTag();
+            entry.putString("Key", dmgEntry.getKey().toString());
+            entry.putDouble("Total", dmgEntry.getValue().doubleValue());
+            dmgTotals.add(entry);
+        }
+        recordTag.put("SilentSunDamageTypeTotals", dmgTotals);
+        ListTag restoreList = new ListTag();
+        for (CompoundTag entry : record.darkStarRestore.values()) {
+            restoreList.add(entry.copy());
+        }
+        recordTag.put("SilentSunDarkStarRestore", restoreList);
+        // 2026-09-10 实测修复（L1）：写回解锁旗标快照（键名与 addAdditionalSaveData 一致，
+        // restoreStateFromNbt 直接消费）——否则回场后 Boss 的断魂收割/无色挑战/格挡/虚空传送/
+        // 2.7 全属性/激怒叠加全部回落 false，2.9 锁血解除位还会被推导成"已解除"→ 可被一击必杀。
+        if (!record.unlockFlags.isEmpty()) {
+            recordTag.merge(record.unlockFlags.copy());
+        }
         boss.restoreStateFromNbt(recordTag);
         boss.battleAnchorPos = record.pos;
         boss.battleAnchorDim = record.dimension;
@@ -5061,9 +5729,22 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         boss.forceSetHealth(restored);
         boss.anticheat.markLegalHealthChange(boss.getHealth());
         boss.rebuiltAsSettled = true;
-        level.addFreshEntity(boss);
+        // 2026-09-10 实测修复（L4）：必须检查落地结果——原实现丢弃 addFreshEntity 返回值后无条件
+        // return true，于是"重建没站住"也被当成成功（A8 已取消重建次数上限）→ 每 5 秒重试一次并
+        // 每次广播「来！不打到痛快不罢休！」，无限循环。失败时交给 rebuildOrDrop 的冷却门重试。
+        if (!level.addFreshEntity(boss)) {
+            SilentSunMod.LOGGER.warn("[Redios] 回场失败（addFreshEntity 拒绝）：pos={} phase={} 头衔={}",
+                record.pos, record.phase, record.titleIndex);
+            return false;
+        }
         boss.leaveReason = LeaveReason.ANOMALY;
         boss.broadcastToParticipants(boss.rediosSigned(Component.translatable("message.silent_sun.redios.rebuilt_after_purge").withStyle(ChatFormatting.RED)));
+        // 2026-09-11 用户裁决（C5 落地）：**重建回场本身就是"明确的作弊场景"** —— 外部模组/存档编辑
+        // 把 Boss 清除掉（例：寰宇支配之剑的"清除实体"）。按设计触发反作弊惩罚：全员警告 +
+        // applyCooldowns=true = 物品栏 **与 Curios 饰品栏** 每件 2 秒（40 tick）强制冷却
+        //（实现见 AntiCheatLayer.counterAllCheatAttackers:653-677；全局 30 秒惩罚门自带防刷屏）。
+        // 因此 stageDeathCheat 的惩罚分支无需恢复可达——它的判据已被"六态全放行"覆盖成不可达。
+        boss.anticheat.counterAllCheatAttackers(level, true);
         SilentSunMod.LOGGER.warn("Redios rebuilt from battle record at {} (externally removed, phase={}, leaveReason={})", new Object[]{record.pos, record.phase, boss.leaveReason});
         boss.leaveReason = LeaveReason.NONE;
         return true;
@@ -5074,6 +5755,10 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             return;
         }
         this.leaveReason = LeaveReason.CHUNK_UNLOAD;
+        // 2026-09-10：这条是「Boss 莫名其妙不见了」的头号嫌疑路径，必须留痕。
+        SilentSunMod.LOGGER.warn("[Redios] 区块卸载超时离场（走远/卸载判定）：位置={} 阶段={} 头衔={} 参战={} 纯玩家模式={}",
+            this.blockPosition(), this.phase, this.titleIndex, this.battleParticipants.size(),
+            BossTargeting.playerOnlyMode());
         if (!BossTargeting.playerOnlyMode()) {
             this.bossLeaveNoLoot();
             return;
@@ -5159,6 +5844,18 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             }
         }
         ++this.allParticipantsDeadTicks;
+        if (this.allParticipantsDeadTicks == 1) {
+            // 2026-09-10（用户裁决）：把「Boss 无故消失」变成「有预告、可取消」。
+            // 参战者全部非活跃（死亡 / 创造 / 旁观 / 跨维度 / 被逐出）起算的第一 tick 立刻播报，
+            // 玩家在这 200 tick（10 秒）内切回生存并回到战场就会自动取消（计数被重置）。
+            MutableComponent inactiveWarn = Component.translatable("message.silent_sun.redios.all_inactive_warning")
+                .withStyle(ChatFormatting.RED);
+            for (UUID id : new HashSet<UUID>(this.battleParticipants)) {
+                ServerPlayer participant = this.getServerPlayer(id);
+                if (participant == null) continue;
+                participant.sendSystemMessage(this.rediosSigned(inactiveWarn));
+            }
+        }
         if (this.allParticipantsDeadTicks < 200) {
             return false;
         }
@@ -5168,8 +5865,12 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     }
 
     private boolean checkAllParticipantsDisengaged(ServerLevel serverLevel) {
-        // 此处独立按「玩家距离」判定主动逃离脱战（64 格 5 秒）；区块卸载由 checkBattleAreaUnloaded 并行判定。
-        // 所有活跃参战玩家都远离 Boss >64 格持续 5 秒 → 无奖励退场；区块短暂卸载（玩家仍在 64 格内）→ 不退场。
+        // 2026-09-11 用户裁决（S4 选项 A）：脱战判定**统一读配置** battleRadiusBlocks（默认 72）+ 60 秒宽限。
+        // 原实现写死 64 格 / 5 秒，与配置(72)、设计稿 §3.6(72 格 + 60 秒) 倒挂 → 65~71 格是"死带"：
+        // 玩家被击退到 68 格站 5 秒就被判全员脱战 → Boss 无奖励退场（明明还在战斗半径内）。
+        double radius = RediosRules.battleRadiusBlocks();
+        double radiusSqr = radius * radius;
+        int graceTicks = 1200; // 60 秒
         if (this.battleParticipants.isEmpty()) {
             this.disengageTicks = 0;
             return false;
@@ -5182,7 +5883,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
                 continue;
             }
             ++active;
-            if (player.distanceToSqr(this) <= 64.0 * 64.0) {
+            if (player.distanceToSqr(this) <= radiusSqr) {
                 anyClose = true;
                 break;
             }
@@ -5192,7 +5893,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             return false;
         }
         ++this.disengageTicks;
-        if (this.disengageTicks < 100) {
+        if (this.disengageTicks < graceTicks) {
             return false;
         }
         this.disengageTicks = 0;
@@ -5220,7 +5921,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         boolean anyTicking = false;
         for (UUID id : this.battleParticipants) {
             ServerPlayer player = this.getServerPlayer(id);
-            if (player == null || this.expelledPlayers.contains(id) || player.isSpectator() || !player.isAlive() || player.level() != this.level() || !serverLevel.isPositionEntityTicking(player.blockPosition()) || player.isCreative() && !(player.distanceToSqr(this) <= 16384.0)) continue;
+            if (player == null || this.expelledPlayers.contains(id) || player.isSpectator() || !player.isAlive() || player.level() != this.level() || !serverLevel.isPositionEntityTicking(player.blockPosition()) || player.isCreative() && !(player.distanceToSqr(this) <= 4096.0)) continue;
             anyTicking = true;
             break;
         }
@@ -5341,7 +6042,49 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         }
         int duration = current == null ? 1000000000 : Math.max(current.getDuration(), 1000000000);
         this.addEffect(new MobEffectInstance(ModEffects.ENRAGE, duration, desiredAmp, true, true), this);
-        EnrageEffect.applyFragileIfEnraged((LivingEntity)this, desiredAmp);
+        // 2026-09-10（用户裁决 D1）：脆弱施加给「参战玩家」而不是 Boss 自身——
+        // 原写法把 FRAGILE 挂在自己身上且被自身负面免疫拒绝，整条 2.8 脆弱链是死代码。
+        // 追伤通道：CommonEvents.applyFragileDamage（受击 Post，按 (amp+1)×5% 追加魔法真伤）。
+        // B-03（2026-09-11 依设计 §3.9「满层激怒时**再次**获得激怒才触发脆弱」）：判据用**本次授予前**
+        // 的等级 currentAmp，而不是授予后的 desiredAmp——否则"刚好到满层的那一次"就立刻叠脆弱，比设计早一拍。
+        if (currentAmp >= EnrageEffect.FRAGILE_TRIGGER_LEVEL) {
+            for (UUID id : new HashSet<UUID>(this.battleParticipants)) {
+                ServerPlayer participant = this.getServerPlayer(id);
+                if (participant == null || this.expelledPlayers.contains(id) || participant.isSpectator()
+                        || participant.isCreative() || !participant.isAlive()
+                        || participant.level() != this.level()) continue;
+                EnrageEffect.applyFragile(participant, desiredAmp);
+            }
+        } else {
+            // 2026-09-11（B-02 依设计 §3.9「持续时间与激怒绑定——激怒结束则脆弱结束」）：
+            // 激怒未达阈值（或已被清除/掉回）时，把参战者身上的脆弱一并撤掉。
+            // 原先只靠战后清理，导致"激怒没了、脆弱还在且无限时长"的残留（今日已先补战后退场清理）。
+            for (UUID id : new HashSet<UUID>(this.battleParticipants)) {
+                ServerPlayer participant = this.getServerPlayer(id);
+                if (participant == null) continue;
+                participant.removeEffect(ModEffects.FRAGILE);
+            }
+        }
+    }
+
+    /**
+     * B-02（2026-09-11 依设计 §3.9「脆弱持续时间与激怒绑定——激怒结束则脆弱结束」落地）：
+     * 每 tick 复核——Boss 当前激怒等级低于触发阈值（含激怒被清除、掉回、战斗结束）时，
+     * 把参战者身上的「脆弱」撤掉。原先脆弱是 `INFINITE_DURATION` 且只有战后退场清理，
+     * 会出现"激怒早没了、脆弱还在且无限"的残留。
+     */
+    private void tickFragileBinding() {
+        MobEffectInstance enrage = this.getEffect(ModEffects.ENRAGE);
+        int amp = enrage == null ? -1 : enrage.getAmplifier();
+        if (amp >= EnrageEffect.FRAGILE_TRIGGER_LEVEL) {
+            return;
+        }
+        for (UUID id : new HashSet<UUID>(this.battleParticipants)) {
+            ServerPlayer participant = this.getServerPlayer(id);
+            if (participant != null && participant.hasEffect(ModEffects.FRAGILE)) {
+                participant.removeEffect(ModEffects.FRAGILE);
+            }
+        }
     }
 
     private void triggerWeaknessCurse() {
@@ -5433,13 +6176,14 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         }
         this.voidTeleportCooldown = Math.max(this.getAttackCooldownTicks(), RediosRules.voidAllThingsTeleportCooldownTicks());
         this.teleportToAttackEdge(serverLevel2, target2);
-        this.setTarget(target2);
+        this.forceSetTarget(target2);
     }
 
     private LivingEntity pickVoidTeleportTarget(ServerLevel serverLevel) {
         if (!BossTargeting.playerOnlyMode()) {
             LivingEntity t = this.getTarget();
-            if (t != null && t.isAlive() && t.level() == this.level() && !(t instanceof Player)) {
+            // M13：非玩家模式也纳入玩家目标（纯玩家时传送不再停摆）
+            if (t != null && t.isAlive() && t.level() == this.level()) {
                 return t;
             }
             return null;
@@ -5476,10 +6220,12 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             BlockPos pos = new BlockPos((int)((double)base.getX() + dx), base.getY(), (int)((double)base.getZ() + dz));
             BlockPos feet = serverLevel.getHeightmapPos(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, pos);
             BlockPos head = feet.above();
-            if (!serverLevel.getBlockState(feet).isAir()) {
+            // M12：清落点方块遵循 mobGriefing（与 detonateStarfallSalvo 口径一致）
+            boolean canGrief = serverLevel.getGameRules().getBoolean(net.minecraft.world.level.GameRules.RULE_MOBGRIEFING);
+            if (!serverLevel.getBlockState(feet).isAir() && canGrief) {
                 serverLevel.setBlock(feet, Blocks.AIR.defaultBlockState(), 3);
             }
-            if (!serverLevel.getBlockState(head).isAir()) {
+            if (!serverLevel.getBlockState(head).isAir() && canGrief) {
                 serverLevel.setBlock(head, Blocks.AIR.defaultBlockState(), 3);
             }
             Vec3 dest = Vec3.atBottomCenterOf((Vec3i)feet);
@@ -5539,7 +6285,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
      */
     void onPlayerRemoteSlash(Player player) {
         if (this.reverseDashCooldownTicks > 0) return;
-        if (this.bossState.isVoteOrTransition() || this.isDarkStarActive()) return;
+        if (this.bossState.isVoteOrTransition() || this.isDarkStarBlastOngoing()) return;
         if (player == null || !player.isAlive()) return;
         if (!this.battleParticipants.contains(player.getUUID())) return;
         if (this.distanceTo(player) <= player.getAttributeValue(Attributes.ENTITY_INTERACTION_RANGE)) return;
@@ -5566,13 +6312,21 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     private void checkVoidBattleRange(ServerLevel serverLevel) {
         for (UUID id : new HashSet<UUID>(this.battleParticipants)) {
             ServerPlayer player = this.getServerPlayer(id);
-            if (player == null || this.expelledPlayers.contains(id) || player.isSpectator() || player.isCreative() || !player.isAlive() || player.level() != this.level() || this.distanceToSqr(player) <= 262144.0) continue;
+            if (player == null || this.expelledPlayers.contains(id) || player.isSpectator() || player.isCreative() || !player.isAlive() || player.level() != this.level() || this.distanceToSqr(player) <= VOID_BATTLE_RANGE_BLOCKS_SQR) continue;
             ChunkPos cp = player.chunkPosition();
             if (!serverLevel.getChunkSource().hasChunk(cp.x, cp.z)) continue;
             this.battleParticipants.remove(id);
             this.weapons.removeGuardStats(id);
             player.sendSystemMessage(this.rediosSigned(Component.translatable("message.silent_sun.redios.expelled").withStyle(ChatFormatting.DARK_RED)));
             this.cleanupPlayerAfterBattle(player);
+        }
+        // 2026-09-11 实测修复（S5）：逐出后如果参战者集合空了，必须补「全员离场」标记。
+        // 原实现只 remove 参战者、不写 expelledPlayers 也不置 allExpelledLeavePending →
+        // 全灭/脱战/区块保留/账本心跳四条守卫全部 early-return ⇒ 区块保持加载时 Boss 永不退场、
+        // 不结算、不设冷却（玩家走光也拿不到任何结果）。
+        if (this.battleParticipants.isEmpty() && !this.allExpelledLeavePending) {
+            this.allExpelledLeavePending = true;
+            SilentSunMod.LOGGER.warn("[Redios] 2.9 逐出后参战者集合为空 → 标记全员离场（下一 tick 无掉落退场）");
         }
     }
 
@@ -5581,7 +6335,11 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             // 2026-09-02：2.9 阻止外部传送能力永久化（逆推保持，直至 Boss 死亡）
             return false;
         }
-        return super.teleportTo(level, x, y, z, movements, yRot, xRot);
+        boolean ok = super.teleportTo(level, x, y, z, movements, yRot, xRot);
+        if (this.allowSelfTeleport) {
+            this.ensureSelfTeleportApplied(x, y, z);
+        }
+        return ok;
     }
 
     public void teleportTo(double x, double y, double z) {
@@ -5589,6 +6347,33 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             return;
         }
         super.teleportTo(x, y, z);
+        if (this.allowSelfTeleport) {
+            this.ensureSelfTeleportApplied(x, y, z);
+        }
+    }
+
+    /**
+     * A-01（2026-09-11 依设计 L453「2.9 传送无视一切传送禁止/拦截（含其他模组）」补齐）：
+     * **传送结果校验 + 直写坐标兜底**。
+     * <p>
+     * 说明：NeoForge 的 {@code EntityTeleportEvent} 只覆盖指令 / 末影珍珠 / 紫颂果等少数来源，
+     * 拦不住 mixin 型或自定义的传送拦截；而 2.9「空无万象」的传送是 Boss 自身行为，必须一定生效。
+     * 因此不依赖任何事件，改为**校验结果**：若 {@code super.teleportTo} 没能把实体真正挪过去
+     * （被第三方取消 / 改道 / 夹回原处），直接 {@code setPos} 写坐标并标记位置同步。
+     * 仅在 {@code allowSelfTeleport}（本模组自己的传送）时启用，不影响外部对本模组的传送限制。
+     */
+    private void ensureSelfTeleportApplied(double x, double y, double z) {
+        double dx = this.getX() - x;
+        double dy = this.getY() - y;
+        double dz = this.getZ() - z;
+        if (dx * dx + dy * dy + dz * dz <= 1.0) {
+            return; // 已在目标点（±1 格容差）
+        }
+        SilentSunMod.LOGGER.warn("[Redios] 2.9 传送被外部拦截，已直写坐标兜底：目标=({}, {}, {}) 实际=({}, {}, {})",
+            (int)x, (int)y, (int)z, (int)this.getX(), (int)this.getY(), (int)this.getZ());
+        this.setPos(x, y, z);
+        this.setDeltaMovement(0.0, 0.0, 0.0);
+        this.hurtMarked = true; // 触发客户端位置/速度同步
     }
 
     private ItemStack createVictoryBook() {
@@ -5719,10 +6504,9 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         }
         this.ensureMandatoryLoot(loot, includeDefeatBook ? RediosBookOutcome.PHASE1_WIN_PHASE2_LOSE : RediosBookOutcome.PHASE1_WIN_ONLY);
         loot.add(new ItemStack(ModItems.REDIOS_DISC_PHASE1.get()));
-        // 灭却之日（required 前置）提供的一阶段掉落「长梦彼端的灾厄之影」：1~4 个随机
-        // （2026-08-30 用户裁决）。走注册表查找而非反射，避免编译期硬依赖；未提供时静默跳过。
-        BuiltInRegistries.ITEM.getOptional(ResourceLocation.fromNamespaceAndPath("extinction_day_mod_1784441698", "calamity_shadow"))
-            .ifPresent(calamityShadow -> loot.add(new ItemStack(calamityShadow, 1 + serverLevel.random.nextInt(4))));
+        // 灭却之日（required 前置）提供的「长梦彼端的灾厄之影」：数量由配置决定（B6 数量配置化）。
+        this.addCalamityShadow(loot, serverLevel,
+            SilentSunConfig.CALAMITY_SHADOW_PHASE1_MIN.get(), SilentSunConfig.CALAMITY_SHADOW_PHASE1_MAX.get());
         return loot;
     }
 
@@ -5740,15 +6524,30 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
                 loot.addAll(RediosLootConfig.roll(serverLevel.random));
             }
         }
-        // 灭却之日（required 前置）提供的二阶段掉落「长梦彼端的灾厄之影」：
-        // 原有固定 1 个保留，再增加 7~12 个随机（2026-08-30 用户裁决：增加而非替换）。
-        // 走注册表查找而非反射，避免编译期硬依赖；灭却之日未提供该物品时静默跳过。
-        BuiltInRegistries.ITEM.getOptional(ResourceLocation.fromNamespaceAndPath("extinction_day_mod_1784441698", "calamity_shadow"))
-            .ifPresent(calamityShadow -> {
-                loot.add(new ItemStack(calamityShadow)); // 原有固定 1 个
-                loot.add(new ItemStack(calamityShadow, 7 + serverLevel.random.nextInt(6))); // 新增 7~12 个
-            });
+        // 灭却之日（required 前置）提供的二阶段「长梦彼端的灾厄之影」：数量由配置决定
+        //（2026-09-10 用户裁决 B6：数量配置化）。默认 8~13 = 原「固定 1 + 随机 7~12」的合计。
+        this.addCalamityShadow(loot, serverLevel,
+            SilentSunConfig.CALAMITY_SHADOW_PHASE2_MIN.get(), SilentSunConfig.CALAMITY_SHADOW_PHASE2_MAX.get());
         return loot;
+    }
+
+    /**
+     * 添加灭却之日「长梦彼端的灾厄之影」掉落（三处掉落点共用的唯一入口）。
+     * <p>
+     * 走注册表查找而非反射，避免编译期硬依赖；灭却之日未提供该物品时静默跳过；
+     * 数量区间由 {@code redios.calamityShadow*} 配置决定（2026-09-10 用户裁决 B6）。
+     */
+    private void addCalamityShadow(List<ItemStack> loot, ServerLevel serverLevel, int min, int max) {
+        if (max < min) {
+            max = min;
+        }
+        int count = min + (max > min ? serverLevel.random.nextInt(max - min + 1) : 0);
+        if (count <= 0) {
+            return;
+        }
+        BuiltInRegistries.ITEM
+            .getOptional(ResourceLocation.fromNamespaceAndPath("extinction_day_mod_1784441698", "calamity_shadow"))
+            .ifPresent(item -> loot.add(new ItemStack(item, count)));
     }
 
     private String applyOutcomePlaceholders(String template) {
@@ -5832,6 +6631,17 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     }
 
     private void onTitleChanged(int oldPhase, int oldTitleIndex, int newPhase, int newTitleIndex) {
+        // B-7（2026-09-11 依设计 T-v3-9「一阶段仅以 log 记录阶段流程」补齐）：此前 onTitleChanged 内
+        // 一条日志都没有，头衔推进出问题时无法回溯；一阶段只记录、不打扰玩家（二阶段有 BossBar/广播）。
+        if (newPhase == 1) {
+            SilentSunMod.LOGGER.info("[Redios] 头衔推进（一阶段）：phase={} title={} → phase={} title={}",
+                oldPhase, oldTitleIndex, newPhase, newTitleIndex);
+        }
+        // 2026-09-10（用户裁决 C3 / Q13）：一阶段结束 → 断魂退场标记复位。
+        // 二阶段断魂由 2.0「海天之隙」独立授予（seaSkySoulSeverUnlocked），不受此标记约束。
+        if (newPhase == 2 && oldPhase == 1) {
+            this.soulSeverRetiredInPhase1 = false;
+        }
         ServerPlayer player;
         TitleDef[] defs;
         Level level;
@@ -5841,10 +6651,11 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             ServerLevel serverLevel = (ServerLevel)level;
             this.restoreDarkStarSpecialBlocks(serverLevel);
         }
-        this.wrongInterferenceActive = newPhase == 2 && newTitleIndex == 2;
-        this.chaosRuinActive = newPhase == 2 && newTitleIndex == 3;
-        this.ashDawnActive = newPhase == 2 && newTitleIndex == 4;
-                if (this.ashDawnActive) {
+        // 2026-09-10（批次 2.7）：此处原有的三行字段赋值
+        //   wrongInterferenceActive / chaosRuinActive / ashDawnActive = (newPhase==2 && newTitleIndex==N)
+        // 已删除——三者改为由 phase/titleIndex 派生（isWrongInterferenceActive / isChaosRuinActive /
+        // isAshDawnActive），不再需要在此同步，也就不会因 restoreStateFromNbt 绕过本方法而失效。
+        if (this.isAshDawnActive()) {
             this.ashDawnUnlocked = true;
         }
         TitleDef[] titleDefArray = defs = newPhase == 1 ? PHASE1_TITLE_DEFS : PHASE2_TITLE_DEFS;
@@ -5882,7 +6693,13 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             this.grantFlag(BossFlag.CHAOS_RUIN_ABSOLUTE);
             this.chaosRuinAbsoluteAttacks = true;
         }
-        double d = this.isWhoseWishActive() ? 1.0 : (this.reflectRatio = this.colorlessUnlocked ? RediosRules.colorlessReflectRatio() : 0.0);
+        // 2026-09-10 修复（对比表 C4）：原写法 `double d = isWhoseWishActive() ? 1.0 : (reflectRatio = …)`
+        // 把 1.0 赋给了之后再未被引用的局部变量 d，导致 1.7「谁人之愿」期间 reflectRatio 从未被设为 1.0
+        // ——「完全反伤」实际为 0%，玩家可白打（攻略 B17 的反制机制形同虚设）。
+        // 1.7 属一阶段、2.8/2.9 属二阶段，二者互斥，故 1.7 直接给 1.0，其余按 colorlessReflectRatio。
+        this.reflectRatio = this.isWhoseWishActive()
+            ? 1.0
+            : (this.colorlessUnlocked ? RediosRules.colorlessReflectRatio() : 0.0);
         if (newPhase == 1 && newTitleIndex == 2) {
             this.enrageStackCooldownTicks = 0;
         }
@@ -5952,7 +6769,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         if (newPhase == 1 && newTitleIndex == 1) {
             this.healBoostTicks = 600;
         }
-        if (newPhase == 1 && newTitleIndex == 8 && this.level() instanceof ServerLevel) {
+        if (newPhase == 1 && newTitleIndex == 8 && !this.soulSeverRetiredInPhase1 && this.level() instanceof ServerLevel) {
             for (UUID uUID : new HashSet<UUID>(this.battleParticipants)) {
                 player = this.getServerPlayer(uUID);
                 if (player == null || this.expelledPlayers.contains(uUID) || player.isSpectator() || player.isCreative() || !player.isAlive() || player.level() != this.level()) continue;
@@ -6221,6 +7038,43 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         return null;
     }
 
+    /** 把奖励潜影盒直接发给参战玩家（物品栏满则掉落在其脚下）。返回是否成功交给某在线玩家。 */
+    private boolean deliverRewardToPlayer(ServerLevel serverLevel, ItemStack box) {
+        for (UUID id : this.battleParticipants) {
+            ServerPlayer p = this.getServerPlayer(id);
+            if (p == null || p.isSpectator() || !p.isAlive()) continue;
+            if (!p.getInventory().add(box)) {
+                p.drop(box, false);
+            }
+            return true;
+        }
+        for (UUID id : this.expelledPlayers) {
+            ServerPlayer p = this.getServerPlayer(id);
+            if (p == null || p.isSpectator() || !p.isAlive()) continue;
+            if (!p.getInventory().add(box)) {
+                p.drop(box, false);
+            }
+            return true;
+        }
+        return false;
+    }
+
+    /** 管理员清理命令：把全维度存活的 Boss 标记为待离场（任意状态；区块静止的 Boss 解冻恢复 tick 后自动退场）。 */
+    public static void requestCommandLeaveAll(MinecraftServer server) {
+        for (ServerLevel level : server.getAllLevels()) {
+            for (Entity e : level.getEntities().getAll()) {
+                if (e instanceof RediosEntity redios && redios.isAlive() && !redios.isRemoved()) {
+                    redios.pendingCommandLeave = true;
+                }
+            }
+        }
+    }
+
+    /** M16：旧版本残留 Boss 检测（数据版本低于当前版本）。 */
+    public boolean isLegacyData() {
+        return this.bossDataVersion < BOSS_DATA_VERSION;
+    }
+
     void registerMobParticipant(LivingEntity entity) {
         if (entity == null || BossTargeting.playerOnlyMode() || entity instanceof Player || entity.isSpectator() || !entity.isAlive() || entity.level() != this.level()) {
             return;
@@ -6281,8 +7135,6 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     }
 
     void markBattleParticipant(LivingEntity entity) {
-        ServerLevel serverLevel;
-        long elapsed;
         Level level;
         boolean added;
         Level level2;
@@ -6311,7 +7163,9 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             ServerLevel sl = (ServerLevel)level;
             this.enableBossOutline(sl);
         }
-        if (sp != null && this.battleStartGameTime >= 0L && (level = this.level()) instanceof ServerLevel && (elapsed = (serverLevel = (ServerLevel)level).getGameTime() - this.battleStartGameTime) <= 200L) {
+        // 2026-09-10（用户裁决 Q10 = A「参战过即计入」）：去掉原先「首次参战起 200 tick（10 秒）内」的时间窗口。
+        // 分母 = 本场累计参战人数；成书的 {participants} 占位符语义随之变为累计参战人数（与 2.7 分母同源）。
+        if (sp != null && this.battleStartGameTime >= 0L && this.level() instanceof ServerLevel) {
             this.initialParticipants.add(id);
         }
         if (added && this.isTwilightMomentActive() && this.titleLockTicks > 0 && sp != null && this.level() instanceof ServerLevel) {
@@ -6426,7 +7280,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         }
 
         public boolean canUse() {
-            if (this.redios.bossState.isVoteOrTransition() || this.redios.isDarkStarActive()) {
+            if (this.redios.bossState.isVoteOrTransition() || this.redios.isDarkStarBlastOngoing()) {
                 return false;
             }
             if (this.cooldownTicks > 0) {
@@ -6508,7 +7362,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             if (target == null || !target.isAlive()) {
                 return false;
             }
-            if (this.redios.bossState.isVoteOrTransition() || this.redios.isDarkStarActive()) {
+            if (this.redios.bossState.isVoteOrTransition() || this.redios.isDarkStarBlastOngoing()) {
                 return false;
             }
             if (this.redios.isBladeModeActive()) {
@@ -6580,7 +7434,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             if (!this.redios.isWallAttackEnabled()) {
                 return false;
             }
-            if (this.redios.isDarkStarActive()) {
+            if (this.redios.isDarkStarBlastOngoing()) {
                 return false;
             }
             if (this.redios.bossState.isVoteOrTransition()) {

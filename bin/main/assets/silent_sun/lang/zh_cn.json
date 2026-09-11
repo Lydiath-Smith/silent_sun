@@ -1,8 +1,13 @@
 {
   "itemGroup.silent_sun": "暗哑之日",
   "item.silent_sun.redios_sigil": "莱德厄斯召唤器",
-  "item.silent_sun.redios_sigil.tooltip.1": "召唤碎镜之影·莱德厄斯，开启战斗。",
-  "item.silent_sun.redios_sigil.tooltip.2": "每场战斗仅能存在一位莱德厄斯；若其已在场，使用后将传送至其附近并令其发光，不消耗物品。",
+  "block.silent_sun.cleaving_pain": "裂解之痛",
+  "tooltip.silent_sun.cleaving_pain.1": "放置后：先用熔岩桶右键注入岩浆，再右键投入一颗钻石。",
+  "tooltip.silent_sun.cleaving_pain.2": "钻石沉入岩浆引来落雷，掉落「莱德厄斯召唤器」。",
+  "tooltip.silent_sun.cleaving_pain.3": "倒掉岩浆并注入水后，手持「莱德厄斯召唤器」右键祭坛即可召唤莱德厄斯。",
+  "tooltip.silent_sun.cleaving_pain.4": "需钻石镐采集；挖掘掉落本体，可回收再放置。",
+  "item.silent_sun.redios_sigil.tooltip.1": "在注水的裂解之痛祭坛上使用，召唤碎镜之影·莱德厄斯。",
+  "item.silent_sun.redios_sigil.tooltip.2": "每场战斗仅能存在一位莱德厄斯；若其已在场，使用后可传送至其附近追击。召唤器不消耗。",
   "entity.silent_sun.redios": "碎镜之影·莱德厄斯",
   "title.silent_sun.redios.phase1.0": "愿予必成",
   "title.silent_sun.redios.phase1.1": "无尘之善",
@@ -76,6 +81,8 @@
   "command.silent_sun.redios.reset_summon_cd.success": "已重置莱德厄斯召唤冷却与战斗账本。",
   "command.silent_sun.reload_all.dispatch_failed": "触发 /reload 失败。",
   "message.silent_sun.redios.no_loot_farewell": "拜拜了您嘞！下次再见咯",
+  "message.silent_sun.redios.all_inactive_warning": "⚠ 所有参战者都不在场（死亡 / 创造 / 旁观 / 离开本维度）：10 秒后判定全员脱战，Boss 将无奖励离场。切回生存并回到战场即可取消。",
+  "message.silent_sun.cleaving_pain.fluid_blocked": "好像被空气墙拦住了。",
   "message.silent_sun.redios.challenge_success": "打爽了。可能让你觉得头疼也抱歉了。",
   "message.silent_sun.redios.anticheat.tamper": "搞么子。",
   "message.silent_sun.redios.anticheat.punish": "别闹，来点正经的。",
@@ -114,5 +121,7 @@
   "advancement.silent_sun.phase2_win.desc": "不要演恐怖片好吗",
   "death.attack.redios_attack": "你发力啊！你不发力怎么打？",
   "death.attack.redios_attack.item": "你发力啊！你不发力怎么打？",
-  "subtitles.silent_sun.starfall_salvo_pre_explosion": "碎镜之影：响指"
+  "death.attack.redios_spectrum": "一切防御在此一击面前形同虚设。",
+  "subtitles.silent_sun.starfall_salvo_pre_explosion": "碎镜之影：响指",
+  "subtitles.silent_sun.redios_summon": "宝贝我是如此的爱你"
 }

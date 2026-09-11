@@ -16,7 +16,7 @@ import net.neoforged.neoforge.registries.DeferredRegister;
 
 public final class ModTabs {
     public static final DeferredRegister<CreativeModeTab> CREATIVE_MODE_TABS = DeferredRegister.create((ResourceKey)Registries.CREATIVE_MODE_TAB, "silent_sun");
-    public static final DeferredHolder<CreativeModeTab, CreativeModeTab> MAIN = CREATIVE_MODE_TABS.register("main", () -> CreativeModeTab.builder().title((Component)Component.translatable("itemGroup.silent_sun")).withTabsBefore(new ResourceKey[]{CreativeModeTabs.COMBAT}).icon(() -> ((Item)ModItems.REDIOS_SIGIL.get()).getDefaultInstance()).displayItems((parameters, output) -> { output.accept(ModItems.REDIOS_SIGIL.get()); output.accept(ModItems.REDIOS_DISC_PHASE1.get()); output.accept(ModItems.REDIOS_DISC_PHASE2.get()); }).build());
+    public static final DeferredHolder<CreativeModeTab, CreativeModeTab> MAIN = CREATIVE_MODE_TABS.register("main", () -> CreativeModeTab.builder().title((Component)Component.translatable("itemGroup.silent_sun")).withTabsBefore(new ResourceKey[]{CreativeModeTabs.COMBAT}).icon(() -> ((Item)ModItems.REDIOS_SIGIL.get()).getDefaultInstance()).displayItems((parameters, output) -> { output.accept(ModItems.REDIOS_SIGIL.get()); output.accept(ModItems.CLEAVING_PAIN.get()); output.accept(ModItems.REDIOS_DISC_PHASE1.get()); output.accept(ModItems.REDIOS_DISC_PHASE2.get()); }).build());
 
     private ModTabs() {
     }

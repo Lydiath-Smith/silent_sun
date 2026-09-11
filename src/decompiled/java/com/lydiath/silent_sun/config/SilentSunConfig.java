@@ -87,9 +87,6 @@ public final class SilentSunConfig {
     public static final ModConfigSpec.IntValue SOUL_SEVER_MAX_AMPLIFIER = BUILDER.defineInRange("soulSever.maxAmplifier", 4, 0, 10);
     public static final ModConfigSpec.IntValue SOUL_SEVER_Y_WARNING_THRESHOLD = BUILDER.defineInRange("soulSever.yWarningThreshold", 5000, 0, Integer.MAX_VALUE);
 
-    // 高度差飞行
-    public static final ModConfigSpec.IntValue HEIGHT_FLIGHT_DIFF_BLOCKS = BUILDER.defineInRange("redios.heightFlightDiffBlocks", 6, 0, 256);
-
     // 回血速率（每 20 tick 即每秒生效一次）
     // 每次 30 点 = 每秒 30 点（P1）；每次 60 点 = 每秒 60 点（P2）
     public static final ModConfigSpec.DoubleValue PHASE1_HEALTH_REGEN = BUILDER.defineInRange("redios.phase1HealthRegen", 30.0, 0.0, Double.MAX_VALUE);
@@ -136,6 +133,12 @@ public final class SilentSunConfig {
             "此 20 格就是召唤范围半径。注意：它只决定星星落点范围，不是爆炸/伤害半径——",
             "实际爆炸/伤害范围由下方 redios.starfallSalvoExplosionPower 逐星决定。默认 20。")
         .defineInRange("redios.starfallSalvoRadius", 20.0, 1.0, 64.0);
+    public static final ModConfigSpec.DoubleValue STARFALL_SALVO_ATTACK_RADIUS = BUILDER
+        .comment("繁星爆闪的攻击/断魂收集半径（格）：每次发动时在该半径内收集全部合法目标，",
+            "再按各自威胁值分配星星数量。设计稿 §8.2 记为 24。",
+            "实取 max(本值, 当前攻击距离 × 4)——保证 2026-09-01 裁定「大招对视距内全部合法目标索敌」",
+            "不被削弱（攻击距离随阶段/激怒变化时半径同步放大）。默认 24。")
+        .defineInRange("redios.starfallSalvoAttackRadius", 24.0, 1.0, 128.0);
     public static final ModConfigSpec.IntValue STARFALL_SALVO_MIN_COUNT = BUILDER
         .comment("繁星爆闪每次召唤星星的最少数量。")
         .defineInRange("redios.starfallSalvoMinCount", 12, 1, 64);
@@ -143,20 +146,41 @@ public final class SilentSunConfig {
         .comment("繁星爆闪每次召唤星星的最多数量。")
         .defineInRange("redios.starfallSalvoMaxCount", 16, 1, 64);
     public static final ModConfigSpec.IntValue STARFALL_SALVO_MAX_DELAY_TICKS = BUILDER
-        .comment("繁星爆闪每颗星星开始下落的随机最大延迟（tick）。默认 20 = 1 秒。")
-        .defineInRange("redios.starfallSalvoMaxDelayTicks", 10, 0, 200);
+        .comment("繁星爆闪每颗星星开始下落的随机最大延迟（tick）。默认 60 = 0~3 秒。",
+            "2026-09-11 依设计更正默认 10 → 60：设计口径为「0~3 秒内随机下落」，原 0.5 秒使星星几乎同时落下、",
+            "失去逐颗落下的层次感。逐星取 [0, 本值] 均匀随机。")
+        .defineInRange("redios.starfallSalvoMaxDelayTicks", 60, 0, 200);
     public static final ModConfigSpec.DoubleValue STARFALL_SALVO_EXPLOSION_POWER = BUILDER
         .comment("繁星爆闪每颗星星爆炸的威力（大范围随机爆破半径，沿用 Level.explode 口径，",
             "破坏方块遵循 mobGriefing）。默认 6.0，约 6 格爆炸半径，逐星独立覆盖召唤半径内的大范围区域。")
         .defineInRange("redios.starfallSalvoExplosionPower", 6.0, 0.0, 64.0);
 
-    // 2.8 无光失色挑战成功时限：激活后若未在该时限内攻克 Boss，则视为挑战成功
+    // 灭却之日「长梦彼端的灾厄之影」掉落数量（2026-09-10 用户裁决 B6：数量配置化）。
+    // 原先三处掉落点都是硬编码（P1 为 1 + rand(4)；P2 为固定 1 + rand(7~12)），整合包无法调整。
+    public static final ModConfigSpec.IntValue CALAMITY_SHADOW_PHASE1_MIN = BUILDER
+        .comment("一阶段奖励里「灾祸之影」的最小数量。默认 1（原硬编码 1~4 的下界）。",
+            "灭却之日未安装/未提供该物品时静默跳过。")
+        .defineInRange("redios.calamityShadowPhase1Min", 1, 0, 64);
+    public static final ModConfigSpec.IntValue CALAMITY_SHADOW_PHASE1_MAX = BUILDER
+        .comment("一阶段奖励里「灾祸之影」的最大数量。默认 4（原硬编码 1~4 的上界）。")
+        .defineInRange("redios.calamityShadowPhase1Max", 4, 0, 64);
+    public static final ModConfigSpec.IntValue CALAMITY_SHADOW_PHASE2_MIN = BUILDER
+        .comment("二阶段奖励里「灾祸之影」的最小数量。默认 8（= 原「固定 1 + 随机 7」）。")
+        .defineInRange("redios.calamityShadowPhase2Min", 8, 0, 64);
+    public static final ModConfigSpec.IntValue CALAMITY_SHADOW_PHASE2_MAX = BUILDER
+        .comment("二阶段奖励里「灾祸之影」的最大数量。默认 13（= 原「固定 1 + 随机 12」）。")
+        .defineInRange("redios.calamityShadowPhase2Max", 13, 0, 64);
+
+    // 2.8 无光失色挑战成功时限：进入 2.8 起算；若未在该时限内攻克 Boss，则视为挑战成功
     // （Boss 转为友好生物并走创造离场路径，进入 3 天召唤冷却）。
     // 代码强制下限 = 最后两个二阶段头衔持续时间（2 × P2 头衔锁血时长，默认 60 秒）。
+    // 2026-09-10 用户裁决：**冻结态不倒计时**（投票 / 转场 / 两阶段濒死 / 锁血期均暂停），
+    // 即"实际可打时长"恒为该值；回退后重进 2.8 不重置。
     public static final ModConfigSpec.IntValue COLORLESS_CHALLENGE_SECONDS = BUILDER
         .comment("2.8 无光失色激活后的挑战成功时限（秒）。",
-            "激活后若未在该时限内攻克 Boss，则视为挑战成功：Boss 转为友好生物并离场，",
-            "进入 3 天召唤冷却。代码强制下限为最后两个二阶段头衔的持续时间",
+            "从「进入 2.8」起算；**冻结态暂停计时**（投票 / 转场 / 两阶段濒死 / 锁血期不倒计时），",
+            "因此该值等于玩家实际可打时长。若未在该时限内攻克 Boss，则视为挑战成功：",
+            "Boss 转为友好生物并离场，进入 3 天召唤冷却。代码强制下限为最后两个二阶段头衔的持续时间",
             "（2 × P2 头衔锁血时长，默认 60 秒），填写的值低于该下限时按该下限生效。")
         .defineInRange("redios.colorlessChallengeSeconds", 300, 0, Integer.MAX_VALUE);
 

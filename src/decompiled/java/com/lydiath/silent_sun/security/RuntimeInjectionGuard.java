@@ -82,9 +82,10 @@ public final class RuntimeInjectionGuard {
             return;
         }
         String loc = cs.getLocation().toString().toLowerCase(Locale.ROOT);
-        // 预期加载源：silent_sun 产物 jar，或开发编译目录（build/mod-classes、bin/main）
-        // —— 否则视为可疑（可能被其他 jar 前端覆盖类定义）。
-        if (!loc.contains("silent_sun") && !loc.contains("mod-classes") && !loc.contains("bin/main")) {
+        // M3：归一化连字符——jar 常被重命名为 silent-sun-1.0.0.jar（连字符）导致误报。
+        // 预期加载源：silent_sun 产物 jar，或开发编译目录（mod-classes、bin/main）。
+        String normalized = loc.replace('-', '_');
+        if (!normalized.contains("silent_sun") && !normalized.contains("mod_classes") && !normalized.contains("bin/main")) {
             classSourceSuspicious = true;
         }
     }

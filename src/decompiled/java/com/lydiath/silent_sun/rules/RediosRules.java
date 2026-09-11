@@ -23,7 +23,7 @@ public final class RediosRules {
     private static volatile boolean damageSourceDebugOnlyWhenExpelled = true;
 
     // ========== 伤害与战斗 ==========
-    private static volatile double blackSunDefeatRatio = 0.125;
+    private static volatile double blackSunDefeatRatio = 0.5;
     private static volatile double colorlessReflectRatio = 0.5;
     private static volatile int colorlessWeaknessDurationTicks = 200;
     private static volatile int colorlessWeaknessAmplifier = 0;
@@ -61,11 +61,17 @@ public final class RediosRules {
     // ========== 自适应格挡 ==========
     private static volatile int adaptiveBlockTriggerHitsPerSecond = 6;
     private static volatile int adaptiveBlockDurationTicks = 20;
-    private static volatile double adaptiveBlockDamageReduction = 0.8;
+    /** 2026-09-10（用户裁决）：「格挡就全免」——该键**已不再被 DamagePipeline 消费**，
+     *  保留只是让旧配置文件仍能读入而不报错（1.0 = 旧语义下的"全额免除"）。 */
+    private static volatile double adaptiveBlockDamageReduction = 1.0;
     private static volatile int adaptiveBlockCooldownTicks = 40;
 
     // ========== 战斗区域 ==========
-    private static volatile int battleRadiusBlocks = 32;
+    /** 通用脱战半径（格）：超出后开始计时，持续 {@link #battleExpelTimeoutSeconds} 未返回即判定脱战。
+     *  2026-09-10（用户裁决）：默认 32 → **72**，以作者攻略「玩家以脱战方式离场，判定 72 格」为准。
+     *  注意与 2.9 的即时逐出半径 {@code RediosEntity.VOID_BATTLE_RANGE_BLOCKS}（64，无宽限）是两个口径：
+     *  2.9 期间更严，超出 64 格立即逐出；本值是通用口徑（带 60 秒宽限）。 */
+    private static volatile int battleRadiusBlocks = 72;
     private static volatile int battleExpelTimeoutSeconds = 60;
 
     // ========== 强力推离 ==========
@@ -74,9 +80,13 @@ public final class RediosRules {
     private static volatile double pushAwayRange = 10.0;
 
     // ========== 方块恢复 ==========
-    private static volatile List<String> restoredBlocksWhitelist = List.of(
+    // 2026-09-10（用户裁决 D6）：白名单是「记录 + 恢复」的单一真源；
+    // 补齐 barrier / end_portal_frame（原先被记录却因不在白名单而永久摧毁）。
+    private static final List<String> DEFAULT_RESTORED_BLOCKS = List.of(
         "minecraft:bedrock", "minecraft:command_block", "minecraft:chain_command_block",
-        "minecraft:repeating_command_block", "minecraft:structure_block", "minecraft:jigsaw");
+        "minecraft:repeating_command_block", "minecraft:structure_block", "minecraft:jigsaw",
+        "minecraft:barrier", "minecraft:end_portal_frame");
+    private static volatile List<String> restoredBlocksWhitelist = DEFAULT_RESTORED_BLOCKS;
     private static volatile boolean restoreNbt = true;
 
     // ========== 卡顿保护 ==========
@@ -89,7 +99,7 @@ public final class RediosRules {
     private static volatile String rediosBookAuthor = "Redios";
     private static volatile String rediosDefeatBookTitle = "谢谢惠顾，下次再来。";
     private static volatile String rediosVictoryBookTitle = "干得漂亮！欢迎再来！";
-    private static volatile String rediosNotePhase1WinPhase2Lose = "干的很好了，想与整个世界为敌，光是让世界看你是不是不行的。\\n\\n[战斗记录]\\n维度: {dimension}\\n坐标: {x} {y} {z}\\n参战者: {participants}\\n用时: {duration_seconds}s";
+    private static volatile String rediosNotePhase1WinPhase2Lose = "干的很好了，想与整个世界为敌，光是让世界看你是不行的。\n\n[战斗记录]\n维度: {dimension}\n坐标: {x} {y} {z}\n参战者: {participants}\n用时: {duration_seconds}s";
     private static volatile ResourceLocation rediosOutcomeTextPhase1WinOnlyFile = ResourceLocation.fromNamespaceAndPath("silent_sun", "books/redios/outcome_phase1_win_only.txt");
     private static volatile ResourceLocation rediosOutcomeTextPhase1WinPhase2LoseFile = ResourceLocation.fromNamespaceAndPath("silent_sun", "books/redios/outcome_phase1_win_phase2_lose.txt");
     private static volatile ResourceLocation rediosOutcomeTextPhase2WinFile = ResourceLocation.fromNamespaceAndPath("silent_sun", "books/redios/outcome_phase2_win.txt");
@@ -224,7 +234,7 @@ public final class RediosRules {
     public static int adaptiveBlockDurationTicks() { return adaptiveBlockDurationTicks; }
     public static void setAdaptiveBlockDurationTicks(int v) { adaptiveBlockDurationTicks = Math.max(0, v); }
     public static double adaptiveBlockDamageReduction() { return adaptiveBlockDamageReduction; }
-    public static void setAdaptiveBlockDamageReduction(double v) { adaptiveBlockDamageReduction = Double.isFinite(v) ? Math.max(0.0, Math.min(1.0, v)) : 0.8; }
+    public static void setAdaptiveBlockDamageReduction(double v) { adaptiveBlockDamageReduction = Double.isFinite(v) ? Math.max(0.0, Math.min(1.0, v)) : 1.0; }
     public static int adaptiveBlockCooldownTicks() { return adaptiveBlockCooldownTicks; }
     public static void setAdaptiveBlockCooldownTicks(int v) { adaptiveBlockCooldownTicks = Math.max(0, v); }
 
@@ -251,10 +261,8 @@ public final class RediosRules {
     // ================================================================
     public static List<String> restoredBlocksWhitelist() { return restoredBlocksWhitelist; }
     public static void setRestoredBlocksWhitelist(List<String> v) {
-        // N3: null 回退值与静态默认保持一致
-        restoredBlocksWhitelist = v == null || v.isEmpty() ? List.of(
-            "minecraft:bedrock", "minecraft:command_block", "minecraft:chain_command_block",
-            "minecraft:repeating_command_block", "minecraft:structure_block", "minecraft:jigsaw") : List.copyOf(v);
+        // N3: null 回退值与静态默认保持一致（2026-09-10：统一引用 DEFAULT_RESTORED_BLOCKS，避免第三处副本漂移）
+        restoredBlocksWhitelist = v == null || v.isEmpty() ? DEFAULT_RESTORED_BLOCKS : List.copyOf(v);
     }
     public static boolean restoreNbt() { return restoreNbt; }
     public static void setRestoreNbt(boolean v) { restoreNbt = v; }
@@ -280,7 +288,7 @@ public final class RediosRules {
     public static void setRediosNotePhase1WinPhase2Lose(String v) {
         // N3: null 回退值与静态默认保持一致（完整版含战斗记录占位符）
         rediosNotePhase1WinPhase2Lose = v == null || v.isBlank()
-            ? "干的很好了，想与整个世界为敌，光是让世界看你是不是不行的。\\n\\n[战斗记录]\\n维度: {dimension}\\n坐标: {x} {y} {z}\\n参战者: {participants}\\n用时: {duration_seconds}s"
+            ? "干的很好了，想与整个世界为敌，光是让世界看你是不行的。\n\n[战斗记录]\n维度: {dimension}\n坐标: {x} {y} {z}\n参战者: {participants}\n用时: {duration_seconds}s"
             : v;
     }
     public static ResourceLocation rediosOutcomeTextPhase1WinOnlyFile() { return rediosOutcomeTextPhase1WinOnlyFile; }

@@ -44,63 +44,21 @@ extends Item {
     }
 
     public InteractionResultHolder<ItemStack> use(Level level, Player player, InteractionHand hand) {
+        // 右键不再直接召唤 Boss（2026-09-08 用户裁决）：召唤走注水祭坛
+        // （CleavingPainBlock.useItemOn → CleavingPainBlockEntity.trySummon 负责冷却检查与召唤序列）。
+        // 此处右键改为「追击回调」：莱德厄斯已存在时，把玩家传送到其附近追击。
         ItemStack stack = player.getItemInHand(hand);
-        if (!(level instanceof ServerLevel)) {
+        if (level.isClientSide()) {
             return InteractionResultHolder.success(stack);
         }
-        ServerLevel serverLevel = (ServerLevel)level;
-        RediosCooldownData cooldown = RediosCooldownData.get(serverLevel);
-        if (cooldown.isOnCooldown(serverLevel)) {
-            int attempts = cooldown.recordSummonAttempt(serverLevel);
-            double days = (double)cooldown.remainingTicks(serverLevel) / 24000.0;
-            String s = String.format(Locale.ROOT, "%.1f", days);
-            player.sendSystemMessage((Component)Component.translatable("message.silent_sun.redios_sigil.busy", (Object[])new Object[]{s}));
-            if (attempts > 5) {
-                MutableComponent msg = Component.translatable("message.silent_sun.redios_sigil.already_busy_extra").withStyle(ChatFormatting.GRAY);
-                player.sendSystemMessage(msg);
-            }
-            return InteractionResultHolder.consume(stack);
+        ServerLevel serverLevel = (ServerLevel) level;
+        RediosEntity boss = findExistingRedios(serverLevel);
+        if (boss != null) {
+            teleportPlayerNearBoss(player, boss);
+            serverLevel.playSound(null, player.blockPosition(), SoundEvents.ENDERMAN_TELEPORT, SoundSource.PLAYERS, 1.0f, 1.0f);
+            return InteractionResultHolder.success(stack);
         }
-        // 已有 Boss 在场：传送玩家至 Boss 附近 + 20s 发光，不消耗（设计文档 L501-502 语义）。
-        RediosEntity existing = findExistingRedios(serverLevel);
-        if (existing != null) {
-            teleportPlayerNearBoss(player, existing);
-            existing.addEffect(new MobEffectInstance(MobEffects.GLOWING, 400, 0));
-            return InteractionResultHolder.consume(stack);
-        }
-        // 无 Boss 才走纯残留兜底（此时本不该有残留），再正常生成。
-        clearResidualRedios(serverLevel);
-        BlockPos pos = player.blockPosition().above();
-        Entity entity = ((EntityType)ModEntities.REDIOS.get()).spawn(serverLevel, stack, player, pos, MobSpawnType.SPAWN_EGG, true, false);
-        // 兜底：finalizeSpawn 拒绝（极短竞态下第二个 Boss）时 entity.isRemoved()==true，不消耗不播音效
-        if (entity != null && !entity.isRemoved()) {
-            serverLevel.playSound(null, pos, SoundEvents.WITHER_SPAWN, SoundSource.HOSTILE, 1.0f, 1.0f);
-            // 2026-08-12 用户决策：召唤器永不消耗；召唤成功时全服广播（文案可配置，留空关闭）
-            String broadcast = SilentSunConfig.SUMMON_BROADCAST_MESSAGE.get();
-            if (broadcast != null && !broadcast.isEmpty()) {
-                serverLevel.getServer().getPlayerList().broadcastSystemMessage(
-                    Component.literal("<" + player.getScoreboardName() + "> " + broadcast), false);
-            }
-        }
-        return InteractionResultHolder.consume(stack);
-    }
-
-    /** 召唤前全维暴力清除残留莱德厄斯：静默剔除所有已加载残留实体 + 清空战斗账本。
-     *  裁决「一律清除」：CD 已好时仍存在的 Boss 即残留（正常 Boss 应在 CD 内结算），
-     *  不回收、不传送、不结算、不设 CD、不广播。 */
-    private void clearResidualRedios(ServerLevel serverLevel) {
-        MinecraftServer server = serverLevel.getServer();
-        if (server == null) {
-            return;
-        }
-        for (ServerLevel sl : server.getAllLevels()) {
-            for (Entity e : sl.getEntities().getAll()) {
-                if (e instanceof RediosEntity redios && !redios.isRemoved()) {
-                    redios.forceDiscardSilently();
-                }
-            }
-        }
-        RediosBattleData.get(serverLevel).clearAllRecords();
+        return InteractionResultHolder.pass(stack);
     }
 
     /** 查找当前任意维度里存活且未移除的莱德厄斯；找不到返回 null。 */
@@ -120,14 +78,26 @@ extends Item {
     }
 
     /** 把玩家传送到 Boss 附近水平 3~5 格随机落点（2026-08-30：落点高度 = Boss 所在高度，
-     *  Boss 在空中/高处时玩家也传到同高度，不再回落地表）。 */
+     *  Boss 在空中/高处时玩家也传到同高度，不再回落地表）。M22：优先找安全落点。 */
     private void teleportPlayerNearBoss(Player player, RediosEntity boss) {
         ServerLevel sl = (ServerLevel) boss.level();
+        for (int i = 0; i < 12; i++) {
+            double angle = sl.getRandom().nextDouble() * Math.PI * 2.0;
+            double dist = 3.0 + sl.getRandom().nextDouble() * 2.0;
+            double x = boss.getX() + Math.cos(angle) * dist;
+            double z = boss.getZ() + Math.sin(angle) * dist;
+            double y = boss.getY() + 0.5;
+            BlockPos feet = BlockPos.containing(x, y, z);
+            if (sl.getBlockState(feet).isAir()
+                && sl.getBlockState(feet.above()).isAir()
+                && !sl.getBlockState(feet.below()).isAir()) {
+                player.teleportTo(sl, x, y, z, Set.of(), player.getYRot(), player.getXRot());
+                return;
+            }
+        }
         double angle = sl.getRandom().nextDouble() * Math.PI * 2.0;
         double dist = 3.0 + sl.getRandom().nextDouble() * 2.0;
-        double x = boss.getX() + Math.cos(angle) * dist;
-        double z = boss.getZ() + Math.sin(angle) * dist;
-        player.teleportTo(sl, x, boss.getY() + 0.5, z, Set.of(), player.getYRot(), player.getXRot());
+        player.teleportTo(sl, boss.getX() + Math.cos(angle) * dist, boss.getY() + 0.5, boss.getZ() + Math.sin(angle) * dist, Set.of(), player.getYRot(), player.getXRot());
     }
 
     @Override

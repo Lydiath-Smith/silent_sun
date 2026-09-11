@@ -40,6 +40,17 @@ public final class ModDamageTypes {
             Registries.DAMAGE_TYPE,
             ResourceLocation.fromNamespaceAndPath("silent_sun", "redios_attack"));
 
+    /**
+     * 2.7 弱点特化「全属性」伤害类型（2026-09-08 用户裁决）：
+     * MC 单次伤害只能挂一个 DamageType，故以「专用类型 + 全穿透标签」等价实现
+     * 「单次攻击视为包内全部已注册攻击属性」——本类型加入 bypasses_armor/enchantments/
+     * effects/resistance/shield/invulnerability 标签（与断魂 soul_sever 同款 9bypass 语义），
+     * 该一击护甲/护盾/无敌帧/附魔减伤皆无法豁免，一次全额命中。
+     */
+    public static final ResourceKey<DamageType> REDIOS_SPECTRUM = ResourceKey.create(
+            Registries.DAMAGE_TYPE,
+            ResourceLocation.fromNamespaceAndPath("silent_sun", "redios_spectrum"));
+
     private ModDamageTypes() {
     }
 
@@ -63,6 +74,17 @@ public final class ModDamageTypes {
     public static DamageSource rediosAttack(Level level, Entity attacker) {
         return new DamageSource(
                 level.registryAccess().registryOrThrow(Registries.DAMAGE_TYPE).getHolderOrThrow(REDIOS_ATTACK),
+                attacker,
+                attacker);
+    }
+
+    /**
+     * 构造 2.7 弱点特化「全属性」一击伤害源（来源与直接来源均为 {@code attacker}，
+     * 语义同 {@link #rediosAttack}，但类型为带全穿透标签的 redios_spectrum）。
+     */
+    public static DamageSource rediosSpectrum(Level level, Entity attacker) {
+        return new DamageSource(
+                level.registryAccess().registryOrThrow(Registries.DAMAGE_TYPE).getHolderOrThrow(REDIOS_SPECTRUM),
                 attacker,
                 attacker);
     }

@@ -52,9 +52,14 @@ public final class DamagePipeline {
         DamagePipeline::stageCreativeModeGuard,
         DamagePipeline::stageExpelledPlayerGuard,
         DamagePipeline::stagePhase1AbsoluteDefense,
+        // 2026-09-11 实测修复（C3 顺序洞）：`stageNoResurrectionGuard` / `stagePhase1VoteGuard`
+        // 原先排在 `stageAttackerResolution` **之前** → 创造/旁观/Mode2 玩家或无效攻击者的命中
+        // 虽然在 idx8 被取消，但**阶段推进已经发生**（setHealth(1) + enterNoResurrectionPhase2 /
+        // transitionTo(PHASE1_PENDING) + enterPendingState）→ "不掉血却推阶段"。
+        // 移到攻击者校验之后：无效攻击者的伤害在 idx8 取消 → 管线终止 → 不再推进。
+        DamagePipeline::stageAttackerResolution,
         DamagePipeline::stageNoResurrectionGuard,
         DamagePipeline::stagePhase1VoteGuard,
-        DamagePipeline::stageAttackerResolution,
         DamagePipeline::stageAdaptiveGuardBlock,
         DamagePipeline::stageDamageCap,
         DamagePipeline::stageSorrowToil,
@@ -64,10 +69,14 @@ public final class DamagePipeline {
         DamagePipeline::stageDodge,
         DamagePipeline::stageVoidAllThingsDodge,
         DamagePipeline::stageChaosRuin,
-        DamagePipeline::stageReflect,
         DamagePipeline::stageDeathCheat,
         DamagePipeline::stagePhase1Lock,
         DamagePipeline::stagePhase2Pending,
+        // 2026-09-11 实测修复（R1 白嫖反伤）：反射**移到锁血阶段之后**。原先它在锁血之前，
+        // 于是段底锁血窗口（1.7 全反射 ratio=1.0 / 2.8 无色期，titleLockTicks 15~30 秒）里
+        // 玩家打不动 Boss（伤害被钳段底并取消）却照吃满额反伤。移到末端后：锁血一旦 cancel，
+        // 管线立即终止，反射不再执行；未取消时反射照常发生（且此时 ctx.amount 已是最终生效值）。
+        DamagePipeline::stageReflect,
     };
 
     /**
@@ -109,7 +118,13 @@ public final class DamagePipeline {
         }
         if (ctx.source.getDirectEntity() == null && ctx.source.getEntity() == null) {
             String msgId = ctx.source.getMsgId();
-            if ("generic_kill".equals(msgId) || "kill".equals(msgId) || "magic".equals(msgId)) {
+            // 2026-09-09 防打穿：原版 generic_kill 的 message_id 是驼峰 "genericKill"（/kill、kill()、
+            // /damage 无实体源路径），补上与蛇形 "generic_kill" 一并拦截，避免 P2 濒死合法击杀窗口被白嫖。
+            // 2026-09-10（用户裁决）：**移除 "magic" 这一项**。"无实体源的 magic"在模组环境里太常见
+            // （范围/环境魔法、脚本伤害等），把它当 /kill 拦掉会变成"某类攻击打 Boss 不掉血"的误判，
+            // 误伤面大于收益。真正要拦的作弊路径是 generic_kill / kill。
+            if ("generic_kill".equals(msgId) || "genericKill".equals(msgId)
+                || "kill".equals(msgId)) {
                 return DamageResult.cancel();
             }
         }
@@ -217,7 +232,7 @@ public final class DamagePipeline {
         if (boss.anticheat.creativeLeaveTimerTicks < 0) {
             // 2026-08-13：创造玩家一直在（区块保持加载）则 10 分钟后再撤离；
             // 中途离开/区块卸载由 checkBattleAreaUnloaded 走区块卸载结算提前退场。
-            boss.anticheat.creativeLeaveTimerTicks = 12000;
+            boss.anticheat.creativeLeaveTimerTicks = AntiCheatLayer.CREATIVE_LEAVE_WINDOW_TICKS;
             MutableComponent timerMsg = Component.translatable("message.silent_sun.redios.anticheat.creative_leave_timer").withStyle(ChatFormatting.GOLD);
             boss.broadcastToParticipants(boss.rediosSigned(timerMsg));
         }
@@ -353,8 +368,10 @@ public final class DamagePipeline {
                 boss.weapons.tryGuardBlock(ctx.source);
             }
             if (boss.weapons.guardActiveTicks > 0) {
-                ctx.amount = (float) ((double) ctx.amount
-                    * (1.0 - RediosRules.adaptiveBlockDamageReduction()));
+                // 2026-09-10（用户裁决 C6/待确认 6）：「格挡就全免」——格挡窗口内本次伤害全额免除，
+                // 不再按 adaptive_block_damage_reduction 打折（原 0.8 口径改成减伤口径的产物）。
+                // 该配置键自此不再被消费，保留仅为旧配置兼容（见 RediosRules 同名 setter 注释）。
+                return DamageResult.cancel();
             }
         }
         return DamageResult.proceed();
@@ -446,7 +463,7 @@ public final class DamagePipeline {
             return DamageResult.proceed();
         }
 
-        if (boss.wrongInterferenceActive) {
+        if (boss.isWrongInterferenceActive()) {
             if (ctx.source.getEntity() instanceof LivingEntity
                 && boss.getRandom().nextFloat() > 0.2f) {
                 return DamageResult.cancel();
@@ -511,7 +528,7 @@ public final class DamagePipeline {
             return DamageResult.proceed();
         }
 
-        if (boss.chaosRuinActive && RediosRules.chaosRuinIncomingAbsoluteEnabled()
+        if (boss.isChaosRuinActive() && RediosRules.chaosRuinIncomingAbsoluteEnabled()
             && ctx.attacker != null) {
             if (!boss.isVoidAllThingsActive() && boss.getHealth() - ctx.amount <= 1.0f) {
                 // 防止一击打穿死亡保护；同步反作弊基线，避免跨 tick 低血量误判
@@ -543,6 +560,12 @@ public final class DamagePipeline {
 
     private static DamageResult stageReflect(DamageContext ctx) {
         RediosEntity boss = ctx.boss;
+        // 2026-09-11 用户裁决「历史版本为准」——历史 A3 最终口径（`设计文稿合集.md:2399-2401`）：
+        // **绝对伤害不反弹**。9bypass 真伤（断魂 / 2.7 全属性 / 第三方穿甲）命中 Boss 时不再触发反射反伤，
+        // 与 A1「玩家对 Boss 的伤害仍受 200 上限与动态减伤约束」配套（既不豁免减伤、也不再吃反伤）。
+        if (boss.isTrueDamage(ctx.source)) {
+            return DamageResult.proceed();
+        }
         if (boss.level().isClientSide || boss.reflectApplying
             || !(boss.reflectRatio > 0.0)) {
             return DamageResult.proceed();
@@ -589,7 +612,11 @@ public final class DamagePipeline {
         //  - P1：由 stagePhase1Lock 锁 1 血并推进头衔/阶段过渡；
         //  - P2：由 stagePhase2Pending 锁 1 血并进入 PHASE2_PENDING 内部死亡过渡。
         // 放行让后续阶段处理，避免高爆发一击打穿最后 1 血被误判为作弊反复触发反作弊。
-        if (boss.bossState.isPhase1Combat() || boss.bossState.isPhase2Combat()) {
+        // 2026-09-10：投票/转场同样属于"锁血窗口"（stagePhase1Lock 会钳 1 并取消），
+        // 原实现把它们落到下方惩罚分支 → 断魂等机制触发时误报作弊 + 清效果 + 广播惊扰玩家。
+        if (boss.bossState.isPhase1Combat() || boss.bossState.isPhase2Combat()
+            || boss.bossState == BossState.PHASE1_VOTE
+            || boss.bossState == BossState.PHASE1_TRANSITION) {
             return DamageResult.proceed();
         }
 
@@ -655,7 +682,23 @@ public final class DamagePipeline {
         //   非 x.9 头衔锁血（用户裁决「钳在头衔段底，逐格推进」）：大伤害打到段底以下 →
         //     钳在当前头衔段底 + 立即推进头衔（titleIndex+1 + 重设锁血），不锁 1 血、不跳段，
         //     保证中间头衔逐格走完（BossFlag 逐个授予），且不被一次大伤害直接打死。
-        if (!boss.bossState.isPhase1Combat() && boss.bossState != BossState.PHASE1_PENDING) {
+        // 2026-09-10 实测修复：挂起窗口统一处理——原实现只认 PHASE1_PENDING，PHASE1_VOTE 与
+        // PHASE1_TRANSITION 落进 proceed()（完全不锁血），而实测 1.9 被打死正发生在这两个窗口
+        // （前置模组断魂在 Post 里直写血量 → hurt 收尾判定即击杀 → 一阶段未清 → 无掉落不进投票）。
+        boolean frozenPhase1 = boss.bossState == BossState.PHASE1_PENDING
+            || boss.bossState == BossState.PHASE1_VOTE
+            || boss.bossState == BossState.PHASE1_TRANSITION;
+        if (frozenPhase1) {
+            // 挂起窗口全程锁 1 血：>1 的伤害正常结算（与 PENDING 既有口径一致），任何会把血量
+            // 打到 <1 的一律钳 1 + 取消。
+            if (boss.getHealth() - ctx.amount < 1.0f) {
+                boss.setHealth(1.0f);
+                boss.anticheat.markLegalHealthChange(1.0f);
+                return DamageResult.cancel();
+            }
+            return DamageResult.proceed();
+        }
+        if (!boss.bossState.isPhase1Combat()) {
             return DamageResult.proceed();
         }
         boolean atLastTitle = boss.titleIndex == RediosEntity.PHASE1_TITLES.size() - 1;
@@ -672,15 +715,6 @@ public final class DamagePipeline {
             boss.anticheat.markLegalHealthChange(1.0f);
             boss.transitionTo(BossState.PHASE1_PENDING);
             boss.enterPendingState();
-            return DamageResult.cancel();
-        }
-        if (boss.bossState == BossState.PHASE1_PENDING
-            && boss.getHealth() - ctx.amount < 1.0f) {
-            // pending 唯一目的 = 防止击杀误判（2026-09-04 最终口径）：仅当本次伤害会把血量
-            // 扣到 <1 时钳 1 并取消该伤害（防死）；血量 >1 的伤害一律正常结算（不做任何改动）。
-            // Boss 在 pending 期间可攻击/可回血/可移动/可切武器，仅锁 1 血防误判死亡。
-            boss.setHealth(1.0f);
-            boss.anticheat.markLegalHealthChange(1.0f);
             return DamageResult.cancel();
         }
         if (boss.bossState == BossState.PHASE1_COMBAT && !atLastTitle

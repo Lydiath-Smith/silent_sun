@@ -31,6 +31,10 @@ public class BladeAttackGoal extends Goal {
     private int burstDriveCooldown;
     /** 幻影剑齐射冷却：约 3~4.5 秒一波。Boss（Mob）进不了 SummonedSwordArts 玩家入口，由 silent_sun 代打直发 */
     private int phantomSwordCooldown;
+    /** 导航刷新节流（W6）：不必每 tick 重算路径 */
+    private int pathRefreshCooldown;
+    private double lastPathX;
+    private double lastPathZ;
 
     public static boolean isAvailable() {
         return IntegrationContract.isSlashBladeIntegrationAvailable();
@@ -39,7 +43,7 @@ public class BladeAttackGoal extends Goal {
     public BladeAttackGoal(Mob boss) {
         this.boss = boss;
         this.redios = boss instanceof RediosEntity r ? r : null;
-        this.setFlags(EnumSet.of(Flag.LOOK));
+        this.setFlags(EnumSet.of(Flag.LOOK, Flag.MOVE));
         this.available = IntegrationContract.isSlashBladeIntegrationAvailable();
     }
 
@@ -48,7 +52,8 @@ public class BladeAttackGoal extends Goal {
         if (!available || this.redios == null) return;
         // 首拍零冷却治理：四路攻击（近身连击/剑气/SA/幻影剑）给随机初值错峰，
         // 避免刀窗口开启第一个 tick 四路齐射导致斩击实体爆发。
-        this.cooldown = 40 + boss.getRandom().nextInt(40);
+        // 2026-09-10 用户裁决：SA 首拍定在 1~3 秒（20~59 tick），切刀后就能甩出 SA。
+        this.cooldown = 20 + boss.getRandom().nextInt(40);
         // 普攻首拍按刀攻速（伪玩家，2026-09-01）：灭刀断 4.0 → 5 tick，随激怒缩短
         this.comboCooldown = this.redios.getAttackCooldownTicks();
         this.burstDriveCooldown = 20 + boss.getRandom().nextInt(10);
@@ -63,6 +68,13 @@ public class BladeAttackGoal extends Goal {
     public boolean canUse() {
         if (!available) return false;
         if (this.redios != null && !this.redios.isBladeAttackAllowed()) {
+            return false;
+        }
+        // 2026-09-10（W6 修复）：补上刀窗口判定——原先只判 isBladeAttackAllowed，而本 goal
+        // 抢着 Flag.MOVE（压制 RandomStrollGoal 等），tick() 里又在非刀窗口直接 return →
+        // 结果"刀没出鞘也占着移动标志每 tick 空转"，Boss 在非刀窗口既不能漫游也不受别的 goal 支配。
+        // 刀窗口是否开启是 tick() 里早就有的判据，这里补齐即可（不改变"刀窗口期间追击"的设计）。
+        if (this.redios != null && !this.redios.isBladeModeActive()) {
             return false;
         }
         LivingEntity target = boss.getTarget();
@@ -99,6 +111,20 @@ public class BladeAttackGoal extends Goal {
         IntegrationContract.tryTickBladeComboStuckGuard(boss);
 
         boss.getLookControl().setLookAt(target);
+        // M18：刀窗口期间追击目标（MOVE flag + 导航逼近），玩家退到 3 格外不再站桩。
+        // 2026-09-10（W6 修复）：导航加节流——6 tick 一次，或目标水平位移超过 1.5 格才重算，
+        // 避免每 tick 调 moveTo 重置寻路重算计时（配合 canUse 的刀窗口判定，非窗口不再占 MOVE）。
+        if (this.pathRefreshCooldown > 0) {
+            this.pathRefreshCooldown--;
+        }
+        double pathDx = target.getX() - this.lastPathX;
+        double pathDz = target.getZ() - this.lastPathZ;
+        if (this.pathRefreshCooldown <= 0 || pathDx * pathDx + pathDz * pathDz > 2.25) {
+            boss.getNavigation().moveTo(target, 1.0);
+            this.lastPathX = target.getX();
+            this.lastPathZ = target.getZ();
+            this.pathRefreshCooldown = 6;
+        }
 
         if (cooldown > 0) {
             cooldown--;
@@ -139,7 +165,8 @@ public class BladeAttackGoal extends Goal {
             // 中距离（3~15 格）：从 slash_arts 注册表随机施放一个 SA
             if (this.redios != null) this.redios.markSoulSeverIfUnlocked(target);
             IntegrationContract.tryInvokeRandomSA(boss);
-            cooldown = 80 + boss.getRandom().nextInt(40);
+            // 2026-09-10 用户裁决：SA 间隔 3~5 秒（60~99 tick）
+            cooldown = 60 + boss.getRandom().nextInt(40);
         }
 
         // 幻影剑齐射：Boss 进不了 SummonedSwordArts（perform* 均要求 ServerPlayer），

@@ -75,6 +75,9 @@ final class AntiCheatLayer {
     private int antiHardStunCooldownTicks = 0;
     private int ridePunishCooldownTicks = 0;
     int creativeLeaveTimerTicks = -1;
+    /** 创造模式离场窗口：创造/旁观参战者出现后给的 10 分钟切回生存时间（DamagePipeline 与
+     *  回场复核共用同一常量，避免两处硬编码漂移）。 */
+    static final int CREATIVE_LEAVE_WINDOW_TICKS = 12000;
 
     // Package-private: accessed by DamagePipeline
     final Set<UUID> creativeStrikers = new HashSet<>();
@@ -148,9 +151,43 @@ final class AntiCheatLayer {
                 }
             }
             tickCreativeToSurvivalCheck(serverLevel);
+            // 2026-09-10 实测修复：这个窗口只在「**当下**仍有创造/旁观参战者」时才有意义。
+            // 原实现只在玩家切回生存时把他移出 creativeStrikers，却**不撤计时器**——于是计时器
+            // 继续跑满 10 分钟，到点时玩家早已是生存模式，Boss 仍被判"创造窗口到期"→ 友好离场 +
+            // 无掉落 + 设冷却（实测 P2 掉落就是这样丢的；玩家当时并未处于创造模式）。
+            if (!this.hasActiveCreativeStriker()) {
+                this.creativeLeaveTimerTicks = -1;
+                return false;
+            }
             return this.creativeLeaveTimerTicks < 0;
         }
         return false;
+    }
+
+    /** 是否仍有"当下处于创造/旁观且在线"的参战者（离线或已切回生存的不算）。 */
+    private boolean hasActiveCreativeStriker() {
+        for (UUID id : this.creativeStrikers) {
+            ServerPlayer player = boss.getServerPlayer(id);
+            if (player != null && player.isAlive() && (player.isCreative() || player.isSpectator())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 回场/读档后复核创造离场窗口（2026-09-10 实测修复）。
+     * <p>
+     * 现场证据：Boss 被第三方模组（寰宇支配之剑的"清除实体"）删除 → 账本在 400 tick 宽限期后
+     * 重建回场（`Redios rebuilt from battle record … externally removed`）；但该计时器**只在实体
+     * tick 时递减**，Boss 被删除期间冻在原地，回场后第一 tick 即跨过 0 → 刚回来的 Boss 立刻走
+     * 「创造模式离场」（友好离场 + 无掉落 + 设冷却，实测量级 48 毫秒）→ 掉落与后续流程全丢。
+     * <p>
+     * 修复：读档/回场一律不继承残留倒计时，而是按**当下实际状态**重新判定——仍有创造/旁观
+     * 参战者则重新给满窗口（期间每次命中照常续），否则关掉计时器，交给常规脱战/卸载判定。
+     */
+    void rearmCreativeLeaveAfterRestore() {
+        this.creativeLeaveTimerTicks = this.hasActiveCreativeStriker() ? CREATIVE_LEAVE_WINDOW_TICKS : -1;
     }
 
     void tickRidePunish(ServerLevel serverLevel) {

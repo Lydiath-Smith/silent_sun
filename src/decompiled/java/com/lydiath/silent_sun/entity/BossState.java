@@ -121,9 +121,15 @@ public enum BossState {
     }
 
     /**
-     * 无战斗安全窗口：投票 / 转阶段 / 一阶段濒死等待。
-     * 这些状态下 Boss 不参与任何战斗逻辑，failsafe 清场与区块卸载结算必须豁免，
-     * 防止服务器波动或短暂无人加载导致 Boss 无奖励消失。
+     * 无战斗安全窗口：投票 / 转阶段 / 一阶段濒死等待 / 二阶段濒死等待。
+     * <p>
+     * <b>当前唯一消费者是 {@code RediosEntity.tickFailsafe}</b>（这些状态下不触发 failsafe 清场，
+     * 防止服务器波动或短暂低帧导致 Boss 无奖励消失）。
+     * <p>
+     * 历史沿革（2026-09-10 核对）：0.0.24 及以前它还被 {@code checkBattleAreaUnloaded} 使用，
+     * 用于豁免区块卸载结算；该豁免已按 2026-09-01 用户裁决「区块都卸载了就让人走吧」**有意删除**——
+     * 即冻结态也会因区块卸载退场。此处保留原名仅为兼容既有调用与历史语义，
+     * <b>不要再把它当成"卸载结算豁免"的判据</b>。
      */
     public boolean isSafeWindow() {
         return this == PHASE1_VOTE || this == PHASE1_TRANSITION || this == PHASE1_PENDING || this == PHASE2_PENDING;

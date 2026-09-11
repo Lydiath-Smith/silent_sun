@@ -64,19 +64,23 @@ extends SavedData {
         return Math.max(0L, this.nextAllowedGameTime - overworld(level).getDayTime());
     }
 
+    /** 记录一次冷却期内的召唤尝试（仅冷却中调用）；计数在冷却到期成功召唤处显式清零。 */
     public int recordSummonAttempt(ServerLevel level) {
-        if (this.isOnCooldown(level)) {
-            this.summonAttemptCount++;
-            this.setDirty();
-        } else {
-            this.summonAttemptCount = 0;
-            this.setDirty();
-        }
+        this.summonAttemptCount++;
+        this.setDirty();
         return this.summonAttemptCount;
     }
 
     public int getSummonAttemptCount() {
         return this.summonAttemptCount;
+    }
+
+    /** 冷却到期时清零连点计数（否则计数跨冷却周期累积，下一周期首次连点即触发额外提示）。 */
+    public void resetSummonAttempt() {
+        if (this.summonAttemptCount != 0) {
+            this.summonAttemptCount = 0;
+            this.setDirty();
+        }
     }
 
     public CompoundTag save(CompoundTag tag, HolderLookup.Provider registries) {

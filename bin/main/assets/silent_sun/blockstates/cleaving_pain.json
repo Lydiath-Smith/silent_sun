@@ -1,0 +1,13 @@
+{
+    "variants":  {
+                     "fluid=0":  {
+                                     "model":  "silent_sun:block/cleaving_pain"
+                                 },
+                     "fluid=1":  {
+                                     "model":  "silent_sun:block/cleaving_pain_lava"
+                                 },
+                     "fluid=2":  {
+                                     "model":  "silent_sun:block/cleaving_pain_water"
+                                 }
+                 }
+}

@@ -1,8 +1,13 @@
 {
   "itemGroup.silent_sun": "Silent Sun",
   "item.silent_sun.redios_sigil": "Redios Sigil",
-  "item.silent_sun.redios_sigil.tooltip.1": "Summons Shattered Mirror Shadow: Redios and starts the battle.",
-  "item.silent_sun.redios_sigil.tooltip.2": "Only one Redios may exist per battle. If one is already present, using this teleports you nearby and makes it glow, without consuming the item.",
+  "block.silent_sun.cleaving_pain": "Cleaving Pain",
+  "tooltip.silent_sun.cleaving_pain.1": "After placing: use a lava bucket on it to fill it, then right-click to drop in a diamond.",
+  "tooltip.silent_sun.cleaving_pain.2": "The diamond sinks into the lava and draws a lightning bolt, dropping the Redios Sigil.",
+  "tooltip.silent_sun.cleaving_pain.3": "Empty the lava, fill it with water, then use the Redios Sigil on the altar to summon Redios.",
+  "tooltip.silent_sun.cleaving_pain.4": "Requires a diamond pickaxe to harvest; mining drops the block itself so it can be recovered and replaced.",
+  "item.silent_sun.redios_sigil.tooltip.1": "Use on a water-filled Cleaving Pain altar to summon Shattered Mirror Shadow: Redios.",
+  "item.silent_sun.redios_sigil.tooltip.2": "Only one Redios may exist per battle. If one is already present, using this teleports you nearby to pursue it. The sigil is never consumed.",
   "entity.silent_sun.redios": "Shattered Mirror Shadow: Redios",
   "title.silent_sun.redios.phase1.0": "Given, It Shall Be",
   "title.silent_sun.redios.phase1.1": "Dustless Benevolence",
@@ -76,6 +81,8 @@
   "command.silent_sun.redios.reset_summon_cd.success": "Reset Redios summon cooldown and battle ledger.",
   "command.silent_sun.reload_all.dispatch_failed": "Failed to dispatch /reload.",
   "message.silent_sun.redios.no_loot_farewell": "See you! Until next time.",
+  "message.silent_sun.redios.all_inactive_warning": "⚠ All participants are out of the fight (dead / creative / spectator / other dimension): the boss will leave without loot in 10 seconds. Return to survival and back to the arena to cancel.",
+  "message.silent_sun.cleaving_pain.fluid_blocked": "It's as if an air wall is blocking you.",
   "message.silent_sun.redios.challenge_success": "That was fun. Sorry if it gave you a headache.",
   "message.silent_sun.redios.anticheat.tamper": "What are you doing?",
   "message.silent_sun.redios.anticheat.punish": "Cut it out. Let's keep this serious.",
@@ -114,5 +121,7 @@
   "advancement.silent_sun.phase2_win.desc": "Please, no horror movie.",
   "death.attack.redios_attack": "Put your back into it! Can't fight with zero effort!",
   "death.attack.redios_attack.item": "Put your back into it! Can't fight with zero effort!",
-  "subtitles.silent_sun.starfall_salvo_pre_explosion": "Shattered Mirror Shadow: Finger Snap"
+  "death.attack.redios_spectrum": "All defenses are meaningless against this blow.",
+  "subtitles.silent_sun.starfall_salvo_pre_explosion": "Shattered Mirror Shadow: Finger Snap",
+  "subtitles.silent_sun.redios_summon": "Baby, I love you so much"
 }
