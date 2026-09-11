@@ -5537,14 +5537,21 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         return snapshot;
     }
 
-    /** 账本已单独携带的键（rebuildFromRecord 会显式写它们，快照里剔除以免重复存储与覆盖冲突）。 */
+    /**
+     * 账本已单独携带的键（rebuildFromRecord 会显式写它们，快照里剔除以免重复存储与覆盖冲突）。
+     * <p>
+     * 2026-09-11（代码审计 G05 #3 修复）：**移除 4 个锚点键**（{@code SilentSunAnchorX/Y/Z/Dim}）。
+     * 它们原先列在这里的理由是「账本已单独携带」，但 {@code BattleRecord} **并没有锚点字段**，
+     * {@code rebuildFromRecord} 只是用 {@code record.pos}（Boss 的**位置**）顶替锚点 ——
+     * 于是锚点在每次回场后丢失：防逐客拉回的目标点变成「被甩飞后所在的位置」，机制形同虚设。
+     * 移除后快照会原样携带锚点，读端仍是 {@code restoreStateFromNbt}（键名无需改动）。
+     */
     private static final String[] LEDGER_CARRIED_KEYS = new String[]{
         "SilentSunDataVersion", "SilentSunPhase", "SilentSunTitleIndex", "SilentSunSoulSeverY",
         "SilentSunBossState", "SilentSunTitleLock", "SilentSunColorlessChallengeTicks",
         "SilentSunBattleParticipants", "SilentSunExpelledPlayers", "SilentSunBattleStartTime",
         "SilentSunInitialParticipants", "SilentSunTwilightExpelled", "SilentSunPlayerNetDamage",
-        "SilentSunDamageTypeTotals", "SilentSunDarkStarRestore",
-        "SilentSunAnchorX", "SilentSunAnchorY", "SilentSunAnchorZ", "SilentSunAnchorDim"
+        "SilentSunDamageTypeTotals", "SilentSunDarkStarRestore"
     };
 
     /*
@@ -5924,8 +5931,14 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             recordTag.merge(record.unlockFlags.copy());
         }
         boss.restoreStateFromNbt(recordTag);
-        boss.battleAnchorPos = record.pos;
-        boss.battleAnchorDim = record.dimension;
+        // 2026-09-11（代码审计 G05 #3 修复）：锚点优先用快照携带的值（锚点键已不再被
+        // LEDGER_CARRIED_KEYS 剔除，restoreStateFromNbt 会读回真实锚点）；仅在旧档/缺键时
+        // 才退化为「Boss 当前位置」。原实现**无条件**用 record.pos 顶替 —— 而账本并不携带锚点，
+        // 于是每次回场都把开战锚点覆盖成 Boss 当时所在的位置。
+        if (boss.battleAnchorPos == null || boss.battleAnchorDim == null) {
+            boss.battleAnchorPos = record.pos;
+            boss.battleAnchorDim = record.dimension;
+        }
         boss.moveTo((double)record.pos.getX() + 0.5, record.pos.getY(), (double)record.pos.getZ() + 0.5, 0.0f, 0.0f);
         boss.applyPhaseMaxHealth(level);
         float maxHealth = boss.getMaxHealth();
