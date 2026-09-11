@@ -25,6 +25,15 @@ public final class StarfallCurtainEntity extends Entity {
     public static final int MAX_LIFETIME_TICKS = 30;
 
     private int lifetimeTicks = MAX_LIFETIME_TICKS;
+    /**
+     * 本次幕布的总时长（tick）。
+     * <p>
+     * 2026-09-11（代码审计 G10 #3 → 作者裁定采用本方案）：渲染器原先直接读静态常量
+     * {@link #MAX_LIFETIME_TICKS} 计算淡出进度 —— 一旦 {@link #initCurtain(int)} 传入别的时长，
+     * 渲染进度就与实体实际生命周期脱钩（同一语义两处独立定义）。现由实体自己记住本次总时长，
+     * 渲染器只读实例真值。两者都不入档：幕布仅存活 30 tick，跨区块卸载的概率可忽略。
+     */
+    private int totalLifetimeTicks = MAX_LIFETIME_TICKS;
     private UUID ownerUuid = null;
     /** 合法移除标记：生命周期到期前置 true，防止被误判为作弊清除。 */
     private boolean legitRemoval = false;
@@ -38,6 +47,8 @@ public final class StarfallCurtainEntity extends Entity {
 
     public void initCurtain(int lifetimeTicks) {
         this.lifetimeTicks = Math.max(1, lifetimeTicks);
+        // 2026-09-11（G10 #3）：同时记住本次总时长，供渲染器计算淡出进度（见字段注释）。
+        this.totalLifetimeTicks = this.lifetimeTicks;
     }
 
     /** 生成时由 Boss 设置，用于作弊清除时回调 Boss 补刀。 */
@@ -66,6 +77,11 @@ public final class StarfallCurtainEntity extends Entity {
 
     public int getLifetimeTicks() {
         return this.lifetimeTicks;
+    }
+
+    /** 本次幕布的总时长（tick）；渲染器用它计算淡出进度，不再读静态常量。 */
+    public int getTotalLifetimeTicks() {
+        return this.totalLifetimeTicks;
     }
 
     public boolean isPickable() {

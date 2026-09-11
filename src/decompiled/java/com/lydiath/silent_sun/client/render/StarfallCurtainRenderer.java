@@ -28,8 +28,13 @@ public final class StarfallCurtainRenderer extends EntityRenderer<StarfallCurtai
     }
 
     public void render(StarfallCurtainEntity entity, float entityYaw, float partialTick, PoseStack poseStack, MultiBufferSource buffer, int packedLight) {
-        float age = Math.min(entity.tickCount, StarfallCurtainEntity.MAX_LIFETIME_TICKS);
-        float progress = age / (float) StarfallCurtainEntity.MAX_LIFETIME_TICKS;
+        // 2026-09-11（代码审计 G10 #3 → 作者裁定采用本方案）：淡出进度改用**实体实例真值**。
+        // 原实现的总时长直接读静态常量 MAX_LIFETIME_TICKS ⇒ 一旦 initCurtain 传入别的时长，
+        // 渲染进度就与实体实际生命周期脱钩（同一语义两处独立定义）。
+        // 现由实体的「剩余 tick / 本次总时长」计算，与实体实际生命周期同源。
+        float total = Math.max(1, entity.getTotalLifetimeTicks());
+        float remaining = Math.max(0, entity.getLifetimeTicks());
+        float progress = 1.0f - remaining / total;
         int alpha = Math.max(0, (int) ((1.0f - progress) * PEAK_ALPHA));
         if (alpha <= 0) {
             return;
