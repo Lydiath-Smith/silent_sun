@@ -80,6 +80,19 @@ final class AntiCheatLayer {
     static final int CREATIVE_LEAVE_WINDOW_TICKS = 12000;
 
     // Package-private: accessed by DamagePipeline
+    /**
+     * 创造归还的防爆上限（2026-09-11 代码审计 G08 #2 修复）。
+     * <p>
+     * {@code creativeGainedItems} 的 value 来自存档 NBT 的 {@code Count}，而读档时原先只做
+     * {@code Math.max(1, ...)}、**无上界**；归还时又按 {@code maxStackSize} 逐组展开
+     * （不可堆叠物品 = 每个计数单位一个 {@code ItemStack}）⇒ 存档里写一个巨大 Count，
+     * 即可让归还那一 tick 构造海量对象（冻结 / OOM）。
+     * <p>
+     * 上限取 3456 栈 = 54 格 × 64，远超「创造模式下正常拾取」的合理量级；超出即截断并告警。
+     */
+    private static final int CREATIVE_RETURN_MAX_COUNT_PER_ENTRY = 3456;
+    private static final int CREATIVE_RETURN_MAX_STACKS = 3456;
+
     final Set<UUID> creativeStrikers = new HashSet<>();
     // G4: 追踪"检测开始(首次攻击) → 切回生存"期间该玩家获得的所有物品。
     // creativeGainedItems 为单调累计净拾取量；creativePrevInventory 为上一 tick
@@ -464,6 +477,14 @@ final class AntiCheatLayer {
                         int remaining = Math.max(0, e.getValue());
                         int maxStack = Math.max(1, new ItemStack(e.getKey().item).getMaxStackSize());
                         while (remaining > 0) {
+                            // 2026-09-11（代码审计 G08 #2 修复）：总栈数封顶。不可堆叠物品
+                            // （maxStack == 1）每个计数单位都要构造一个 ItemStack，存档被改过时
+                            // 这里就是 OOM / 单 tick 冻结的入口。
+                            if (items.size() >= CREATIVE_RETURN_MAX_STACKS) {
+                                CURIOS_LOG.warn("创造归还物品栈数达到上限 {}，本次截断：player={}",
+                                    CREATIVE_RETURN_MAX_STACKS, id);
+                                break;
+                            }
                             ItemStack stack = new ItemStack(e.getKey().item, Math.min(remaining, maxStack));
                             if (e.getKey().tag != null) {
                                 stack.set(DataComponents.CUSTOM_DATA, CustomData.of(e.getKey().tag));
@@ -471,6 +492,7 @@ final class AntiCheatLayer {
                             items.add(stack);
                             remaining -= stack.getCount();
                         }
+                        if (items.size() >= CREATIVE_RETURN_MAX_STACKS) break;
                     }
                 }
                 // 2026-08-12：期间没拿任何东西 → 不给予任何物品（删除原 D2 fallback
@@ -724,7 +746,14 @@ final class AntiCheatLayer {
                 Item item = BuiltInRegistries.ITEM.get(rl);
                 if (item == null) continue;
                 CompoundTag customTag = ie.contains("Tag", 10) ? ie.getCompound("Tag") : null;
-                int count = Math.max(1, ie.getInt("Count"));
+                // 2026-09-11（代码审计 G08 #2 修复）：单条目计数封顶，防止存档里的巨大 Count
+                // 在归还那一 tick 被逐组展开成海量 ItemStack。
+                int rawCount = ie.getInt("Count");
+                int count = Math.max(1, Math.min(CREATIVE_RETURN_MAX_COUNT_PER_ENTRY, rawCount));
+                if (rawCount > CREATIVE_RETURN_MAX_COUNT_PER_ENTRY) {
+                    CURIOS_LOG.warn("创造归还清单条目 Count 超上限，已截断：item={} raw={} cap={}",
+                        ie.getString("Item"), rawCount, CREATIVE_RETURN_MAX_COUNT_PER_ENTRY);
+                }
                 gained.put(new StackKey(item, customTag), count);
             }
             // 即使清单为空也保留条目，使 tickCreativeTracking 能据此重建物品栏基线继续追踪。
