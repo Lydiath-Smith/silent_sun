@@ -66,8 +66,10 @@ import net.neoforged.neoforge.event.tick.ServerTickEvent;
 
 @EventBusSubscriber(modid="silent_sun")
 public final class CommonEvents {
-    public static final String SOUL_SEVER_BONUS_KEY = "silent_sun:soul_sever_bonus";
-    public static final String SOUL_SEVER_APPLYING_KEY = "silent_sun:soul_sever_applying";
+    // 2026-09-11（代码审计 G12 #5 修复）：原 SOUL_SEVER_BONUS_KEY / SOUL_SEVER_APPLYING_KEY 两个
+    // public 常量全库零读写（唯一使用点是清理残留时的 data.remove）。它们曾是「信任载体」式 NBT 键
+    //（第三方可伪造，见 AbsoluteDamageUtil 顶部的 2026-09-11 裁决：标记已改走内存映射），
+    // 继续对外暴露只会误导为「仍有 bonus 结算 / 防重入通道」—— 已删除。
     private static final String PHASE2_CHOICE_BOSS_KEY = "silent_sun:phase2_choice_boss";
     private static final String SHARPEN_SOUL_SEVER_BOSS_KEY = "silent_sun:sharpen_soul_sever_boss";
     private static final String SHARPEN_SOUL_SEVER_AMP_KEY = "silent_sun:sharpen_soul_sever_amp";
@@ -598,8 +600,8 @@ public final class CommonEvents {
         data.remove(SHARPEN_SOUL_SEVER_BOSS_KEY);
         data.remove(SHARPEN_SOUL_SEVER_AMP_KEY);
         player.removeEffect(ModEffects.SOUL_SEVER);
-        data.remove(SOUL_SEVER_BONUS_KEY);
-        data.remove(SOUL_SEVER_APPLYING_KEY);
+        // 2026-09-11（代码审计 G12 #5）：SOUL_SEVER_BONUS_KEY / SOUL_SEVER_APPLYING_KEY 两条
+        // data.remove 随常量一并删除（本模组已不再写入这两个键，历史残留无需专门清理）。
     }
 
     public static void markRootlessBuffBlock(ServerPlayer player, UUID bossId) {

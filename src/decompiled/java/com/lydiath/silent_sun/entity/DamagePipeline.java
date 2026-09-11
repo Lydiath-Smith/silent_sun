@@ -353,7 +353,9 @@ public final class DamagePipeline {
             }
 
             boss.markBattleParticipant(attacker);
-            ctx.participantMarked = true;
+            // 2026-09-11（代码审计 G06 #8 / G07 #7 修复）：原此处还写 ctx.participantMarked = true，
+            // 但该字段**全库零读取** —— DamageContext 里承诺的「防止后续阶段重复调用」从未实现，
+            // 真正防重的是 stageAttackerResolution 只被调用一次。字段与本次写入一并删除。
         }
 
         return DamageResult.proceed();

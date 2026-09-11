@@ -29,12 +29,9 @@ public class DamageContext {
     @Nullable
     public LivingEntity attacker;
 
-    /**
-     * Set to {@code true} by {@code AttackerResolutionStage} once
-     * {@link RediosEntity#markBattleParticipant(LivingEntity)} has been called,
-     * to prevent duplicate calls in later stages.
-     */
-    public boolean participantMarked;
+    // 2026-09-11（代码审计 G06 #8 / G07 #7 修复）：原 participantMarked 字段已删除 ——
+    // 它只被 AttackerResolutionStage 写入、**全库零读取**；文档承诺的「防止后续阶段重复调用」
+    // 从未实现（真正防重的是该 stage 只被调用一次）。
 
     public DamageContext(RediosEntity boss, DamageSource source, float amount) {
         this.boss   = boss;

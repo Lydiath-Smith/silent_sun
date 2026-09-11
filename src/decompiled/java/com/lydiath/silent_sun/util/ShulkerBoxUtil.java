@@ -20,10 +20,8 @@ import net.minecraft.world.level.block.entity.ShulkerBoxBlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 
 public final class ShulkerBoxUtil {
-    public static ItemStack createShulkerBox(List<ItemStack> items, Component name) {
-        return ShulkerBoxUtil.createShulkerBox(Items.SHULKER_BOX, items, name);
-    }
-
+    // 2026-09-11（代码审计 G11 #8 修复）：原二参重载 createShulkerBox(items, name) 全库无调用者，
+    // 且把箱色硬编码成 Items.SHULKER_BOX（与现有两处奖励箱的白 / 棕都不符），误用会掉出无色箱 —— 已删除。
     public static ItemStack createShulkerBox(Item boxItem, List<ItemStack> items, Component name) {
         ItemStack box = new ItemStack((ItemLike)boxItem);
         if (name != null) {

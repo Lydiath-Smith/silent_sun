@@ -363,15 +363,9 @@ public final class IntegrationContract {
         }
     }
 
-    /**
-     * Force a refresh of the availability cache (for potential hot-load scenarios).
-     */
-    public static void invalidateAvailabilityCache() {
-        synchronized (IntegrationContract.class) {
-            cachedAvailable = null;
-            lastAvailabilityCheck = 0L;
-        }
-    }
+    // 2026-09-11（代码审计 G18 #3 修复）：原 invalidateAvailabilityCache() 全库零调用者，
+    // 且它只重置 cachedAvailable 与 lastAvailabilityCheck 两个字段，达不到「刷新可用性」的语义
+    // （reflectionInitialized 与 SA 池缓存都不清）—— 已删除。
 
     /**
      * Attempt to equip the boss with 灭刀·断·试做 via reflection.

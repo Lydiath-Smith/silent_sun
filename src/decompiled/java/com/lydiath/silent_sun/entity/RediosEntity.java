@@ -211,13 +211,9 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     static final List<Component> PHASE2_TITLES = List.of(Component.translatable("title.silent_sun.redios.phase2.0"), Component.translatable("title.silent_sun.redios.phase2.1"), Component.translatable("title.silent_sun.redios.phase2.2"), Component.translatable("title.silent_sun.redios.phase2.3"), Component.translatable("title.silent_sun.redios.phase2.4"), Component.translatable("title.silent_sun.redios.phase2.5"), Component.translatable("title.silent_sun.redios.phase2.6"), Component.translatable("title.silent_sun.redios.phase2.7"), Component.translatable("title.silent_sun.redios.phase2.8"), Component.translatable("title.silent_sun.redios.phase2.9"));
     static final TitleDef[] PHASE1_TITLE_DEFS = new TitleDef[]{TitleDef.p1(0, 15, new BossFlag[0]), TitleDef.p1(1, 15, new BossFlag[0]), TitleDef.p1(2, 15, BossFlag.WEAKNESS_CURSE, BossFlag.ENRAGE_STACKING), TitleDef.p1(3, 15, new BossFlag[0]), TitleDef.p1(4, 15, new BossFlag[0]), TitleDef.p1(5, 15, BossFlag.SOUL_SEVER_HARVEST), TitleDef.p1(6, 15, new BossFlag[0]), TitleDef.p1(7, 15, new BossFlag[0]), TitleDef.p1(8, 15, new BossFlag[0]), TitleDef.p1(9, 15, BossFlag.GUARD_BLOCK)};
     static final TitleDef[] PHASE2_TITLE_DEFS = new TitleDef[]{TitleDef.p2(0, 30, BossFlag.SEA_SKY_SOUL_SEVER), TitleDef.p2(1, 30, BossFlag.UNCONTROLLED_SPRINT), TitleDef.p2(2, 30, new BossFlag[0]), TitleDef.p2(3, 30, new BossFlag[0]), TitleDef.p2(4, 30, BossFlag.ASH_DAWN), TitleDef.p2(5, 30, new BossFlag[0]), TitleDef.p2(6, 30, new BossFlag[0]), TitleDef.p2(7, 30, BossFlag.BLACK_SUN), TitleDef.p2(8, 30, BossFlag.COLORLESS, BossFlag.ENRAGE_STACKING), TitleDef.p2(9, 30, new BossFlag[0])};
-    private static final EntityDataAccessor<Integer> CLIENT_PHASE = SynchedEntityData.defineId(RediosEntity.class, EntityDataSerializers.INT);
-    private static final EntityDataAccessor<Integer> CLIENT_TITLE_INDEX = SynchedEntityData.defineId(RediosEntity.class, EntityDataSerializers.INT);
     private static final EntityDataAccessor<Integer> CLIENT_TRANSITION_TICKS = SynchedEntityData.defineId(RediosEntity.class, EntityDataSerializers.INT);
     private static final EntityDataAccessor<Integer> CLIENT_BOSS_STATE = SynchedEntityData.defineId(RediosEntity.class, EntityDataSerializers.INT);
-    private static final EntityDataAccessor<Long> CLIENT_SOUL_SEVER_Y = SynchedEntityData.defineId(RediosEntity.class, EntityDataSerializers.LONG);
     private static final EntityDataAccessor<Integer> CLIENT_TWILIGHT_ACTIVE = SynchedEntityData.defineId(RediosEntity.class, EntityDataSerializers.INT);
-    private static final EntityDataAccessor<Integer> CLIENT_TITLE_LOCK_TICKS = SynchedEntityData.defineId(RediosEntity.class, EntityDataSerializers.INT);
     private static final EntityDataAccessor<Integer> CLIENT_INTRO_ACTIVE = SynchedEntityData.defineId(RediosEntity.class, EntityDataSerializers.INT);
     private static final EntityDataAccessor<Integer> CLIENT_SUMMON_INTRO_TICKS = SynchedEntityData.defineId(RediosEntity.class, EntityDataSerializers.INT);
     private static final int INTRO_TOTAL_TICKS = 80;
@@ -474,27 +470,19 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
 
     protected void defineSynchedData(SynchedEntityData.Builder builder) {
         super.defineSynchedData(builder);
-        builder.define(CLIENT_PHASE, 1);
-        builder.define(CLIENT_TITLE_INDEX, 0);
+        // 2026-09-11（代码审计 G13 #8 修复）：CLIENT_PHASE / CLIENT_TITLE_INDEX /
+        // CLIENT_SOUL_SEVER_Y / CLIENT_TITLE_LOCK_TICKS 四个同步位原先**只有写入、没有任何读取方**
+        // （唯一读取者是它们各自的 getClient*，而那 4 个 getter 全库零调用）⇒ 每 tick 白付同步开销。
+        // 已连同 accessor 定义、getter 与 syncClientRenderData 里的 set 一并删除。
         builder.define(CLIENT_TRANSITION_TICKS, 0);
         builder.define(CLIENT_BOSS_STATE, BossState.PHASE1_COMBAT.ordinal());
-        builder.define(CLIENT_SOUL_SEVER_Y, 0L);
         builder.define(CLIENT_TWILIGHT_ACTIVE, 0);
-        builder.define(CLIENT_TITLE_LOCK_TICKS, 0);
         builder.define(CLIENT_INTRO_ACTIVE, 0);
         builder.define(CLIENT_SUMMON_INTRO_TICKS, 0);
     }
 
     public int getClientSummonIntroTicks() {
         return this.entityData.get(CLIENT_SUMMON_INTRO_TICKS);
-    }
-
-    public int getClientPhase() {
-        return this.entityData.get(CLIENT_PHASE);
-    }
-
-    public int getClientTitleIndex() {
-        return this.entityData.get(CLIENT_TITLE_INDEX);
     }
 
     public int getClientTransitionTicks() {
@@ -507,10 +495,6 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         return ord >= 0 && ord < values.length ? values[ord] : BossState.PHASE1_COMBAT;
     }
 
-    public long getClientSoulSeverY() {
-        return (Long)this.entityData.get(CLIENT_SOUL_SEVER_Y);
-    }
-
     public boolean isClientTwilightActive() {
         return this.entityData.get(CLIENT_TWILIGHT_ACTIVE) != 0;
     }
@@ -519,21 +503,13 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         return this.entityData.get(CLIENT_INTRO_ACTIVE) != 0;
     }
 
-    public int getClientTitleLockTicks() {
-        return this.entityData.get(CLIENT_TITLE_LOCK_TICKS);
-    }
-
     private void syncClientRenderData() {
         if (this.level().isClientSide) {
             return;
         }
-        this.entityData.set(CLIENT_PHASE, this.phase);
-        this.entityData.set(CLIENT_TITLE_INDEX, this.titleIndex);
         this.entityData.set(CLIENT_TRANSITION_TICKS, this.transitionTicks);
         this.entityData.set(CLIENT_BOSS_STATE, this.bossState.ordinal());
-        this.entityData.set(CLIENT_SOUL_SEVER_Y, this.soulSeverY);
         this.entityData.set(CLIENT_TWILIGHT_ACTIVE, this.isTwilightMomentActive() ? 1 : 0);
-        this.entityData.set(CLIENT_TITLE_LOCK_TICKS, this.titleLockTicks);
         this.entityData.set(CLIENT_INTRO_ACTIVE, this.introTicks > 0 ? 1 : 0);
         this.entityData.set(CLIENT_SUMMON_INTRO_TICKS, this.summonIntroTicks);
     }
@@ -832,7 +808,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             // **Boss 永久停在转场态**（无敌 + die 被防死拦截 + failsafe 安全窗口豁免），无奖励卡死。
             // 配置 phaseTransitionSeconds = 0 时会踩同一条。
             if (this.transitionTicks <= 0) {
-                this.enterPhase2();
+                this.enterPhase2Combat();
             } else if (this.transitionTicks == this.transitionTotal() - 6) {
                 this.spawnTransitionImpact(serverLevel);
             }
@@ -1267,7 +1243,11 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         this.bossEvent.setVisible(true);
         this.bossEvent.setColor(BossEvent.BossBarColor.PURPLE);
         this.bossEvent.setOverlay(BossEvent.BossBarOverlay.PROGRESS);
-        this.setBossBarMax(this.getMaxHealth());
+        // 2026-09-11（代码审计 G14 #4 修复）：原此处调 setBossBarMax(...)，那是个**永久 no-op** ——
+        // 它反射查找 BossEvent 的 "maxProgress" 字段，而 1.21.1 的 BossEvent 只有
+        // name / progress / color / overlay / darkenScreen / playBossMusic / createWorldFog
+        // （setProgress 直接存归一化值）⇒ getDeclaredField 必抛，被空 catch 吞掉。
+        // 血条本就由下面这行归一化比值正确驱动，故删除方法与其调用。
         this.bossEvent.setProgress(this.getHealth() / this.getMaxHealth());
         this.bossEvent.setName(this.getBossBarName());
     }
@@ -2304,17 +2284,6 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         }
     }
 
-    private void setBossBarMax(float maxHealth) {
-        try {
-            Field maxField = BossEvent.class.getDeclaredField("maxProgress");
-            maxField.setAccessible(true);
-            maxField.set(this.bossEvent, Float.valueOf(maxHealth));
-        }
-        catch (ReflectiveOperationException reflectiveOperationException) {
-            // empty catch block
-        }
-    }
-
     private UUID tryResolveOwnerUuidFromDamageSource(DamageSource source) {
         if (source == null) {
             return null;
@@ -2643,10 +2612,8 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         this.leaveBattle(serverLevel, Component.translatable("message.silent_sun.redios.no_loot_farewell").withStyle(ChatFormatting.GOLD), false);
     }
 
-    void bossLeaveFriendly(ServerLevel serverLevel, Component farewellMsg) {
-        this.leaveBattle(serverLevel, farewellMsg, true);
-    }
-
+    // 2026-09-11（代码审计 G14 #6 修复）：原 bossLeaveFriendly(...)（= leaveBattle(..., setCooldown=true)）
+    // 自 2026-09-11 创造离场改造后已无任何调用者，且其「设冷却」与现行 §2.4 的 0 冷却口径相反 —— 已删除。
     private void resolveColorlessChallengeSuccess(ServerLevel serverLevel) {
         this.setTarget(null);
         this.setNoAi(true);
@@ -3948,17 +3915,8 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         }
     }
 
-    private boolean isFriendlyEntity(LivingEntity living) {
-        OwnableEntity ownable;
-        if (living instanceof Player) {
-            return true;
-        }
-        if (!(living instanceof Mob)) {
-            return true;
-        }
-        return living instanceof NeutralMob || living instanceof Animal || living instanceof Npc || living instanceof OwnableEntity && (ownable = (OwnableEntity)living).getOwnerUUID() != null;
-    }
-
+    // 2026-09-11（代码审计 G15 #5 修复）：原 isFriendlyEntity(...) 自 A10 重构后已无任何调用者
+    // （替代者是 isAuraTarget），保留它只会诱使后续改动回到「连村民 / 宠物一起打」的旧行为 —— 已删除。
     private boolean isSharpenTrialActive() {
         return this.phase == 1 && this.titleIndex == 8;
     }
@@ -4838,9 +4796,8 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         this.onTitleChanged(oldPhase, oldTitleIndex, this.phase, this.titleIndex);
     }
 
-    private void enterPhase2() {
-        this.enterPhase2Combat();
-    }
+    // 2026-09-11（代码审计 G16 #8 修复）：原 enterPhase2() 只是 enterPhase2Combat() 的同义包装，
+    // 唯一调用点已改为直调后者 —— 已删除。
 
     void enterNoResurrectionPhase2() {
         this.enterPhase2Combat();
