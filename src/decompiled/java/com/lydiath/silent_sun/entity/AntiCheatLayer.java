@@ -100,8 +100,9 @@ final class AntiCheatLayer {
     final Map<UUID, Map<StackKey, Integer>> creativeGainedItems = new HashMap<>();
     final Map<UUID, Map<StackKey, Integer>> creativePrevInventory = new HashMap<>();
 
-    // Package-private: accessed by RediosEntity.removeAntiCheatCooldowns
-    final Set<UUID> antiCheatCooldownPlayers = new HashSet<>();
+    // 2026-09-11（代码审计 G08 #3 修复）：原 antiCheatCooldownPlayers 只写不读 —— 唯一「读」是把集合
+    // 写进存档，即每存档写一份**无用**的 UUID 列表。字段、3 处 add、读写档块与
+    // RediosEntity.removeAntiCheatCooldowns() 已一并删除。
 
     AntiCheatLayer(RediosEntity boss) {
         this.boss = boss;
@@ -660,7 +661,6 @@ final class AntiCheatLayer {
         }
         this.antiCheatPunishGlobalCooldownTicks = 600;
         if (attacker instanceof Player player) {
-            this.antiCheatCooldownPlayers.add(player.getUUID());
             // 物品强制冷却 2 秒（40 tick）
             this.applyInventoryAndCuriosCooldowns(player, 40);
             MutableComponent tip = Component.translatable("message.silent_sun.redios.anticheat.punish").withStyle(ChatFormatting.DARK_RED);
@@ -689,14 +689,12 @@ final class AntiCheatLayer {
             for (UUID id : new HashSet<>(boss.battleParticipants)) {
                 ServerPlayer player = boss.getServerPlayer(id);
                 if (player != null) {
-                    this.antiCheatCooldownPlayers.add(player.getUUID());
                     this.applyInventoryAndCuriosCooldowns(player, cooldownTicks);
                 }
             }
             for (UUID id : new HashSet<>(boss.expelledPlayers)) {
                 ServerPlayer player = boss.getServerPlayer(id);
                 if (player != null) {
-                    this.antiCheatCooldownPlayers.add(player.getUUID());
                     this.applyInventoryAndCuriosCooldowns(player, cooldownTicks);
                 }
             }
@@ -777,15 +775,6 @@ final class AntiCheatLayer {
             }
         }
 
-        this.antiCheatCooldownPlayers.clear();
-        ListTag antiCheatCDList = tag.getList("SilentSunAntiCheatCooldownPlayers", 10);
-        for (int ai = 0; ai < antiCheatCDList.size(); ai++) {
-            CompoundTag entry = antiCheatCDList.getCompound(ai);
-            if (entry.hasUUID("Id")) {
-                this.antiCheatCooldownPlayers.add(entry.getUUID("Id"));
-            }
-        }
-
         this.readCreativeGainedItems(tag);
     }
 
@@ -803,14 +792,6 @@ final class AntiCheatLayer {
             creativeSaveList.add(entry);
         }
         tag.put("SilentSunCreativeStrikers", creativeSaveList);
-
-        ListTag antiCheatCDSaveList = new ListTag();
-        for (UUID id : this.antiCheatCooldownPlayers) {
-            CompoundTag entry = new CompoundTag();
-            entry.putUUID("Id", id);
-            antiCheatCDSaveList.add(entry);
-        }
-        tag.put("SilentSunAntiCheatCooldownPlayers", antiCheatCDSaveList);
 
         this.writeCreativeGainedItems(tag);
     }

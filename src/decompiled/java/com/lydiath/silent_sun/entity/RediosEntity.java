@@ -160,10 +160,9 @@ import software.bernie.geckolib.util.GeckoLibUtil;
 public final class RediosEntity
 extends Monster
 implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
-    private static final double EXPEL_REPEL_RADIUS = 24.0;
-    private static final double EXPEL_REPEL_RADIUS_SQR = 576.0;
-    private static final int INITIAL_PARTICIPANT_CAPTURE_TICKS = 200;
-    private static final int DARK_STAR_RADIUS = 13;
+    // 2026-09-11（代码审计 G13 #7 修复）：原 EXPEL_REPEL_RADIUS / EXPEL_REPEL_RADIUS_SQR /
+    // INITIAL_PARTICIPANT_CAPTURE_TICKS / DARK_STAR_RADIUS 四个常量全库**零消费**
+    //（消费点写的是同义字面量；且排斥半径口径现由 RediosRules.pushAwayRange() 承载）—— 已删除。
     private static final String OUTCOME_BOOK_TITLE = "\u7559\u8a00\u4e00\u5219";
     private static final String OUTCOME_BOOK_LEGACY_TITLE = "\u6210\u4e66";
     private static final String DROP_LIST_BOOK_TITLE = "\u5217\u8868";
@@ -199,8 +198,8 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     private static final float UNITY_POWER_IMMUNE_CHANCE = 0.2f;
     private static final int UNITY_POWER_STRENGTH_REFRESH_TICKS = 40;
     private static final int UNITY_POWER_STRENGTH_MAX_LEVEL = 10;
-    private static final int STAGE_DIG_RAY_STEPS = 6;
-    private static final int STAGE_DIG_INTERVAL_TICKS = 2;
+    // 2026-09-11（代码审计 G13 #7 修复）：原 STAGE_DIG_RAY_STEPS / STAGE_DIG_INTERVAL_TICKS 在本类
+    // 零消费，且与 WeaponManager 的同名常量重复定义（后者才是真实消费方）—— 已删除本类副本。
     // 2026-09-11（B-4）：原 STAGE_BLOCK_BOMB_RANGE = 24 死常量已删除（全库仅声明、0 消费）——
     // 投掷门限实际由 WeaponManager.tryThrowBlockBomb 的 getCurrentAttackReach() * 4 决定
     // （约 20~32 格，随激怒成长；变更出处见 docs/审计优化计划.md）。
@@ -275,7 +274,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     private final Map<BlockPos, CompoundTag> darkStarRestoreBlocks = new HashMap<BlockPos, CompoundTag>();
     private BlockPos darkStarBlastOrigin = null;
     private int darkStarBlastNextIndex = 0;
-    private static final int DARK_STAR_BLAST_PER_TICK = 600;
+    // G13#7（2026-09-11）：原 DARK_STAR_BLAST_PER_TICK = 600 零消费已删除（消费点写死同值字面量）。
     private boolean blackSunTriggered = false;
     private boolean colorlessUnlocked = false;
     private int colorlessChallengeTicks = -1;
@@ -364,7 +363,8 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     private int battleAreaUnloadedTicks = 0;
     private final Map<UUID, Integer> locateBossFarTicks = new HashMap<UUID, Integer>();
     private final Map<UUID, Integer> bossNotInViewTicks = new HashMap<UUID, Integer>();
-    private static final int MISSING_VIEW_NOTIFY_COOLDOWN_TICKS = 600;
+    // G13#7（2026-09-11）：原 MISSING_VIEW_NOTIFY_COOLDOWN_TICKS = 600 零消费已删除
+    //（「不在视野」提醒的限频实际写死 600，与 RediosRules.locateBossNotifyIntervalTicks 是两条口径 —— 见 G14 #9 登记项）。
     private final Map<UUID, Integer> lastMissingViewNotifyTick = new HashMap<UUID, Integer>();
     private final Map<UUID, Integer> outOfAreaTicks = new HashMap<UUID, Integer>();
     private boolean heightFlightMode = false;
@@ -390,7 +390,11 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     // 与设计稿 §十 A3 的 72 格参战区倒挂 → 64~72 格仍在战斗却听不到音乐），改读
     // RediosRules.battleRadiusBlocks()。注意 sounds.json 的 attenuation_distance 是静态字段，
     // 无法读配置，须手工同步为同一值（当前 72）。
-    private static final int STARFALL_SALVO_SETTLE_TIMEOUT_TICKS = 160;
+    // G13#7（2026-09-11）：原 STARFALL_SALVO_SETTLE_TIMEOUT_TICKS = 160 零消费已删除
+    //（该超时已被 maxDelay + 20 取代，见 tickStarfallSalvoDetonation 处的注释）。
+    // 2026-09-11（代码审计 G13 #7 修复）：原 STARFALL_SALVO_FALL_FROM_BLOCKS(30) /
+    // STARFALL_SALVO_HOVER_BLOCKS(2) 零消费 —— 星星生成循环各处写死 `getY() + 30` / `getY() + 2`
+    //（即 G13 #9 登记的「三份重复实现」）—— 已删除。
     /** 集中轰炸目标的星星散布半径（设计稿 §7.3：集中轰炸保持 5.0，非集中才用配置的散射半径）。 */
     private static final double STARFALL_SALVO_CONCENTRATED_RADIUS = 5.0;
     private static final int STARFALL_SALVO_FALL_FROM_BLOCKS = 30;
@@ -418,10 +422,10 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     private final Set<UUID> initialParticipants = new HashSet<UUID>();
     final Set<UUID> mobParticipants = new HashSet<UUID>();
     private boolean mobBattleEngaged = false;
-    private static final int TITLE_WHOSE_WISH = 7;
-    private static final int TITLE_SHARPEN_TRIAL = 8;
-    private static final int TITLE_DIVIDE_LIGHT = 5;
-    private static final int TITLE_BLACK_SUN = 7;
+    // 2026-09-11（代码审计 G13 #7 修复）：原 TITLE_WHOSE_WISH(7) / TITLE_SHARPEN_TRIAL(8) /
+    // TITLE_DIVIDE_LIGHT(5) / TITLE_BLACK_SUN(7) 四个头衔索引常量全库**零消费** ——
+    // 实际到处用裸索引比较（如 `phase == 1 && titleIndex == 7`），段位调整时最易漏改；
+    // 头衔语义真值现在 PHASE1_TITLE_DEFS / PHASE2_TITLE_DEFS —— 已删除。
     private boolean legitRemoval = false;
     private boolean inHurtProcessing = false;
     /** 入场演出剩余 tick（0 表示无演出）：演出期 Boss 冻结、无敌、不索敌。 */
@@ -445,14 +449,15 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     private LeaveReason leaveReason = LeaveReason.NONE;
     private BlockPos battleAnchorPos = null;
     private ResourceLocation battleAnchorDim = null;
-    private static final double ANTI_EXILE_RANGE = 256.0;
-    private static final double ANTI_EXILE_VOID_MARGIN = 8.0;
+    // 2026-09-11（代码审计 G13 #7 修复）：原 ANTI_EXILE_RANGE(256.0) / ANTI_EXILE_VOID_MARGIN(8.0)
+    // 零消费 —— tickAntiExile 里写死 65536.0（= 256²）与 8.0 —— 已删除。
     private int deathViaHurtTick = -1;
     private int removalPunishCooldownTicks = 0;
     private static final SoundEvent[] DARKNESS_AMBIENT_SOUNDS = new SoundEvent[]{SoundEvents.WARDEN_HEARTBEAT, SoundEvents.WARDEN_LISTENING, SoundEvents.WARDEN_AMBIENT, SoundEvents.WARDEN_ANGRY};
     private int darknessSoundCooldown = 0;
     private static final ResourceLocation MAX_HEALTH_MODIFIER_ID = ResourceLocation.fromNamespaceAndPath("silent_sun", "redios_max_health_override");
-    private static final double ATTRIBUTE_MAX_HEALTH_CAP = 1024.0;
+    // G13#7（2026-09-11）：原 ATTRIBUTE_MAX_HEALTH_CAP = 1024.0 零消费已删除
+    //（属性上限的实际处理点写死 1024.0，见 applyPhaseMaxHealth 的钳制告警）。
     private static boolean warnedMaxHealthClamped = false;
 
     public RediosEntity(EntityType<? extends RediosEntity> type, Level level) {
@@ -5728,7 +5733,6 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             if (player == null) continue;
             this.cleanupPlayerAfterBattle(player);
         }
-        this.removeAntiCheatCooldowns();
     }
 
     private void cleanupPlayerAfterBattle(ServerPlayer player) {
@@ -5750,9 +5754,8 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         player.removeEffect(ModEffects.FRAGILE);
     }
 
-    private void removeAntiCheatCooldowns() {
-        this.anticheat.antiCheatCooldownPlayers.clear();
-    }
+    // 2026-09-11（代码审计 G08 #3 修复）：原 removeAntiCheatCooldowns() 已随
+    // AntiCheatLayer.antiCheatCooldownPlayers（只写不读的死集合）一并删除。
 
     private void cleanupNearbyLivingAfterBattle(ServerLevel serverLevel) {
         for (LivingEntity entity : serverLevel.getEntitiesOfClass(LivingEntity.class, this.getBoundingBox().inflate(64.0))) {
