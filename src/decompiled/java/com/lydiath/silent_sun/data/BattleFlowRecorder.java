@@ -106,7 +106,8 @@ public final class BattleFlowRecorder {
      * 直接回答「{@code ComboState.tickAction} 在 Boss 上到底有没有被调用过」。
      */
     private record ComboProbeSample(long t, String kind, String from, String to, boolean selfDriven,
-                                    long lastProcessedTick, long elapsed, int timelineFrames, String lastSaId) {
+                                    long lastProcessedTick, long elapsed, int timelineFrames, String lastSaId,
+                                    String tickActionClass, String clickActionClass) {
     }
 
     /**
@@ -197,6 +198,19 @@ public final class BattleFlowRecorder {
     private long comboFingerprintMax;
     /** 指纹首次出现非零的相对 tick（未出现为 null）。 */
     private Long comboFingerprintFirstNonZeroT;
+    /** 指纹首次非零时的 comboSeq / 是否我方驱动 / 最近一次成功 SA —— 实测里这三样是定位驱动者的关键。 */
+    private String comboFingerprintFirstNonZeroCombo;
+    private boolean comboFingerprintFirstNonZeroSelfDriven;
+    private String comboFingerprintFirstNonZeroSaId;
+    /** 指纹首次非零时，该 combo 的 tickAction / clickAction **实际运行时类名**。
+     *  用途：指纹只能证明「某个 TimeLineTickAction 被执行过」，配合这两个类名才能判断
+     *  是 tickAction 被外部驱动，还是我方 clickAction 恰好是个时间线对象（见 IntegrationContract#comboActionTypes）。 */
+    private String comboFingerprintFirstNonZeroTickActionClass;
+    private String comboFingerprintFirstNonZeroClickActionClass;
+    /** 指纹首次非零时，两个动作对象是否**就是** slashblade 的 TimeLineTickAction 实例
+     *  （决定「指纹是不是这两个字段这条链写的」——都要 false 时说明还有第三方直接持有并调用时间线的路径）。 */
+    private boolean comboFingerprintFirstNonZeroTickActionIsTimeline;
+    private boolean comboFingerprintFirstNonZeroClickActionIsTimeline;
     /** elapsed 最大值（对照指纹用：elapsed 在涨而指纹不动 = 时间线一帧都没跑）。 */
     private long comboElapsedMax;
     /** 观测到的「非空时间线帧数」最大值（> 0 证明该 combo 真的有一份非空时间线）。 */
@@ -258,6 +272,8 @@ public final class BattleFlowRecorder {
     private long lastPlayerChargeRelTick = -1L;
     private String lastPlayerChargePlayer;
     private int playerChargeCount;
+    /** 蓄力者**就是 Boss 自己**的次数（&gt; 0 ⇒ Boss 在走 onUseTick / holdAction 链 = 第三条路径候选）。 */
+    private int bossSelfChargeCount;
     private long playerChargeFirstT = -1L;
     private long playerChargeLastT = -1L;
     private final java.util.Set<String> playerChargePlayers = new java.util.LinkedHashSet<>();
@@ -358,7 +374,8 @@ public final class BattleFlowRecorder {
      */
     public void comboProbe(long nowGameTime, int tickSpan, String comboSeq, long elapsed, long lastProcessedTick,
                            int timelineFrames, boolean selfDriven, String fingerprintKey,
-                           boolean fingerprintKeyFromReflection) {
+                           boolean fingerprintKeyFromReflection, String tickActionClass, String clickActionClass,
+                           boolean tickActionIsTimeline, boolean clickActionIsTimeline) {
         try {
             long span = Math.max(1L, tickSpan);
             this.comboProbeSamples++;
@@ -384,12 +401,22 @@ public final class BattleFlowRecorder {
                 this.comboFingerprintMax = lastProcessedTick;
             }
             String lastSaId = this.lastSuccessfulSaId();
-            // 指纹首次非零 = 铁证（该键唯一写入者是 TimeLineTickAction）—— 单独记一条，便于一眼定位时刻。
+            // 指纹首次非零 = 铁证（该键的写入者全部位于 tickAction 执行链上，见 buildTickActionProbe 的说明）。
+            // 单独记一条并保存「当时的 comboSeq / 是否我方驱动 / SA id」—— 实测证明这三样才是定位驱动者的关键
+            // （2026-09-12 第一场实测：首次非零落在第三方 SA 的 combo 段且 selfDriven=false）。
             if (lastProcessedTick > 0L && this.comboFingerprintFirstNonZeroT == null) {
                 long t = this.rel(nowGameTime);
                 this.comboFingerprintFirstNonZeroT = t;
+                this.comboFingerprintFirstNonZeroCombo = comboSeq;
+                this.comboFingerprintFirstNonZeroSelfDriven = selfDriven;
+                this.comboFingerprintFirstNonZeroSaId = lastSaId;
+                this.comboFingerprintFirstNonZeroTickActionClass = tickActionClass;
+                this.comboFingerprintFirstNonZeroClickActionClass = clickActionClass;
+                this.comboFingerprintFirstNonZeroTickActionIsTimeline = tickActionIsTimeline;
+                this.comboFingerprintFirstNonZeroClickActionIsTimeline = clickActionIsTimeline;
                 this.addComboSample(new ComboProbeSample(t, "fingerprintFirstNonZero", comboSeq, comboSeq,
-                    selfDriven, lastProcessedTick, elapsed, timelineFrames, lastSaId));
+                    selfDriven, lastProcessedTick, elapsed, timelineFrames, lastSaId,
+                    tickActionClass, clickActionClass));
             }
             if (!java.util.Objects.equals(this.comboLastSeq, comboSeq)) {
                 this.comboSeqChangeCount++;
@@ -397,7 +424,8 @@ public final class BattleFlowRecorder {
                     this.comboSelfDrivenChangeCount++;
                 }
                 this.addComboSample(new ComboProbeSample(this.rel(nowGameTime), "comboSeqChange",
-                    this.comboLastSeq, comboSeq, selfDriven, lastProcessedTick, elapsed, timelineFrames, lastSaId));
+                    this.comboLastSeq, comboSeq, selfDriven, lastProcessedTick, elapsed, timelineFrames, lastSaId,
+                    tickActionClass, clickActionClass));
             }
             this.comboLastSeq = comboSeq;
             this.comboLastFingerprint = lastProcessedTick;
@@ -524,25 +552,33 @@ public final class BattleFlowRecorder {
     }
 
     /**
-     * 玩家蓄力锚点（2026-09-12）：SlashBlade {@code ChargeActionEvent} 状态变化时调用。
+     * 蓄力锚点（2026-09-12）：SlashBlade {@code ChargeActionEvent} 状态变化时调用。
      * <p>
      * {@code ChargeActionEvent} 在蓄力期间**每 tick** 都会 post，故调用方只在 gameTime 跳变 &gt; 2 tick
      * 时传 {@code newCharge=true}（＝新一次蓄力），其余只刷新「最近一次蓄力时刻」——否则报告会膨胀
      * 成每 tick 一条。
+     * <p>
+     * <b>蓄力者可能是 Boss 自己</b>：该事件的持有者是任意 {@code LivingEntity}，第三方处理（recasting 的
+     * {@code onCharge}）**不检查是否玩家**。若 {@code isBoss=true}，说明 Boss 正在走
+     * {@code ItemSlashBlade.onUseTick} 链（{@code holdAction} 出口）—— 这是「第三条路径」的关键候选，
+     * 因为 silent_sun 自己从不 {@code startUsingItem}（全库零调用）。
      */
-    public void playerCharge(long nowGameTime, String playerName, boolean newCharge) {
+    public void playerCharge(long nowGameTime, String entityName, boolean isBoss, boolean newCharge) {
         try {
             long t = this.rel(nowGameTime);
             this.lastPlayerChargeRelTick = t;
-            this.lastPlayerChargePlayer = playerName;
+            this.lastPlayerChargePlayer = entityName;
             this.playerChargeLastT = t;
             if (newCharge) {
                 this.playerChargeCount++;
+                if (isBoss) {
+                    this.bossSelfChargeCount++;
+                }
                 if (this.playerChargeFirstT < 0L) {
                     this.playerChargeFirstT = t;
                 }
-                if (playerName != null) {
-                    this.playerChargePlayers.add(playerName);
+                if (entityName != null) {
+                    this.playerChargePlayers.add(entityName);
                 }
             }
         } catch (Throwable t) {
@@ -659,6 +695,10 @@ public final class BattleFlowRecorder {
         this.antiCheatCountByKind.clear();
         this.saPool = null;
         this.comboSeqTrace.clear();
+        this.comboFingerprintFirstNonZeroTickActionClass = null;
+        this.comboFingerprintFirstNonZeroClickActionClass = null;
+        this.comboFingerprintFirstNonZeroTickActionIsTimeline = false;
+        this.comboFingerprintFirstNonZeroClickActionIsTimeline = false;
         this.productionTrace.clear();
         this.productionByType.clear();
         this.productionByCategory.clear();
@@ -671,6 +711,7 @@ public final class BattleFlowRecorder {
         this.lastPlayerSlashPlayer = null;
         this.playerSlashPlayers.clear();
         this.playerChargeCount = 0;
+        this.bossSelfChargeCount = 0;
         this.playerChargeFirstT = -1L;
         this.playerChargeLastT = -1L;
         this.lastPlayerChargeRelTick = -1L;
@@ -945,6 +986,25 @@ public final class BattleFlowRecorder {
             basis.append("指纹 ").append(this.comboFingerprintKey).append(" 最大值为 ")
                 .append(this.comboFingerprintMax).append("（> 0）⇒ ComboState.tickAction 在 Boss 上确实被执行过，")
                 .append("时间线确实推进过（第三方 SA 在 Boss 上会真的产生实体）。");
+            if (this.comboFingerprintFirstNonZeroT != null) {
+                basis.append(" 首次非零：t=").append(ticksToSeconds(this.comboFingerprintFirstNonZeroT))
+                    .append("s，当时 comboSeq=").append(this.comboFingerprintFirstNonZeroCombo)
+                    .append("，selfDriven=").append(this.comboFingerprintFirstNonZeroSelfDriven)
+                    .append(this.comboFingerprintFirstNonZeroSaId == null ? ""
+                        : "，最近一次成功 SA=" + this.comboFingerprintFirstNonZeroSaId)
+                    .append(this.comboFingerprintFirstNonZeroSelfDriven
+                        ? "（我方下发那一拍——注意 selfDriven 是 ±1 tick 窗口标记，不能据此排除 slashblade 自驱）"
+                        : "（**不是我方下发的那一拍** ⇒ 该段的时间线推进由 slashblade/第三方自驱完成）")
+                    .append("。");
+            }
+            // 关键：该键在每次 applyComboSeq（＝切 combo）时被 slashblade 主动 remove ⇒ 指纹 > 0 是
+            // 「当前/最近 combo 段内」的证据，不是远古残留 —— 这条直接封掉「会不会是几小时前写的」的质疑。
+            basis.append(" 写入者核查（javap 全量）：该键只有两处**写**，且都在 tickAction 执行链上 —— ")
+                .append("ComboState$TimeLineTickAction.accept（推进一帧后 putInt）与 ")
+                .append("ComboState$TickAction.lambda$andThen$0（保存/延迟写回）；")
+                .append("另有**三处清零**（remove）：ISlashBladeState 的 applyComboSeq（切 combo）、")
+                .append("BladeRuntimeSyncer.lambda$onBladeMotion$0（BladeMotionEvent 同步）。")
+                .append("故指纹 > 0 是「当前 combo 段内时间线推进过」的**近期**证据，不是历史残留。");
         } else if (this.comboMaxTimelineFrames > 0) {
             if (this.comboProbeActiveTicks >= COMBO_ACTIVE_TICKS_THRESHOLD) {
                 verdict = "tickActionNotDriven";
@@ -1026,6 +1086,12 @@ public final class BattleFlowRecorder {
                 .append(" 次变化落在我方窗口外 —— 但 comboSeq 变化**不等于**时间线在跑"
                     + "（resolvCurrentComboState 的超时迁移同样会改它），判定仍以指纹为准。");
         }
+        if (this.bossSelfChargeCount > 0) {
+            pathBasis.append(" ★关键线索：本场观测到 **Boss 自己**触发了 ").append(this.bossSelfChargeCount)
+                .append(" 次蓄力事件（ChargeActionEvent 的持有者就是 Boss）⇒ Boss 在走 ItemSlashBlade.onUseTick ")
+                .append("链，而该链的动作出口是 holdAction（不是 clickAction、也不是 tickAction）—— ")
+                .append("这很可能就是那条第三条路径的直接来源。");
+        }
         out.addProperty("pathVerdict", pathVerdict);
         out.addProperty("pathBasis", pathBasis.toString());
 
@@ -1037,8 +1103,10 @@ public final class BattleFlowRecorder {
                 + "③ control.fingerprintMechanismVerified = true 才代表指纹机制在当前 jar 上有效"
                 + "（对照 = 持刀玩家的同一指纹 > 0，玩家物品栏每 tick 调 inventoryTick）。"
                 + " 注意 elapsedMax 是 combo 已过帧数（= gameTime - lastActionTime，随时间自然增长），"
-                + "**不能**用来判断时间线是否在跑；maxTimelineFrames 的 -1 = 该 combo 的 tickAction 不是 "
-                + "TimeLineTickAction，-2 = 读不到；comboSeqTrace 里 selfDriven = silent_sun 在本 tick（或前一 tick）"
+                + "**不能**用来判断时间线是否在跑；maxTimelineFrames 的 -1 **不代表没有时间线** —— "
+                + "它的含义是「采样时刻 combo 的 tickAction 字段不是直接的 TimeLineTickAction」"
+                + "（slashblade 的 TickAction.andThen 会把时间线包装成组合对象，第三方也可自定义 TickAction 实现），"
+                + "-2 = 读不到；判定一律以 fingerprintMax 为准；comboSeqTrace 里 selfDriven = silent_sun 在本 tick（或前一 tick）"
                 + "刚主动写过 comboSeq / 推进过 combo —— 因此**变化本身不能证明时间线在跑**"
                 + "（silent_sun 的 updateComboSeq/progressCombo 与 resolvCurrentComboState 的超时迁移都会改 comboSeq），"
                 + "结论只以 fingerprintMax 为准。");
@@ -1046,6 +1114,15 @@ public final class BattleFlowRecorder {
         out.addProperty("fingerprintKeyFromReflection", this.comboFingerprintKeyFromReflection);
         out.addProperty("fingerprintMax", this.comboFingerprintMax);
         out.addProperty("fingerprintFirstNonZeroT", this.comboFingerprintFirstNonZeroT);
+        // 首次非零的现场（实测证明这三样才是定位驱动者的关键：哪一段 combo、是不是我方下发、哪次 SA 之后）
+        out.addProperty("fingerprintFirstNonZeroCombo", this.comboFingerprintFirstNonZeroCombo);
+        out.addProperty("fingerprintFirstNonZeroSelfDriven", this.comboFingerprintFirstNonZeroSelfDriven);
+        out.addProperty("fingerprintFirstNonZeroLastSaId", this.comboFingerprintFirstNonZeroSaId);
+        // 指纹首次非零时该 combo 的两个动作对象的**实际运行时类名**（"跟着变"：不假设类型，如实记录）
+        out.addProperty("fingerprintFirstNonZeroTickActionClass", this.comboFingerprintFirstNonZeroTickActionClass);
+        out.addProperty("fingerprintFirstNonZeroClickActionClass", this.comboFingerprintFirstNonZeroClickActionClass);
+        out.addProperty("fingerprintFirstNonZeroTickActionIsTimeline", this.comboFingerprintFirstNonZeroTickActionIsTimeline);
+        out.addProperty("fingerprintFirstNonZeroClickActionIsTimeline", this.comboFingerprintFirstNonZeroClickActionIsTimeline);
         out.addProperty("samples", this.comboProbeSamples);
         out.addProperty("sampleIntervalTicks", this.comboSampleIntervalTicks);
         out.addProperty("observedTicks", this.comboProbeObservedTicks);
@@ -1083,6 +1160,8 @@ public final class BattleFlowRecorder {
             o.addProperty("lastProcessedTick", e.lastProcessedTick());
             o.addProperty("elapsed", e.elapsed());
             o.addProperty("timelineFrames", e.timelineFrames());
+            o.addProperty("tickActionClass", e.tickActionClass());
+            o.addProperty("clickActionClass", e.clickActionClass());
             if (e.lastSaId() != null) {
                 o.addProperty("lastSaId", e.lastSaId());
             }
@@ -1158,6 +1237,9 @@ public final class BattleFlowRecorder {
         // 玩家蓄力锚点汇总：第三方 SA 也可能挂在蓄力事件上（如 recasting 的 onCharge）。
         JsonObject playerCharges = new JsonObject();
         playerCharges.addProperty("count", this.playerChargeCount);
+        // 蓄力者是 Boss 自己的次数：> 0 就是实锤「Boss 在走 ItemSlashBlade.onUseTick 链」，
+        // 而 holdAction 是那条链的动作出口 —— 第三条路径的直接候选。
+        playerCharges.addProperty("bossSelfCount", this.bossSelfChargeCount);
         playerCharges.addProperty("firstT", this.playerChargeFirstT < 0L ? -1.0 : ticksToSeconds(this.playerChargeFirstT));
         playerCharges.addProperty("lastT", this.playerChargeLastT < 0L ? -1.0 : ticksToSeconds(this.playerChargeLastT));
         playerCharges.add("players", toArray(new ArrayList<>(this.playerChargePlayers)));
@@ -1204,6 +1286,10 @@ public final class BattleFlowRecorder {
                 + "则这条第三条路径是**玩家侧**触发的（第三方 SA 常挂在 DoSlashEvent / ChargeActionEvent 上，"
                 + "如 recasting 的 TimeBeyondSlashArts.onCharge）；若两个锚点都对不上，"
                 + "则驱动者既不在 silent_sun 侧、也不在玩家挥刀/蓄力事件上，需要继续查第三方模组的自调度器。"
+                + " ★另外务必看 playerCharges.bossSelfCount：> 0 表示**蓄力者就是 Boss 自己**"
+                + "（ChargeActionEvent 的持有者是任意 LivingEntity，第三方 onCharge 不检查是否玩家）"
+                + "⇒ Boss 在走 ItemSlashBlade.onUseTick 链，其动作出口是 holdAction —— "
+                + "这是第三条路径最直接的候选（silent_sun 自己从不 startUsingItem）。"
                 + " 归因局限（务必知悉）：selfDriven 是**窗口级**标记 —— 只要该扫描窗口"
                 + "（2 tick）内 silent_sun 驱动过 combo，该窗口内的产出就一律标 true，因此它**不排除**"
                 + "「我方与第三方同窗口各产一部分」，(C) 的判定方向是保守的（宁可漏判 C，不假报 C）；"

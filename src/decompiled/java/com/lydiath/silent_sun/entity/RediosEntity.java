@@ -3131,7 +3131,8 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
                 boolean newCharge = this.comboProbeLastChargeGameTime < 0L
                     || chargeGameTime - this.comboProbeLastChargeGameTime > 2L;
                 this.comboProbeLastChargeGameTime = chargeGameTime;
-                this.flowPlayerCharge(IntegrationContract.lastChargeEventPlayer(), newCharge);
+                this.flowPlayerCharge(IntegrationContract.lastChargeEventPlayer(),
+                    IntegrationContract.lastChargeEventEntityIsBoss(), newCharge);
             }
             IntegrationContract.ComboProbeSnapshot snap = IntegrationContract.probeCombo(this);
             if (snap == null) {
@@ -3147,7 +3148,9 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             boolean selfDriven = IntegrationContract.isSelfComboWriteRecent(this, COMBO_PROBE_SAMPLE_INTERVAL + 1);
             rec.comboProbe(this.gameTimeNow(), COMBO_PROBE_SAMPLE_INTERVAL, snap.comboSeq(), snap.elapsed(),
                 snap.lastProcessedTick(), snap.timelineFrames(), selfDriven,
-                IntegrationContract.comboFingerprintKey(), IntegrationContract.isComboFingerprintKeyFromReflection());
+                IntegrationContract.comboFingerprintKey(), IntegrationContract.isComboFingerprintKeyFromReflection(),
+                snap.actionTypes().tickActionClass(), snap.actionTypes().clickActionClass(),
+                snap.actionTypes().tickActionIsTimeline(), snap.actionTypes().clickActionIsTimeline());
             // 对照组：持刀玩家的同一指纹（玩家物品栏每 tick 调 inventoryTick ⇒ 应 > 0）
             if (this.tickCount % COMBO_PROBE_CONTROL_INTERVAL == 0 && this.level() instanceof ServerLevel serverLevel) {
                 for (ServerPlayer player : serverLevel.players()) {
@@ -3279,22 +3282,27 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     }
 
     /**
-     * PLAYER_CHARGE 锚点：玩家蓄力（SlashBlade {@code ChargeActionEvent}）状态变化时记一次。
+     * PLAYER_CHARGE 锚点：蓄力（SlashBlade {@code ChargeActionEvent}）状态变化时记一次。
      * <p>
      * 与 PLAYER_SLASH 互补：第三方 SA 也可能挂在**蓄力**事件上（如 recasting 的
      * {@code TimeBeyondSlashArts.onCharge}）。产出落在我方窗口之外时，这两个锚点用来判断那条
      * 「第三条路径」是不是玩家侧触发的。
+     * <p>
+     * <b>蓄力者不限于玩家</b>：{@code ChargeActionEvent.getEntityLiving()} 可以是任意 LivingEntity，
+     * 且第三方处理（recasting 的 onCharge）不检查是否玩家。若 {@code isBoss=true}，就说明 **Boss 自己
+     * 走了 {@code ItemSlashBlade.onUseTick} 链（holdAction 出口）** —— 这是「第三条路径」的关键候选。
      *
+     * @param isBoss    蓄力者是否就是本 Boss
      * @param newCharge true = 新一次蓄力（距上次蓄力事件 &gt; 2 tick）；false = 同一次蓄力的持续刷新
      */
-    void flowPlayerCharge(String playerName, boolean newCharge) {
+    void flowPlayerCharge(String entityName, boolean isBoss, boolean newCharge) {
         try {
             BattleFlowRecorder rec = this.flowRecorder;
             if (rec == null || this.level() == null || this.level().isClientSide) {
                 return;
             }
             this.syncFlowRecorderStart();
-            rec.playerCharge(this.gameTimeNow(), playerName, newCharge);
+            rec.playerCharge(this.gameTimeNow(), entityName, isBoss, newCharge);
         } catch (Throwable t) {
             SilentSunMod.LOGGER.warn("[SilentSun] 战斗流程报告记录失败（PLAYER_CHARGE）：{}", t.toString());
         }

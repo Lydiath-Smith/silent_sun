@@ -108,12 +108,14 @@ public class BladeAttackGoal extends Goal {
         // 这里只保留 combo 卡死守卫：combo 距上次回 NONE/standby 超阈值（400 tick）强制重置，
         // 防重锋版 combo 卡活跃段无限刷刀光。近身普攻频率仍由 comboCooldown = 10 + rand(8) 控制。
         //
-        // ⚠ 2026-09-12（tickAction 探针）：上面「持刀 Mob 每 tick 被 slashblade 驱动」是**未经实测**的
-        //   旧结论，且已被两份独立字节码分析质疑 —— ComboState.tickAction 的唯一调用点是
-        //   ItemSlashBlade.lambda$inventoryTick$12，而 ItemStack.inventoryTick 在 MC 1.21.1 的唯一调用点
-        //   是玩家物品栏 Inventory（反编译源码复核：Inventory.java:235）。裁决方式：
-        //   /silent_sun battle_report on 后打一场，报告 JSON 的 tickActionProbe.verdict 给出实测结论
-        //   （指纹机制见 IntegrationContract.probeCombo / BattleFlowRecorder）。
+        // ✅ 2026-09-12 实测裁决（首场战斗报告 battle-8db3ba56-240360.json）：上面「持刀 Mob 每 tick 被
+        //   slashblade 驱动」**成立** —— tickAction 指纹 slashblade.lastProcessedTick 达到 29（>0），
+        //   对照组持刀玩家同指纹 10（>0）；首次非零落在 extinction_day_mod:spatial_slash 的 combo 段且
+        //   selfDriven=false（不是我方下发那一拍）⇒ 时间线确实被 slashblade 侧驱动。
+        //   注意：两份「ComboState.tickAction 唯一调用点 = ItemSlashBlade.lambda$inventoryTick$12、
+        //   而 inventoryTick 只被玩家 Inventory 调用 ⇒ Mob 上永不执行」的静态分析结论**已被实测推翻**
+        //   （驱动者尚未定位，可能是其他模组/其他路径）。因此「不要重复驱动 tickAction」这条设计仍然必须保留。
+        //   指纹机制见 IntegrationContract.probeCombo / BattleFlowRecorder，探针开关随 battle_report。
         IntegrationContract.tryTickBladeComboStuckGuard(boss);
 
         boss.getLookControl().setLookAt(target);

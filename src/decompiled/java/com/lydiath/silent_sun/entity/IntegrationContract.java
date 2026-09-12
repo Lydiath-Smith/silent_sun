@@ -167,6 +167,15 @@ public final class IntegrationContract {
      */
     static final String SLASH_BLADE_EVENT_CHARGE_CLASS =
         "mods.flammpfeil.slashblade.event.SlashBladeEvent$ChargeActionEvent";
+    /**
+     * ChargeActionEvent 的持有者读取方法名。
+     * <p>
+     * <b>javap 确证（两次独立取证）</b>：它是 {@code getEntityLiving()LivingEntity}，**不叫 {@code getUser}**
+     * （那是 DoSlashEvent 的 API）—— {@code SlashBladeEventHandler.onChargeBlade} 与 recasting 的
+     * {@code TimeBeyondSlashArts.onCharge} 的字节码都调 {@code getEntityLiving()}。该类另有
+     * {@code getSlashBladeState()} / {@code getChargeTicks()}。
+     */
+    static final String SLASH_BLADE_EVENT_CHARGE_GET_ENTITY_METHOD = "getEntityLiving";
     static final String REGISTRY_EVENTS_CLASS = "mods.flammpfeil.slashblade.RegistryEvents";
     static final String REGISTRY_EVENTS_SLASH_FIELD = "SlashEffect";
     /** 幻影剑基类实体（slashblade:summoned_sword）：玩家 onInputChange 直发的基础幻影剑，生成即 shoot() */
@@ -209,6 +218,9 @@ public final class IntegrationContract {
     static final String COMBO_STATE_LAST_PROCESSED_TICK_KEY_FIELD = "LAST_PROCESSED_TICK_KEY";
     static final String COMBO_STATE_GET_ELAPSED_METHOD = "getElapsed";
     static final String COMBO_STATE_TICK_ACTION_FIELD = "tickAction";
+    /** {@code ComboState.clickAction} 字段名：必须与 tickAction 一起读运行时类型，否则无法区分
+     *  「时间线被外部驱动」与「我方 clickAction 恰好是个时间线对象」（见 {@link #comboActionTypes}）。 */
+    static final String COMBO_STATE_CLICK_ACTION_FIELD = "clickAction";
     static final String COMBO_STATE_TIME_LINE_FIELD = "timeLine";
     static final String COMBO_STATE_TIME_LINE_TICK_ACTION_CLASS =
         "mods.flammpfeil.slashblade.registry.combo.ComboState$TimeLineTickAction";
@@ -384,6 +396,8 @@ public final class IntegrationContract {
     private static volatile Object comboStateRegistry;
     private static volatile Method comboStateRegistryGetMethod;
     private static volatile Field comboStateTickActionField;
+    /** {@code ComboState.clickAction} 字段（与 tickAction 一起读，用于区分是哪条链在跑时间线）。 */
+    private static volatile Field comboStateClickActionField;
     private static volatile Field comboStateTimeLineField;
     private static volatile Class<?> timeLineTickActionClass;
     /** 探针反射解析状态：{@code null} = 尚未解析（每次进入都会重试）。 */
@@ -393,10 +407,8 @@ public final class IntegrationContract {
     /** 指纹键名：反射读 {@code ComboState.LAST_PROCESSED_TICK_KEY} 优先，失败回退字面量。 */
     private static volatile String comboLastProcessedTickKeyInstant;
     private static volatile boolean comboFingerprintKeyFromReflection;
-    /** 「本 comboSeq 的 tickAction 带几帧时间线」缓存。key=comboSeq 字符串；
-     *  value = 帧数 / -1 = 无时间线（tickAction 非 TimeLineTickAction 或 timeLine 为空）/ -2 = 读不到。
-     *  注册表启动后不变，故可无限期缓存。 */
-    private static final java.util.concurrent.ConcurrentHashMap<String, Integer> COMBO_TIMELINE_FRAMES =
+    /** 「本 comboSeq 的 tickAction/clickAction 运行时类型 + 时间线帧数」缓存（注册表启动后不变，可无限期缓存）。 */
+    private static final java.util.concurrent.ConcurrentHashMap<String, ComboActionTypes> COMBO_ACTION_TYPES =
         new java.util.concurrent.ConcurrentHashMap<>();
     /** silent_sun 自己写 comboSeq 的最近一次归属（实体 id + 该实体 tickCount），供探针归因「这次变化是谁造成的」。 */
     private static volatile int selfComboWriteEntityId = Integer.MIN_VALUE;
@@ -1054,11 +1066,13 @@ public final class IntegrationContract {
      * 对持刀 Mob 每 tick 自己驱动同一条链（resolvCurrentComboState 超时迁移 + isInMainhand 时
      * tickAction 执行 TimeLineTickAction）——我们重复驱动 = 刀光翻倍（"刚切刀就有刀光"）。
      * <p>
-     * <b>2026-09-12 该结论待实测裁决</b>：本条的「每 tick 被驱动」已被两份独立字节码分析质疑 ——
-     * {@code ComboState.tickAction} 的全局唯一调用点是 {@code ItemSlashBlade.lambda$inventoryTick$12}，
-     * 而 {@code ItemStack.inventoryTick} 在 MC 1.21.1 的唯一调用点是玩家物品栏 {@code Inventory}
-     * （反编译源码已复核），Mob/LivingEntity 上无驱动者。裁决手段见 {@link #probeCombo}：
-     * 战斗报告 {@code tickActionProbe} 用实体 persistentData 的 lastProcessedTick 指纹给出实测结论。
+     * <b>2026-09-12 实测裁决：本条「每 tick 被驱动」成立</b>（首场战斗报告 battle-8db3ba56-240360.json）——
+     * tickAction 指纹 {@code slashblade.lastProcessedTick} 达到 29（&gt; 0），对照组持刀玩家同指纹 10（&gt; 0）；
+     * 首次非零落在 {@code extinction_day_mod:spatial_slash} 的 combo 段且 selfDriven=false（非我方下发那一拍）
+     * ⇒ 时间线由 slashblade 侧驱动。两份「{@code ComboState.tickAction} 唯一调用点是
+     * {@code ItemSlashBlade.lambda$inventoryTick$12}、而 {@code ItemStack.inventoryTick} 只被玩家
+     * {@code Inventory} 调用 ⇒ Mob 上永不执行」的静态分析结论**被实测推翻**（真正的驱动者尚未定位）。
+     * 复现/复看手段见 {@link #probeCombo}：战斗报告 {@code tickActionProbe} 给出实测结论。
      * 故 tickAction 驱动交给 slashblade，这里只保留 combo 卡死守卫：
      * combo 距上次回 NONE/standby 超阈值（400 tick = 20s）视为卡死（重锋版 combo 注册内容重写，
      * 对 Mob 可能卡活跃段回不到 NONE → tickAction 每 tick 刷刀光），强制 updateComboSeq(none)
@@ -1114,12 +1128,12 @@ public final class IntegrationContract {
      * @param elapsed         {@code ComboState.getElapsed(entity)}（读不到为 {@code -1}）
      * @param lastProcessedTick tickAction 指纹（{@code persistentData} 的 lastProcessedTick，读不到为 {@code -1}）
      * @param timelineFrames  当前 combo 的 tickAction 时间线帧数：{@code >=0} 帧数（0 = 空时间线）、
-     *                        {@code -1} 该 combo 的 tickAction 不是 TimeLineTickAction（指纹对它不适用）、
-     *                        {@code -2} 读不到
+     *                        {@code -1} tickAction 不是直接的 TimeLineTickAction（可能被 andThen 组合，
+     *                        或为第三方自定义实现 —— **不代表没有时间线**）、{@code -2} 读不到
      * @param unavailableReason 非 null = 探针本身不可用（而非「结论如此」）
      */
     public record ComboProbeSnapshot(String comboSeq, long elapsed, long lastProcessedTick,
-                                     int timelineFrames, String unavailableReason) {
+                                     int timelineFrames, ComboActionTypes actionTypes, String unavailableReason) {
         public boolean ok() {
             return this.unavailableReason == null;
         }
@@ -1192,6 +1206,10 @@ public final class IntegrationContract {
                 Field tickField = Class.forName(COMBO_STATE_CLASS).getDeclaredField(COMBO_STATE_TICK_ACTION_FIELD);
                 tickField.setAccessible(true);
                 comboStateTickActionField = tickField;
+                // clickAction 也必须读：时间线对象被设成 clickAction 时，指纹同样会被写（见 comboActionTypes 注释）。
+                Field clickField = Class.forName(COMBO_STATE_CLASS).getDeclaredField(COMBO_STATE_CLICK_ACTION_FIELD);
+                clickField.setAccessible(true);
+                comboStateClickActionField = clickField;
                 Class<?> tla = Class.forName(COMBO_STATE_TIME_LINE_TICK_ACTION_CLASS);
                 Field lineField = tla.getDeclaredField(COMBO_STATE_TIME_LINE_FIELD);
                 lineField.setAccessible(true);
@@ -1199,15 +1217,22 @@ public final class IntegrationContract {
                 timeLineTickActionClass = tla;
             } catch (Throwable t) {
                 comboStateTickActionField = null;
+                comboStateClickActionField = null;
                 comboStateTimeLineField = null;
                 timeLineTickActionClass = null;
-                problems.append("ComboState.tickAction / timeLine 字段读取失败（帧数信号禁用，指纹主判据不受影响）：")
+                problems.append("ComboState.tickAction / clickAction / timeLine 字段读取失败（类型信号禁用，指纹主判据不受影响）：")
                     .append(t).append("；");
             }
-            // ④ 玩家蓄力锚点（ChargeActionEvent）：解析失败只禁用该锚点，不影响探针主判据。
+            // ④ 蓄力锚点（ChargeActionEvent）：解析失败只禁用该锚点，不影响探针主判据。
             try {
                 chargeEventClass = Class.forName(SLASH_BLADE_EVENT_CHARGE_CLASS);
-                chargeEventGetUserMethod = chargeEventClass.getMethod(DO_SLASH_EVENT_GET_USER_METHOD);
+                try {
+                    chargeEventGetUserMethod = chargeEventClass
+                        .getMethod(SLASH_BLADE_EVENT_CHARGE_GET_ENTITY_METHOD);
+                } catch (NoSuchMethodException incompatible) {
+                    // 版本分支兜底：若某分支沿用 DoSlashEvent 的 getUser 命名，此处仍可命中。
+                    chargeEventGetUserMethod = chargeEventClass.getMethod(DO_SLASH_EVENT_GET_USER_METHOD);
+                }
             } catch (Throwable t) {
                 chargeEventClass = null;
                 chargeEventGetUserMethod = null;
@@ -1289,9 +1314,10 @@ public final class IntegrationContract {
         String comboSeq = null;
         long elapsed = -1L;
         int frames = -2;
+        ComboActionTypes actionTypes = ComboActionTypes.UNKNOWN;
         try {
             if (entity == null) {
-                return new ComboProbeSnapshot(null, -1L, -1L, -2, "实体为 null");
+                return new ComboProbeSnapshot(null, -1L, -1L, -2, ComboActionTypes.UNKNOWN, "实体为 null");
             }
             resolveComboProbeReflection();
             if (!isSlashBladeIntegrationAvailable()) {
@@ -1311,7 +1337,8 @@ public final class IntegrationContract {
                         elapsed = n.longValue();
                     }
                 }
-                frames = timelineFrameCount(comboSeq);
+                actionTypes = comboActionTypes(comboSeq);
+                frames = actionTypes.tickActionFrames();
             } else {
                 unavailable = "slashblade 反射缓存未就绪，comboSeq 无法读取";
             }
@@ -1322,45 +1349,101 @@ public final class IntegrationContract {
         if (fingerprint < 0L && unavailable == null) {
             unavailable = "tickAction 指纹读取失败（persistentData 不可用）";
         }
-        return new ComboProbeSnapshot(comboSeq, elapsed, fingerprint, frames, unavailable);
+        return new ComboProbeSnapshot(comboSeq, elapsed, fingerprint, frames, actionTypes, unavailable);
     }
 
     /**
      * 当前 combo 的 tickAction 时间线帧数（只读）。
+     * <p>
+     * <b>2026-09-12 首场实测提醒</b>：本信号返回 -1 是**常态**（实测该场 maxTimelineFrames 全程 -1，
+     * 而指纹却达到 29）—— 原因：{@code ComboState.tickAction} 字段里放的可能是
+     * {@code TickAction.andThen(...)} 包装后的**组合对象**（javap 确证 slashblade 用 andThen 串接动作），
+     * 或第三方自定义的 {@code TickAction} 实现，此时 {@code isInstance(TimeLineTickAction)} 为 false。
+     * <b>故 -1 不代表「没有时间线」；判定一律以指纹（{@link #readComboFingerprint}）为准。</b>
      *
      * @return {@code >=0} 帧数（0 = 空时间线，即 {@code ComboState.EMPTY_TICK_ACTION}）；
-     *         {@code -1} 该 combo 的 tickAction 不是 TimeLineTickAction（指纹机制对它不适用）；
+     *         {@code -1} 该 combo 的 tickAction 不是直接的 TimeLineTickAction（组合体 / 自定义实现）；
      *         {@code -2} 读不到（反射不可用 / comboSeq 不在 combo_state 注册表里）
      */
-    private static int timelineFrameCount(String comboSeq) {
+    /**
+     * 当前 combo 的 {@code tickAction} / {@code clickAction} 字段的**实际运行时类型**（只读）。
+     * <p>
+     * <b>为什么必须记实际类型（2026-09-12 修正一处推理漏洞）</b>：{@code lastProcessedTick} 指纹只能证明
+     * 「某个 {@code TimeLineTickAction.accept} 被执行过」，它**不能**单独证明是 tickAction 被执行 ——
+     * 因为 {@code TimeLineTickAction} 只是一个 {@code Consumer} 对象，若某个 combo 把它设成
+     * **clickAction**（走我方 {@code updateComboSeq → clickAction} 这条链），同样会写这个指纹。
+     * 只有把两个字段的运行时类型一起记下来，才能区分：
+     * <ul>
+     *   <li>指纹在涨 且 {@code tickAction} 是时间线（或含时间线的组合体）⇒ 时间线被**外部驱动**；</li>
+     *   <li>指纹在涨 而 {@code clickAction} 才是时间线类型 ⇒ 是**我方 updateComboSeq 触发的 clickAction** 在跑时间线。</li>
+     * </ul>
+     * 另外「组合体」情况（slashblade 的 {@code TickAction.andThen}、第三方如 True_POWER 的
+     * {@code wrapOperationUpperSlashTickAction} 包装）会表现为类名是合成的 lambda 类，而非
+     * {@code ComboState$TimeLineTickAction} —— 这也是过去 {@code maxTimelineFrames=-1} 的成因。
+     */
+    public record ComboActionTypes(String tickActionClass, String clickActionClass,
+                                   boolean tickActionIsTimeline, boolean clickActionIsTimeline,
+                                   int tickActionFrames, int clickActionFrames) {
+        public static final ComboActionTypes UNKNOWN =
+            new ComboActionTypes(null, null, false, false, -2, -2);
+    }
+
+    /**
+     * 读当前 combo 的 tickAction / clickAction 字段运行时类型（只读；读不到返回 {@link ComboActionTypes#UNKNOWN}）。
+     * 结果按 comboSeq 缓存（注册表内容启动后不变）。
+     * <p>
+     * 类名用**完整名**（{@code getName()}）而不是简名：lambda 的完整名形如
+     * {@code net.mrqx.truepower.util.TruePowerComboHelper$$Lambda/0x...}，能**直接指出该动作属于哪个模组** ——
+     * 这正是「哪个模组把什么动作塞进了这个 combo」的唯一线索（详见 {@link ComboActionTypes} 的说明）。
+     */
+    private static ComboActionTypes comboActionTypes(String comboSeq) {
         if (comboSeq == null || comboStateRegistry == null || comboStateRegistryGetMethod == null
             || comboStateTickActionField == null) {
-            return -2;
+            return ComboActionTypes.UNKNOWN;
         }
-        Integer cached = COMBO_TIMELINE_FRAMES.get(comboSeq);
+        ComboActionTypes cached = COMBO_ACTION_TYPES.get(comboSeq);
         if (cached != null) {
             return cached;
         }
-        int frames = -2;
+        ComboActionTypes types = ComboActionTypes.UNKNOWN;
         try {
             Object state = comboStateRegistryGetMethod.invoke(comboStateRegistry, ResourceLocation.parse(comboSeq));
             if (state != null) {
                 Object tickAction = comboStateTickActionField.get(state);
-                if (tickAction == null) {
-                    frames = -1;
-                } else if (timeLineTickActionClass != null && timeLineTickActionClass.isInstance(tickAction)) {
-                    Object line = comboStateTimeLineField == null ? null : comboStateTimeLineField.get(tickAction);
-                    frames = line instanceof java.util.Map<?, ?> map ? map.size() : -1;
-                } else {
-                    // 自定义 tickAction（非时间线）：它是否有副作用与指纹无关，标记为不适用。
-                    frames = -1;
-                }
+                Object clickAction = comboStateClickActionField == null ? null : comboStateClickActionField.get(state);
+                types = new ComboActionTypes(
+                    tickAction == null ? null : tickAction.getClass().getName(),
+                    clickAction == null ? null : clickAction.getClass().getName(),
+                    isTimelineAction(tickAction), isTimelineAction(clickAction),
+                    timelineFramesOf(tickAction), timelineFramesOf(clickAction));
             }
         } catch (Throwable t) {
-            frames = -2;
+            types = ComboActionTypes.UNKNOWN;
         }
-        COMBO_TIMELINE_FRAMES.put(comboSeq, frames);
-        return frames;
+        COMBO_ACTION_TYPES.put(comboSeq, types);
+        return types;
+    }
+
+    /** 该动作对象是否是 TimeLineTickAction 实例（时间线）。 */
+    private static boolean isTimelineAction(Object action) {
+        return action != null && timeLineTickActionClass != null && timeLineTickActionClass.isInstance(action);
+    }
+
+    /** 动作对象的 timeLine 帧数（{@code -1} = 非时间线对象 / 读不到，{@code >=0} = 帧数）。 */
+    private static int timelineFramesOf(Object action) {
+        if (!isTimelineAction(action)) {
+            return -1;
+        }
+        try {
+            Object line = comboStateTimeLineField == null ? null : comboStateTimeLineField.get(action);
+            return line instanceof java.util.Map<?, ?> map ? map.size() : -1;
+        } catch (Throwable t) {
+            return -1;
+        }
+    }
+
+    private static int timelineFrameCount(String comboSeq) {
+        return comboActionTypes(comboSeq).tickActionFrames();
     }
 
     /**
@@ -1427,6 +1510,13 @@ public final class IntegrationContract {
      * <p>
      * 跳过 {@code minecraft:} 命名空间的实体（玩家 / 箭 / 掉落物等），只留模组实体 ——
      * 这样增量 diff 出来的就是「模组产出的实体」，噪音极低。
+     * <p>
+     * <b>为什么主键用注册表 id 而不是类名（2026-09-12 作者口径："跟着变就行"）</b>：
+     * 第三方会**替换/新增**拔刀剑的斩击实体（例如 recasting2 这一类整合包常客会整体接管斩击表现），
+     * 类名与包路径都可能与 slashblade 原版不同。注册表 id 如实反映实际生成的对象，因此无论谁替换、
+     * 换成什么类型，报告都会**自动跟随**，不需要为任何具体模组写特判。粗分类
+     * （{@link #classifyProbeEntityClass}）只是给人看的归并桶，落到「其它」不代表漏观测 ——
+     * 类型明细在 {@code type} 字段里始终是精确的。
      */
     public static java.util.Map<Integer, ProbeEntityInfo> scanModEntities(LivingEntity center, double radius) {
         java.util.Map<Integer, ProbeEntityInfo> out = new java.util.HashMap<>();
@@ -1460,6 +1550,12 @@ public final class IntegrationContract {
     /**
      * 粗分类口径，与 {@code CommonEvents.diagnoseSlashBladeEntityFlood} 完全一致
      * （用类简名而非直接引用类型：SlashBlade 是反射软依赖，编译期不可引用）。
+     * <p>
+     * <b>刻意不做第三方特判（2026-09-12 作者口径："跟着变就行"）</b>：recasting2 这类模组会**替换**
+     * 拔刀剑的斩击实体，替换后类名不再匹配下面的前缀，本方法会把它归入「其它」——这是**可接受**的：
+     * 报告的实体明细以注册表 id（{@link ProbeEntityInfo#type()}）为准，那是精确值；本方法只提供
+     * 「刀光/剑气/次元斩/剑雨」四个人类可读的归并桶，不承担完整性。**不要**为了让 refactor 后的类名
+     * 落进原桶而给某个具体模组加前缀匹配 —— 那会把观测绑死在某一版实现上。
      */
     public static String classifyProbeEntityClass(String simpleName) {
         if (simpleName == null) {
@@ -2459,35 +2555,51 @@ public final class IntegrationContract {
         }
     }
 
-    /** 最近一次玩家蓄力事件的 gameTime（{@code <0} = 本进程从未观测到）。 */
+    /** 最近一次蓄力事件的 gameTime（{@code <0} = 本进程从未观测到）。 */
     private static volatile long lastChargeEventGameTime = -1L;
+    /** 最近一次蓄力者名字（可能是玩家，也可能**就是 Boss 自己** —— 见下）。 */
     private static volatile String lastChargeEventPlayer;
-    /** 玩家**蓄力**事件回调：只写两个 volatile（不遍历实体、不干预逻辑），供 Boss 采样时取用。 */
+    /** 最近一次蓄力者是否就是本模组 Boss。 */
+    private static volatile boolean lastChargeEventEntityIsBoss;
+    /**
+     * 蓄力事件回调：只写三个 volatile（不遍历实体、不干预逻辑），供 Boss 采样时取用。
+     * <p>
+     * <b>不过滤成 Player</b>：{@code ChargeActionEvent} 的持有者是任意 {@code LivingEntity}，且第三方处理
+     * （如 recasting 的 {@code onCharge}）**不检查是不是玩家**。若实测发现蓄力者就是 Boss 本身，那就说明
+     * Boss 正在走 {@code ItemSlashBlade.onUseTick} 链（{@code holdAction} 出口）—— 这正是「第三条路径」
+     * 最重要的候选之一（silent_sun 自己从不 {@code startUsingItem}，全库零调用）。
+     */
     static void onPlayerCharge(Object event) {
         try {
-            Object user = chargeEventGetUserMethod.invoke(event);
-            if (!(user instanceof Player player)) {
+            Object holder = chargeEventGetUserMethod.invoke(event);
+            if (!(holder instanceof LivingEntity living)) {
                 return;
             }
-            Level level = player.level();
+            Level level = living.level();
             if (level == null || level.isClientSide()) {
                 return;
             }
             lastChargeEventGameTime = level.getGameTime();
-            lastChargeEventPlayer = player.getName().getString();
+            lastChargeEventPlayer = living.getName().getString();
+            lastChargeEventEntityIsBoss = living instanceof RediosEntity;
         } catch (Throwable t) {
             // 单次事件异常忽略，避免监听器抛异常影响 slashblade 事件链。
         }
     }
 
-    /** 最近一次玩家蓄力的 gameTime（{@code <0} = 从未观测到）；只读，供 Boss 采样侧消费。 */
+    /** 最近一次蓄力的 gameTime（{@code <0} = 从未观测到）；只读，供 Boss 采样侧消费。 */
     public static long lastChargeEventGameTime() {
         return lastChargeEventGameTime;
     }
 
-    /** 最近一次蓄力的玩家名（可能为 null）。 */
+    /** 最近一次蓄力者名字（可能是玩家，也可能就是 Boss 自己）。 */
     public static String lastChargeEventPlayer() {
         return lastChargeEventPlayer;
+    }
+
+    /** 最近一次蓄力者是否就是本模组 Boss（true ⇒ Boss 在走 {@code onUseTick} / {@code holdAction} 链）。 */
+    public static boolean lastChargeEventEntityIsBoss() {
+        return lastChargeEventEntityIsBoss;
     }
 
     /** DoSlashEvent 事件回调：反射取 getUser()（挥刀玩家），通知在场 Boss 判断远程挥刀避让。 */
