@@ -110,6 +110,43 @@ public final class BattleFlowRecorder {
     }
 
     /**
+     * 实体产出事件（2026-09-12 新增，见 {@link #entityProduction}）。
+     * <p>
+     * 背景：作者的实机观察是「有一部分 SA 的对应实体产出成功」，这与「Mob 上 100% 空放」的静态结论冲突。
+     * 要定死这件事必须观测**实体**：本条目记录 Boss 周围新出现的模组实体，并带上出现时刻的
+     * comboSeq / 指纹 / 是否我方驱动窗口 / 距最近一次 SA 施放的 tick 偏移 —— 这四样合起来就能回答
+     * 「产出走的是时间线、clickAction，还是第三条路径」。
+     */
+    private record ProductionEvent(long t, String type, String category, String owner, boolean selfDriven,
+                                   String comboSeq, long fingerprint, long sinceLastSaCastTicks, String lastSaId,
+                                   long sinceLastPlayerSlashTicks, String lastPlayerSlashBy,
+                                   long sinceLastPlayerChargeTicks, String lastPlayerChargeBy) {
+    }
+
+    /** 单次 SA 施放**同调用内**新增的实体（空列表 = 这次 SA 空放）。 */
+    private record SaProductionEvent(long t, String saId, List<String> added) {
+    }
+
+    /** 实体产出事件累计（按类型聚合，导出成 {@code entityProduction.byType}）。 */
+    private static final class ProdAgg {
+        private int count;
+        private long firstT = -1L;
+        private long lastT = -1L;
+        private final java.util.Set<String> owners = new java.util.LinkedHashSet<>();
+        private final java.util.Set<String> combos = new java.util.LinkedHashSet<>();
+    }
+
+    /** 按 SA id 聚合的施放产出（导出成 {@code entityProduction.bySaId}）：直接回答「哪一部分 SA 真的出了实体」。 */
+    private static final class SaProdAgg {
+        private int casts;
+        private int emptyCasts;
+        private int addedTotal;
+        private long firstT = -1L;
+        private long lastT = -1L;
+        private final java.util.Set<String> types = new java.util.LinkedHashSet<>();
+    }
+
+    /**
      * 探针判定「combo 已回到待机」的两个 id（只做字符串比较，不引 slashblade 反射 —— 报告器保持零外部依赖）。
      * 与 {@code IntegrationContract} 的 {@code SLASH_ARTS_NONE_ID} / {@code SLASH_BLADE_STANDBY_ID} 同值。
      */
@@ -125,6 +162,12 @@ public final class BattleFlowRecorder {
     private static final long COMBO_ACTIVE_TICKS_THRESHOLD = 60L;
     /** comboSeqTrace 条数上限：combo 每段一两条，正常一场战斗远低于此；超限只丢条目（防报告膨胀）。 */
     private static final int COMBO_TRACE_MAX = 2000;
+    /** 实体产出 trace 条数上限（与 comboSeqTrace 同理：正常战斗几十~几百条）。 */
+    private static final int PRODUCTION_TRACE_MAX = 2000;
+
+    /** 产出观测的扫描参数（由 RediosEntity 告知一次，只用于写进报告便于复现）。 */
+    private double productionScanRadius = -1.0;
+    private int productionScanIntervalTicks = -1;
 
     // ── 内存态 ──
 
@@ -162,6 +205,8 @@ public final class BattleFlowRecorder {
     private int comboSelfDrivenChangeCount;
     private int comboTraceDropped;
     private String comboLastSeq;
+    /** 最近一次采样到的指纹值（产出事件要记「出现那一刻的指纹」，不能用历史最大值）。 */
+    private long comboLastFingerprint;
     private String comboProbeUnavailable;
     private String comboFingerprintKey;
     private boolean comboFingerprintKeyFromReflection;
@@ -170,6 +215,52 @@ public final class BattleFlowRecorder {
     private long comboControlFingerprintMax = -1L;
     private String comboControlName;
     private int comboControlSamples;
+
+    // ── 2026-09-12（产出观测）内存态 ──
+
+    private final List<ProductionEvent> productionTrace = new ArrayList<>();
+    private final Map<String, ProdAgg> productionByType = new LinkedHashMap<>();
+    /** 粗分类（刀光/剑气/次元斩/剑雨/其它）汇总：口径与既有诊断 diagnoseSlashBladeEntityFlood 一致，便于两处对照。 */
+    private final Map<String, Integer> productionByCategory = new LinkedHashMap<>();
+    private int productionTotal;
+    /** 在我方驱动窗口**之外**生成的实体数（= 指纹恒 0 时的「第三条路径」证据）。 */
+    private int productionOutsideSelfWindow;
+    private int productionTraceDropped;
+    private final List<SaProductionEvent> saProductions = new ArrayList<>();
+    /** 按 SA id 聚合：{@code casts} / {@code emptyCasts} / {@code addedTotal} 直接回答「哪一部分 SA 真的出了实体」。 */
+    private final Map<String, SaProdAgg> saProductionBySaId = new LinkedHashMap<>();
+    private int saProductionTotal;
+    /** SA 施放新增实体的总数（所有 SaProductionEvent 的 added 之和）。 */
+    private int saProductionAddedTotal;
+    private int emptySaProductions;
+    /** 最近一次 SA_CAST 事件的相对 tick（用于算产出距 SA 施放的偏移；-1 = 本场还没施放过）。 */
+    private long lastSaCastRelTick = -1L;
+    /**
+     * 最近一次**玩家挥刀**（SlashBlade {@code DoSlashEvent}，user 是 Player）的相对 tick 与玩家名。
+     * <p>
+     * 为什么要这个锚点：第三方模组的 SA 常挂在挥刀/蓄力事件上（例如 recasting 的
+     * {@code TimeBeyondSlashArts.onCharge} 就是 {@code @SubscribeEvent}）。当产出落在我方驱动窗口之外
+     * 时，靠「距最近一次玩家挥刀多少 tick」就能判断这条第三条路径是不是**玩家侧**触发的。
+     * 注意：Boss 自己的 clickAction 也会 post 同一个事件，但 user 是 Mob（非 Player），已被过滤 ⇒
+     * 这里只记玩家挥刀，不会有 Boss 侧污染。
+     */
+    private long lastPlayerSlashRelTick = -1L;
+    private String lastPlayerSlashPlayer;
+    private int playerSlashCount;
+    private long playerSlashFirstT = -1L;
+    private long playerSlashLastT = -1L;
+    private final java.util.Set<String> playerSlashPlayers = new java.util.LinkedHashSet<>();
+    /**
+     * 玩家**蓄力**锚点（SlashBlade {@code ChargeActionEvent}，见 {@link #playerCharge}）。
+     * 与挥刀锚点互补：第三方 SA 也可能挂在蓄力事件上（如 recasting 的
+     * {@code TimeBeyondSlashArts.onCharge}），产出落在我方窗口之外时靠这两条锚点判断是否玩家侧触发。
+     */
+    private long lastPlayerChargeRelTick = -1L;
+    private String lastPlayerChargePlayer;
+    private int playerChargeCount;
+    private long playerChargeFirstT = -1L;
+    private long playerChargeLastT = -1L;
+    private final java.util.Set<String> playerChargePlayers = new java.util.LinkedHashSet<>();
 
     /** 战斗起点同步（由 {@code RediosEntity} 在已知 {@code battleStartGameTime} 时调用）；已设过则不再覆盖。 */
     public void setStartGameTime(long gameTime) {
@@ -203,6 +294,8 @@ public final class BattleFlowRecorder {
     public void saCast(long nowGameTime, String saId, int phase, int titleIndex, boolean ok, String error, String note) {
         try {
             this.saCasts.add(new SaCastEvent(this.rel(nowGameTime), saId, phase, titleIndex, ok, error, note));
+            // 2026-09-12（产出观测）：记录施放时刻，供产出事件算「距最近一次 SA 施放的 tick 偏移」。
+            this.lastSaCastRelTick = this.rel(nowGameTime);
         } catch (Throwable t) {
             LOG.warn("[SilentSun] 战斗流程报告：SA_CAST 记录失败：{}", t.toString());
         }
@@ -307,6 +400,7 @@ public final class BattleFlowRecorder {
                     this.comboLastSeq, comboSeq, selfDriven, lastProcessedTick, elapsed, timelineFrames, lastSaId));
             }
             this.comboLastSeq = comboSeq;
+            this.comboLastFingerprint = lastProcessedTick;
         } catch (Throwable t) {
             LOG.warn("[SilentSun] 战斗流程报告：COMBO_PROBE 记录失败：{}", t.toString());
         }
@@ -337,6 +431,160 @@ public final class BattleFlowRecorder {
             }
         } catch (Throwable t) {
             LOG.warn("[SilentSun] 战斗流程报告：COMBO_PROBE 不可用标记失败：{}", t.toString());
+        }
+    }
+
+    // ── 2026-09-12（产出观测）：实体增量入口 ──
+
+    /**
+     * ENTITY_PRODUCTION：Boss 周围**新出现**的模组实体（增量观测）。
+     * <p>
+     * 这是回答「(A) 时间线在跑 / (B) 只走 clickAction / (C) 第三条路径」的关键证据 ——
+     * 光看 comboSeq 分不清 (A) 与 (C)；把「实体出现的时刻 + 当时的指纹 + 是否我方驱动窗口 +
+     * 距最近一次 SA 施放的偏移」四样对齐，才能分清。
+     * <p>
+     * 为什么用注册表 id 而不是类名：第三方模组自己的实体类型（非 {@code mods.flammpfeil.slashblade}
+     * 包）同样要能标出来 —— 既有诊断 {@code CommonEvents.diagnoseSlashBladeEntityFlood} 只看类名前缀，
+     * 会漏掉这一类，而它恰恰可能是「某部分 SA 产出成功」的真实来源。
+     *
+     * @param type       实体类型注册表 id（如 {@code slashblade:drive}、{@code foxextra:xxx}）
+     * @param category   粗分类：刀光 / 剑气 / 次元斩 / 剑雨 / 其它
+     * @param owner      归属者名字（读不到为 null；用于剔除「玩家自己挥刀产生的实体」这类污染）
+     * @param selfDriven 出现时刻是否落在我方驱动窗口内（我方写过 comboSeq / 推进过 combo 的 ±1 tick）
+     */
+    public void entityProduction(long nowGameTime, String type, String category, String owner, boolean selfDriven) {
+        try {
+            long t = this.rel(nowGameTime);
+            String typeKey = type == null ? "<unknown>" : type;
+            this.productionTotal++;
+            if (!selfDriven) {
+                this.productionOutsideSelfWindow++;
+            }
+            ProdAgg agg = this.productionByType.computeIfAbsent(typeKey, k -> new ProdAgg());
+            agg.count++;
+            this.productionByCategory.merge(category == null ? "其它" : category, 1, Integer::sum);
+            if (agg.firstT < 0L) {
+                agg.firstT = t;
+            }
+            agg.lastT = t;
+            if (owner != null) {
+                agg.owners.add(owner);
+            }
+            if (this.comboLastSeq != null) {
+                agg.combos.add(this.comboLastSeq);
+            }
+            if (this.productionTrace.size() >= PRODUCTION_TRACE_MAX) {
+                this.productionTraceDropped++;
+                return;
+            }
+            long sinceLastSaCast = this.lastSaCastRelTick < 0L ? -1L : t - this.lastSaCastRelTick;
+            long sincePlayerSlash = this.lastPlayerSlashRelTick < 0L ? -1L : t - this.lastPlayerSlashRelTick;
+            long sincePlayerCharge = this.lastPlayerChargeRelTick < 0L ? -1L : t - this.lastPlayerChargeRelTick;
+            this.productionTrace.add(new ProductionEvent(t, typeKey, category, owner, selfDriven,
+                this.comboLastSeq, this.comboLastFingerprint, sinceLastSaCast, this.lastSuccessfulSaId(),
+                sincePlayerSlash, this.lastPlayerSlashPlayer, sincePlayerCharge, this.lastPlayerChargePlayer));
+        } catch (Throwable t) {
+            LOG.warn("[SilentSun] 战斗流程报告：ENTITY_PRODUCTION 记录失败：{}", t.toString());
+        }
+    }
+
+    /** 产出观测的扫描参数留痕（由 RediosEntity 在首次扫描时告知一次）。 */
+    public void productionScanInfo(double radius, int intervalTicks) {
+        try {
+            this.productionScanRadius = radius;
+            this.productionScanIntervalTicks = intervalTicks;
+        } catch (Throwable t) {
+            LOG.warn("[SilentSun] 战斗流程报告：产出观测参数留痕失败：{}", t.toString());
+        }
+    }
+
+    /**
+     * 玩家挥刀锚点（2026-09-12）：SlashBlade {@code DoSlashEvent} 且 user 是 Player 时调用一次。
+     * <p>
+     * 作用：产出事件带上「距最近一次玩家挥刀多少 tick」后，才能判断 (C) 那条第三条路径是否**玩家侧**触发
+     * （第三方 SA 常挂在挥刀/蓄力事件上）。Boss 自己的 clickAction 也 post 同一事件，但 user 是 Mob
+     * 已被上游过滤 ⇒ 本锚点不含 Boss 侧污染。
+     */
+    public void playerSlash(long nowGameTime, String playerName) {
+        try {
+            long t = this.rel(nowGameTime);
+            this.playerSlashCount++;
+            this.lastPlayerSlashRelTick = t;
+            this.lastPlayerSlashPlayer = playerName;
+            if (this.playerSlashFirstT < 0L) {
+                this.playerSlashFirstT = t;
+            }
+            this.playerSlashLastT = t;
+            if (playerName != null) {
+                this.playerSlashPlayers.add(playerName);
+            }
+        } catch (Throwable t) {
+            LOG.warn("[SilentSun] 战斗流程报告：玩家挥刀锚点记录失败：{}", t.toString());
+        }
+    }
+
+    /**
+     * 玩家蓄力锚点（2026-09-12）：SlashBlade {@code ChargeActionEvent} 状态变化时调用。
+     * <p>
+     * {@code ChargeActionEvent} 在蓄力期间**每 tick** 都会 post，故调用方只在 gameTime 跳变 &gt; 2 tick
+     * 时传 {@code newCharge=true}（＝新一次蓄力），其余只刷新「最近一次蓄力时刻」——否则报告会膨胀
+     * 成每 tick 一条。
+     */
+    public void playerCharge(long nowGameTime, String playerName, boolean newCharge) {
+        try {
+            long t = this.rel(nowGameTime);
+            this.lastPlayerChargeRelTick = t;
+            this.lastPlayerChargePlayer = playerName;
+            this.playerChargeLastT = t;
+            if (newCharge) {
+                this.playerChargeCount++;
+                if (this.playerChargeFirstT < 0L) {
+                    this.playerChargeFirstT = t;
+                }
+                if (playerName != null) {
+                    this.playerChargePlayers.add(playerName);
+                }
+            }
+        } catch (Throwable t) {
+            LOG.warn("[SilentSun] 战斗流程报告：玩家蓄力锚点记录失败：{}", t.toString());
+        }
+    }
+
+    /**
+     * SA_PRODUCTION：某次 SA 施放**同一次调用内**新增的实体（空列表 = 这次 SA 空放）。
+     * <p>
+     * 时间线产物出现在后续 tick，不可能落进「同一次调用的前后快照差」里 ⇒ 本条目非空即证明
+     * {@code doArts → updateComboSeq → clickAction / releaseAction} 这条链确实产出了实体。
+     */
+    public void saProduction(long nowGameTime, String saId, List<String> added) {
+        try {
+            long t = this.rel(nowGameTime);
+            List<String> snapshot = added == null ? List.of() : new ArrayList<>(added);
+            this.saProductionTotal++;
+            this.saProductionAddedTotal += snapshot.size();
+            if (snapshot.isEmpty()) {
+                this.emptySaProductions++;
+            }
+            SaProdAgg agg = this.saProductionBySaId.computeIfAbsent(saId == null ? "<unknown>" : saId,
+                k -> new SaProdAgg());
+            agg.casts++;
+            agg.addedTotal += snapshot.size();
+            if (snapshot.isEmpty()) {
+                agg.emptyCasts++;
+            }
+            if (agg.firstT < 0L) {
+                agg.firstT = t;
+            }
+            agg.lastT = t;
+            for (String s : snapshot) {
+                int at = s.indexOf('@');
+                agg.types.add(at < 0 ? s : s.substring(0, at));
+            }
+            if (this.saProductions.size() < PRODUCTION_TRACE_MAX) {
+                this.saProductions.add(new SaProductionEvent(t, saId, snapshot));
+            }
+        } catch (Throwable t) {
+            LOG.warn("[SilentSun] 战斗流程报告：SA_PRODUCTION 记录失败：{}", t.toString());
         }
     }
 
@@ -389,6 +637,8 @@ public final class BattleFlowRecorder {
             JsonObject probe = this.buildTickActionProbe();
             LOG.info("[SilentSun] tickAction 探针结论：{} —— {}", probe.get("verdict").getAsString(),
                 probe.get("verdictBasis").getAsString());
+            LOG.info("[SilentSun] 产出路径判定：{} —— {}", probe.get("pathVerdict").getAsString(),
+                probe.get("pathBasis").getAsString());
             if (!this.antiCheatDropped.isEmpty()) {
                 LOG.warn("[SilentSun] 战斗流程报告：部分反作弊条目因超过单 kind 上限（{}）被丢弃：{}",
                     ANTI_CHEAT_MAX_PER_KIND, this.antiCheatDropped);
@@ -409,6 +659,23 @@ public final class BattleFlowRecorder {
         this.antiCheatCountByKind.clear();
         this.saPool = null;
         this.comboSeqTrace.clear();
+        this.productionTrace.clear();
+        this.productionByType.clear();
+        this.productionByCategory.clear();
+        this.saProductions.clear();
+        this.saProductionBySaId.clear();
+        this.playerSlashCount = 0;
+        this.playerSlashFirstT = -1L;
+        this.playerSlashLastT = -1L;
+        this.lastPlayerSlashRelTick = -1L;
+        this.lastPlayerSlashPlayer = null;
+        this.playerSlashPlayers.clear();
+        this.playerChargeCount = 0;
+        this.playerChargeFirstT = -1L;
+        this.playerChargeLastT = -1L;
+        this.lastPlayerChargeRelTick = -1L;
+        this.lastPlayerChargePlayer = null;
+        this.playerChargePlayers.clear();
     }
 
     /** 输出目录：游戏实例根目录下 {@code logs/silent_sun/}；取不到则退化到系统临时目录并 warn。 */
@@ -444,6 +711,8 @@ public final class BattleFlowRecorder {
         root.add("saStats", this.buildSaStats());
         root.add("tickActionProbe", this.buildTickActionProbe());
         root.add("comboSeqTrace", this.buildComboSeqTrace());
+        root.add("entityProduction", this.buildEntityProduction());
+        root.add("saProductions", this.buildSaProductions());
         if (!this.antiCheatDropped.isEmpty()) {
             JsonObject dropped = new JsonObject();
             for (Map.Entry<String, Integer> e : this.antiCheatDropped.entrySet()) {
@@ -715,6 +984,51 @@ public final class BattleFlowRecorder {
         }
         out.addProperty("verdict", verdict);
         out.addProperty("verdictBasis", basis.toString());
+
+        // ── (A)/(B)/(C) 路径判定（2026-09-12，作者新情报后新增）：把「时间线是否在跑」与
+        //    「实体有没有产出来」两个事实交叉。只看 comboSeq 分不清 (A) 与 (C)，必须带实体证据。──
+        String pathVerdict;
+        StringBuilder pathBasis = new StringBuilder();
+        boolean timelineRunning = this.comboFingerprintMax > 0L;
+        if (timelineRunning) {
+            pathVerdict = "A_timelineExecuting";
+            pathBasis.append("(A) 时间线在执行：指纹 ").append(this.comboFingerprintKey).append(" 最大 ")
+                .append(this.comboFingerprintMax).append("（> 0）⇒ ComboState.tickAction 被调用过、时间线帧在推进。")
+                .append("本场实体产出 ").append(this.productionTotal)
+                .append(" 个（既有时间线逐帧产出，也可能含 clickAction 产出 —— 两者可并存）。");
+        } else if (this.productionTotal == 0) {
+            pathVerdict = "B_noProduction";
+            pathBasis.append("(B) 只走 clickAction，且**本场无实体产出**：指纹恒 0，Boss 周围也没出现任何模组实体。");
+            if (this.comboProbeActiveTicks < COMBO_ACTIVE_TICKS_THRESHOLD) {
+                pathBasis.append(" 但活动 combo 仅累计 ").append(this.comboProbeActiveTicks).append(" tick（< ")
+                    .append(COMBO_ACTIVE_TICKS_THRESHOLD).append("）⇒ 窗口偏短，建议打长一点复测。");
+            }
+        } else if (this.productionOutsideSelfWindow > 0) {
+            pathVerdict = "C_thirdPathProduction";
+            pathBasis.append("(C) 产出走**第三条路径**：指纹恒 0（时间线没跑），但有 ")
+                .append(this.productionOutsideSelfWindow).append(" 个实体在我方驱动窗口**之外**生成（总产出 ")
+                .append(this.productionTotal).append(" 个）。")
+                .append("定位方式：对照 entityProduction.byType（哪一类实体、何时首次出现）与 saProductions"
+                    + "（那次 SA 同调用内产出了什么）—— 若某类实体的首现时刻与某次 SA 施放严格对齐，"
+                    + "则该 SA 走的是 clickAction/releaseAction 之外的出口；若与任何 SA 施放都对不上，"
+                    + "则驱动者不在 silent_sun 侧（第三方模组自己的事件监听器 / 调度器）。"
+                    + "（selfDriven 是窗口级标记 ⇒ 本判定偏保守：会漏判同窗口内第三方与我方并存的情况，"
+                    + "但不会把 clickAction 产物误报成第三条路径。）");
+        } else {
+            pathVerdict = "B_clickActionOnly";
+            pathBasis.append("(B) 只走 clickAction：指纹恒 0（时间线没跑），全部 ").append(this.productionTotal)
+                .append(" 个实体都出现在我方驱动窗口内（updateComboSeq / progressCombo 那一拍的动作产物）。")
+                .append(" comboSeq 变化 ").append(this.comboSeqChangeCount).append(" 次，其中我方写入 ")
+                .append(this.comboSelfDrivenChangeCount).append(" 次。");
+        }
+        if (!timelineRunning && this.comboSeqChangeCount > this.comboSelfDrivenChangeCount) {
+            pathBasis.append(" 注：comboSeq 有 ").append(this.comboSeqChangeCount - this.comboSelfDrivenChangeCount)
+                .append(" 次变化落在我方窗口外 —— 但 comboSeq 变化**不等于**时间线在跑"
+                    + "（resolvCurrentComboState 的超时迁移同样会改它），判定仍以指纹为准。");
+        }
+        out.addProperty("pathVerdict", pathVerdict);
+        out.addProperty("pathBasis", pathBasis.toString());
+
         // 读法指南（写给作者）：字段多且易误读，故把「看哪三个字段」直接写进报告。
         out.addProperty("readGuide",
             "判定只看三处：① fingerprintMax > 0 ⇒ 时间线在跑（tickAction 被调用过）；"
@@ -772,6 +1086,141 @@ public final class BattleFlowRecorder {
             if (e.lastSaId() != null) {
                 o.addProperty("lastSaId", e.lastSaId());
             }
+            arr.add(o);
+        }
+        return arr;
+    }
+
+    /**
+     * entityProduction：Boss 周围模组实体的**增量**观测（2026-09-12，作者新情报后新增）。
+     * <p>
+     * 读法：
+     * <ul>
+     *   <li>{@code byType} / {@code byCategory} 回答「**哪一类**实体产出来了、多少次、首次与末次何时、归属谁」
+     *       —— 这是「有一部分 SA 产出成功」到底对应哪类实体的直接答案；</li>
+     *   <li>{@code trace} 给出每个实体出现的时刻与当时的 comboSeq / 指纹 / 是否我方驱动窗口 /
+     *       距最近一次 SA 施放的 tick 偏移 —— 与 {@code saCasts}、{@code comboSeqTrace} 对齐即可定位产出链；</li>
+     *   <li>{@code saCastAddedEntities} / {@code saCastEmptyProductions} 是**施放同调用内**的差值统计：
+     *       added &gt; 0 的 SA 就是「真的产出成功」的那部分。</li>
+     * </ul>
+     * 注意：本观测跳过 {@code minecraft:} 命名空间实体，只统计模组实体；且只报**新出现**的 id（增量），
+     * 首轮扫描只建基线不记录（否则会把战前已存在的实体误算成产出）。
+     */
+    private JsonObject buildEntityProduction() {
+        JsonObject out = new JsonObject();
+        out.addProperty("scanRadius", this.productionScanRadius);
+        out.addProperty("scanIntervalTicks", this.productionScanIntervalTicks);
+        out.addProperty("total", this.productionTotal);
+        out.addProperty("outsideSelfDrivenWindow", this.productionOutsideSelfWindow);
+        out.addProperty("saCastProductions", this.saProductionTotal);
+        out.addProperty("saCastAddedEntities", this.saProductionAddedTotal);
+        out.addProperty("saCastEmptyProductions", this.emptySaProductions);
+        JsonArray byType = new JsonArray();
+        for (Map.Entry<String, ProdAgg> entry : this.productionByType.entrySet()) {
+            ProdAgg a = entry.getValue();
+            JsonObject o = new JsonObject();
+            o.addProperty("type", entry.getKey());
+            o.addProperty("count", a.count);
+            o.addProperty("firstT", ticksToSeconds(a.firstT < 0L ? 0L : a.firstT));
+            o.addProperty("lastT", ticksToSeconds(a.lastT < 0L ? 0L : a.lastT));
+            o.add("owners", toArray(new ArrayList<>(a.owners)));
+            o.add("combos", toArray(new ArrayList<>(a.combos)));
+            byType.add(o);
+        }
+        out.add("byType", byType);
+        // 按 SA 聚合：哪一部分 SA 真的出了实体、出了什么 —— 直接对「有一部分 SA 产出成功」这条观察作答。
+        JsonArray bySaId = new JsonArray();
+        for (Map.Entry<String, SaProdAgg> entry : this.saProductionBySaId.entrySet()) {
+            SaProdAgg a = entry.getValue();
+            JsonObject o = new JsonObject();
+            o.addProperty("saId", entry.getKey());
+            o.addProperty("casts", a.casts);
+            o.addProperty("emptyCasts", a.emptyCasts);
+            o.addProperty("addedTotal", a.addedTotal);
+            o.addProperty("firstT", ticksToSeconds(a.firstT < 0L ? 0L : a.firstT));
+            o.addProperty("lastT", ticksToSeconds(a.lastT < 0L ? 0L : a.lastT));
+            o.add("producedTypes", toArray(new ArrayList<>(a.types)));
+            bySaId.add(o);
+        }
+        out.add("bySaId", bySaId);
+        JsonObject byCategory = new JsonObject();
+        for (Map.Entry<String, Integer> entry : this.productionByCategory.entrySet()) {
+            byCategory.addProperty(entry.getKey(), entry.getValue());
+        }
+        out.add("byCategory", byCategory);
+        // 玩家挥刀锚点汇总：用于判断「产出是否是玩家侧触发」的第三条路径。
+        JsonObject playerSlashes = new JsonObject();
+        playerSlashes.addProperty("count", this.playerSlashCount);
+        playerSlashes.addProperty("firstT", this.playerSlashFirstT < 0L ? -1.0 : ticksToSeconds(this.playerSlashFirstT));
+        playerSlashes.addProperty("lastT", this.playerSlashLastT < 0L ? -1.0 : ticksToSeconds(this.playerSlashLastT));
+        playerSlashes.add("players", toArray(new ArrayList<>(this.playerSlashPlayers)));
+        out.add("playerSlashes", playerSlashes);
+        // 玩家蓄力锚点汇总：第三方 SA 也可能挂在蓄力事件上（如 recasting 的 onCharge）。
+        JsonObject playerCharges = new JsonObject();
+        playerCharges.addProperty("count", this.playerChargeCount);
+        playerCharges.addProperty("firstT", this.playerChargeFirstT < 0L ? -1.0 : ticksToSeconds(this.playerChargeFirstT));
+        playerCharges.addProperty("lastT", this.playerChargeLastT < 0L ? -1.0 : ticksToSeconds(this.playerChargeLastT));
+        playerCharges.add("players", toArray(new ArrayList<>(this.playerChargePlayers)));
+        out.add("playerCharges", playerCharges);
+        JsonArray trace = new JsonArray();
+        for (ProductionEvent e : this.productionTrace) {
+            JsonObject o = new JsonObject();
+            o.addProperty("t", ticksToSeconds(e.t()));
+            o.addProperty("type", e.type());
+            o.addProperty("category", e.category());
+            if (e.owner() != null) {
+                o.addProperty("owner", e.owner());
+            }
+            o.addProperty("selfDriven", e.selfDriven());
+            o.addProperty("comboSeq", e.comboSeq());
+            o.addProperty("fingerprint", e.fingerprint());
+            o.addProperty("sinceLastSaCastTicks", e.sinceLastSaCastTicks());
+            if (e.lastSaId() != null) {
+                o.addProperty("lastSaId", e.lastSaId());
+            }
+            o.addProperty("sinceLastPlayerSlashTicks", e.sinceLastPlayerSlashTicks());
+            if (e.lastPlayerSlashBy() != null) {
+                o.addProperty("lastPlayerSlashBy", e.lastPlayerSlashBy());
+            }
+            o.addProperty("sinceLastPlayerChargeTicks", e.sinceLastPlayerChargeTicks());
+            if (e.lastPlayerChargeBy() != null) {
+                o.addProperty("lastPlayerChargeBy", e.lastPlayerChargeBy());
+            }
+            trace.add(o);
+        }
+        out.add("trace", trace);
+        if (this.productionTraceDropped > 0) {
+            out.addProperty("traceDropped", this.productionTraceDropped);
+        }
+        out.addProperty("readGuide",
+            "看四处：① entityProduction.byType — 产出的实体类型与归属（含非 slashblade 命名空间 = 第三方模组实体，"
+                + "既有诊断 diagnoseSlashBladeEntityFlood 看不到这一类）；② trace 里每条实体的 selfDriven 与 "
+                + "sinceLastSaCastTicks —— selfDriven=false 且指纹恒 0 ⇒ 产出不是 silent_sun 驱动的；"
+                + "sinceLastSaCastTicks 在 0~2 内 ⇒ 很可能是 clickAction/releaseAction 同拍产物，"
+                + "远大于 2 且按数十 tick 间隔反复出现 ⇒ 疑似时间线逐帧产出；"
+                + "③ saProductions[].added — 那次 SA 同调用内到底产出了什么（空表 = 这次 SA 空放）；"
+                + "④ trace 的双锚点 sinceLastPlayerSlashTicks / sinceLastPlayerChargeTicks —— "
+                + "若产出的实体几乎都紧跟某次玩家**挥刀**或**蓄力**之后（且 selfDriven=false、fingerprint=0），"
+                + "则这条第三条路径是**玩家侧**触发的（第三方 SA 常挂在 DoSlashEvent / ChargeActionEvent 上，"
+                + "如 recasting 的 TimeBeyondSlashArts.onCharge）；若两个锚点都对不上，"
+                + "则驱动者既不在 silent_sun 侧、也不在玩家挥刀/蓄力事件上，需要继续查第三方模组的自调度器。"
+                + " 归因局限（务必知悉）：selfDriven 是**窗口级**标记 —— 只要该扫描窗口"
+                + "（2 tick）内 silent_sun 驱动过 combo，该窗口内的产出就一律标 true，因此它**不排除**"
+                + "「我方与第三方同窗口各产一部分」，(C) 的判定方向是保守的（宁可漏判 C，不假报 C）；"
+                + "要更细只能看 saProductions 的**同调用差值**（那是严格同一次调用内的因果差）；"
+                + "反向的真（selfDriven=true）也不等于产出必源于我方 —— 它只说明该窗口我方动过 combo。");
+        return out;
+    }
+
+    /** saProductions：每次 SA 施放同调用内新增的实体（原始序列，汇总见 {@code entityProduction}）。 */
+    private JsonArray buildSaProductions() {
+        JsonArray arr = new JsonArray();
+        for (SaProductionEvent e : this.saProductions) {
+            JsonObject o = new JsonObject();
+            o.addProperty("t", ticksToSeconds(e.t()));
+            o.addProperty("saId", e.saId());
+            o.addProperty("addedCount", e.added().size());
+            o.add("added", toArray(e.added()));
             arr.add(o);
         }
         return arr;

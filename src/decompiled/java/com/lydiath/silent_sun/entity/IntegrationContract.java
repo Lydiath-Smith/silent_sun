@@ -7,6 +7,7 @@ import com.lydiath.silent_sun.rules.RediosRules;
 import net.minecraft.ChatFormatting;
 import net.minecraft.core.Holder;
 import net.minecraft.core.HolderLookup;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.IntTag;
@@ -157,6 +158,15 @@ public final class IntegrationContract {
     /** SlashBladeEvent$DoSlashEvent：玩家挥刀事件（T-v3-7 反射监听，不硬依赖 slashblade）。 */
     static final String SLASH_BLADE_EVENT_DO_SLASH_CLASS = "mods.flammpfeil.slashblade.event.SlashBladeEvent$DoSlashEvent";
     static final String DO_SLASH_EVENT_GET_USER_METHOD = "getUser";
+    /**
+     * SlashBladeEvent$ChargeActionEvent：玩家**蓄力**事件（{@code ItemSlashBlade.onUseTick} 里 post）。
+     * <p>
+     * 2026-09-12（产出观测）：第三方 SA 常挂在蓄力/挥刀事件上（例如 recasting 的
+     * {@code TimeBeyondSlashArts.onCharge(ChargeActionEvent)} 就是 {@code @SubscribeEvent}）。当产出落在
+     * 我方驱动窗口之外时，本锚点用于判断它是否**玩家蓄力**触发 —— 与 {@code DoSlashEvent} 锚点互补。
+     */
+    static final String SLASH_BLADE_EVENT_CHARGE_CLASS =
+        "mods.flammpfeil.slashblade.event.SlashBladeEvent$ChargeActionEvent";
     static final String REGISTRY_EVENTS_CLASS = "mods.flammpfeil.slashblade.RegistryEvents";
     static final String REGISTRY_EVENTS_SLASH_FIELD = "SlashEffect";
     /** 幻影剑基类实体（slashblade:summoned_sword）：玩家 onInputChange 直发的基础幻影剑，生成即 shoot() */
@@ -326,6 +336,10 @@ public final class IntegrationContract {
     private static volatile Class<?> doSlashEventClass;
     private static volatile Method doSlashEventGetUserMethod;
     private static volatile boolean doSlashListenerRegistered = false;
+    // ChargeActionEvent（玩家蓄力）锚点反射缓存（2026-09-12 产出观测）：失败只禁用该锚点，不影响主链路。
+    private static volatile Class<?> chargeEventClass;
+    private static volatile Method chargeEventGetUserMethod;
+    private static volatile boolean chargeListenerRegistered = false;
     // IShootable.getDamage()：刀光/次元斩基础伤害（AttackManager.doAttackWith 需要显式传伤害量）
     private static volatile Method iShootableGetDamageMethod;
     // AttackManager.doAttackWith(DamageSource,float,Entity,boolean,boolean)：刀光/次元斩无
@@ -387,6 +401,14 @@ public final class IntegrationContract {
     /** silent_sun 自己写 comboSeq 的最近一次归属（实体 id + 该实体 tickCount），供探针归因「这次变化是谁造成的」。 */
     private static volatile int selfComboWriteEntityId = Integer.MIN_VALUE;
     private static volatile int selfComboWriteTick = Integer.MIN_VALUE;
+    /**
+     * 我方主动写 comboSeq 的**单调计数**（每次 {@link #markSelfComboWrite} 自增）。
+     * <p>
+     * 产出观测用它做**窗口级**归因：扫描是每 N tick 一次，若用「距上次写入不超过 N tick」判断，
+     * 会漏掉窗口前半段的 clickAction 产物（实体在写入后 3 tick 才被扫到）→ 那些产物会被误判成
+     * 「我方窗口之外」的第三条路径。用计数差才能准确回答「本扫描窗口内我方到底写过没有」。
+     */
+    private static volatile long selfComboWriteCount;
 
     // ── Public API ──
 
@@ -550,6 +572,10 @@ public final class IntegrationContract {
         // 注：反射未就绪 / 攻击力 ≤0 的提前返回**没有已选定的 SA**，故不记事件；
         // 选定 SA 之后的每一条 return 都会记一条（ok=false = 未能施放），抛异常记 error 类名。
         final RediosEntity flowBoss = caster instanceof RediosEntity r ? r : null;
+        // 2026-09-12（产出观测）：施放前模组实体快照 —— 只在战斗报告开启时采集（关闭时零开销）。
+        final java.util.Map<Integer, ProbeEntityInfo> flowBefore =
+            flowBoss != null && flowBoss.flowReportActive()
+                ? scanModEntities(caster, PRODUCTION_SCAN_RADIUS) : null;
         String flowSaId = null;
         try {
             // 缓存 SA 注册表键集：slash_arts 启动注册完成后基本不变，避免每次施放
@@ -666,6 +692,8 @@ public final class IntegrationContract {
                 updateComboSeqMethod.invoke(opt.get(), caster, comboLoc);
                 // 2026-09-12（tickAction 探针）：归因标记（旁路，只影响报告里 selfDriven 一列）
                 markSelfComboWrite(caster);
+                // 2026-09-12（产出观测）：本次施放**同一次调用内**新增的实体（空 = 这次 SA 空放）。
+                reportSaProduction(flowBoss, flowSaId, caster, flowBefore);
                 // 2026-09-12（战斗流程报告）：施放成功（combo 已下发给刀状态机）。
                 reportSaCast(flowBoss, flowSaId, true, null, null);
             } else {
@@ -1176,6 +1204,15 @@ public final class IntegrationContract {
                 problems.append("ComboState.tickAction / timeLine 字段读取失败（帧数信号禁用，指纹主判据不受影响）：")
                     .append(t).append("；");
             }
+            // ④ 玩家蓄力锚点（ChargeActionEvent）：解析失败只禁用该锚点，不影响探针主判据。
+            try {
+                chargeEventClass = Class.forName(SLASH_BLADE_EVENT_CHARGE_CLASS);
+                chargeEventGetUserMethod = chargeEventClass.getMethod(DO_SLASH_EVENT_GET_USER_METHOD);
+            } catch (Throwable t) {
+                chargeEventClass = null;
+                chargeEventGetUserMethod = null;
+                problems.append("ChargeActionEvent 反射失败（玩家蓄力锚点禁用）：").append(t).append("；");
+            }
             comboProbeUnavailableReason = problems.length() == 0 ? null : problems.toString();
             comboProbeResolved = Boolean.TRUE;
             if (comboProbeUnavailableReason != null) {
@@ -1336,10 +1373,16 @@ public final class IntegrationContract {
             if (entity != null) {
                 selfComboWriteEntityId = entity.getId();
                 selfComboWriteTick = entity.tickCount;
+                selfComboWriteCount++;
             }
         } catch (Throwable ignored) {
             // 归因标记失败无害
         }
+    }
+
+    /** 我方主动写 comboSeq 的单调计数：调用方用它做「窗口内是否发生过我方写入」的差值判断。 */
+    public static long selfComboWriteCount() {
+        return selfComboWriteCount;
     }
 
     /** 最近一次「我方主动写 comboSeq」是否落在窗口内（同实体 + tickCount 差 ≤ windowTicks）。 */
@@ -1352,6 +1395,133 @@ public final class IntegrationContract {
             return delta >= 0 && delta <= windowTicks;
         } catch (Throwable t) {
             return false;
+        }
+    }
+
+    // ── 2026-09-12（产出观测）：回答「到底是哪一类实体产出来了」──
+    //
+    // 为什么需要它：作者的实机观察是「有一部分 SA 的对应实体产出成功」——若成立，则必有静态分析
+    // 没走通的产出链（时间线之外的出口 / 第三方模组自驱动 / 别的事件监听器）。要定死这件事，必须
+    // 观测**实体**而不只是 comboSeq。既有诊断 CommonEvents.diagnoseSlashBladeEntityFlood 有三个
+    // 不适用点：① 只在总数超阈值时打日志（少量产出全盲）；② 只统计 mods.flammpfeil.slashblade 包
+    // 的类（第三方模组自己的实体类型不计）；③ 快照式、不归因到 Boss、无法与 combo/指纹时间线对齐。
+    // 故这里另建一套：**增量式 + 全模组命名空间 + 归属到 Boss 周围**，只在战斗报告开启时运转。
+
+    /** 产出观测半径（格）：刀光/剑气/幻影剑都生成在 Boss 身前，48 格覆盖飞行中的剑气。 */
+    static final double PRODUCTION_SCAN_RADIUS = 48.0;
+
+    /**
+     * 一次扫描到的模组实体只读快照。
+     *
+     * @param type    实体类型注册表 id（如 {@code slashblade:drive}、{@code foxextra:xxx}）——
+     *                用**注册表 id** 而不是类名，第三方模组自己的实体类型同样能标出
+     * @param category 粗分类：刀光 / 剑气 / 次元斩 / 剑雨 / 其它（口径与
+     *                {@code CommonEvents.diagnoseSlashBladeEntityFlood} 一致，便于两处对照）
+     * @param owner   归属者名字（读不到为 null）
+     */
+    public record ProbeEntityInfo(int id, String type, String category, String owner) {
+    }
+
+    /**
+     * 扫描中心实体周围半径内的**非 vanilla 实体**（模组实体），返回 id → 快照。只读，不改任何状态。
+     * <p>
+     * 跳过 {@code minecraft:} 命名空间的实体（玩家 / 箭 / 掉落物等），只留模组实体 ——
+     * 这样增量 diff 出来的就是「模组产出的实体」，噪音极低。
+     */
+    public static java.util.Map<Integer, ProbeEntityInfo> scanModEntities(LivingEntity center, double radius) {
+        java.util.Map<Integer, ProbeEntityInfo> out = new java.util.HashMap<>();
+        try {
+            if (center == null || center.level() == null || center.level().isClientSide()) {
+                return out;
+            }
+            AABB box = center.getBoundingBox().inflate(radius);
+            for (Entity e : center.level().getEntitiesOfClass(Entity.class, box, candidate -> candidate != center)) {
+                if (e == null) {
+                    continue;
+                }
+                ResourceLocation key;
+                try {
+                    key = BuiltInRegistries.ENTITY_TYPE.getKey(e.getType());
+                } catch (Throwable ignored) {
+                    continue;
+                }
+                if (key == null || "minecraft".equals(key.getNamespace())) {
+                    continue;
+                }
+                out.put(e.getId(), new ProbeEntityInfo(e.getId(), key.toString(),
+                    classifyProbeEntityClass(e.getClass().getSimpleName()), probeOwnerName(e)));
+            }
+        } catch (Throwable t) {
+            LOG.warn("产出观测扫描失败（不影响战斗）：{}", t.toString());
+        }
+        return out;
+    }
+
+    /**
+     * 粗分类口径，与 {@code CommonEvents.diagnoseSlashBladeEntityFlood} 完全一致
+     * （用类简名而非直接引用类型：SlashBlade 是反射软依赖，编译期不可引用）。
+     */
+    public static String classifyProbeEntityClass(String simpleName) {
+        if (simpleName == null) {
+            return "其它";
+        }
+        if (simpleName.startsWith("EntitySlashEffect")) {
+            return "刀光";
+        }
+        if (simpleName.startsWith("EntityDrive")) {
+            return "剑气";
+        }
+        if (simpleName.startsWith("EntityJudgementCut")) {
+            return "次元斩";
+        }
+        if (simpleName.contains("Sword")) {
+            return "剑雨";
+        }
+        return "其它";
+    }
+
+    /** 实体归属者名字（读不到为 null）：{@code Projectile.getOwner()} / {@code OwnableEntity.getOwner()}。 */
+    private static String probeOwnerName(Entity e) {
+        try {
+            Entity owner = null;
+            if (e instanceof net.minecraft.world.entity.projectile.Projectile projectile) {
+                owner = projectile.getOwner();
+            } else if (e instanceof net.minecraft.world.entity.OwnableEntity ownable) {
+                owner = ownable.getOwner();
+            }
+            return owner == null ? null : owner.getName().getString();
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /**
+     * SA 施放产出留痕：对比施放前后的模组实体集合，把**本次施放新增**的实体报给战斗报告。
+     * <p>
+     * 这是直接回答「这个 SA 到底产出了什么」的最硬证据：新增实体全部出现在**同一次调用内**，
+     * 因此它们必然来自 {@code doArts → updateComboSeq → clickAction / releaseAction} 这条链，
+     * 不可能是时间线逐帧产出（时间线产物出现在后续 tick）。反之 {@code added} 为空 = 这次 SA 空放。
+     *
+     * @param before 施放前的实体快照（调用方只在报告开启时采集；为 null 表示不记录）
+     */
+    private static void reportSaProduction(RediosEntity boss, String saId, LivingEntity caster,
+                                           java.util.Map<Integer, ProbeEntityInfo> before) {
+        if (boss == null || before == null) {
+            return;
+        }
+        try {
+            java.util.Map<Integer, ProbeEntityInfo> after = scanModEntities(caster, PRODUCTION_SCAN_RADIUS);
+            List<String> added = new ArrayList<>();
+            for (java.util.Map.Entry<Integer, ProbeEntityInfo> entry : after.entrySet()) {
+                if (before.containsKey(entry.getKey())) {
+                    continue;
+                }
+                ProbeEntityInfo info = entry.getValue();
+                added.add(info.owner() == null ? info.type() : info.type() + "@" + info.owner());
+            }
+            boss.flowSaProduction(saId, added);
+        } catch (Throwable t) {
+            LOG.warn("SA 产出留痕失败（不影响战斗）：{}", t.toString());
         }
     }
 
@@ -2255,6 +2425,71 @@ public final class IntegrationContract {
         }
     }
 
+    /**
+     * 惰性注册 SlashBlade 玩家**蓄力**（{@code ChargeActionEvent}）监听器（2026-09-12 产出观测）。
+     * <p>
+     * 只做记录：给战斗报告提供「玩家蓄力」时间锚点。第三方 SA 常挂在蓄力/挥刀事件上（例如 recasting 的
+     * {@code TimeBeyondSlashArts.onCharge(ChargeActionEvent)} 就是 {@code @SubscribeEvent}）——
+     * 产出落在 silent_sun 驱动窗口之外时，靠这个锚点才能判断那条「第三条路径」是否玩家蓄力触发。
+     * <p>
+     * <b>与 DoSlashEvent 监听器的实现差别（性能）</b>：{@code ChargeActionEvent} 由
+     * {@code ItemSlashBlade.onUseTick} 触发，蓄力期间**每 tick 每个玩家**都会 post，因此回调里
+     * **不能**像 {@code onPlayerDoSlash} 那样遍历全服实体找 Boss —— 回调只写两个 volatile 字段
+     * （最近一次蓄力的 gameTime + 玩家名），由 Boss 自己的采样去读。注册失败只 warn 并禁用该锚点。
+     */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    public static void registerChargeListener() {
+        if (chargeListenerRegistered) {
+            return;
+        }
+        resolveComboProbeReflection();
+        if (chargeEventClass == null || chargeEventGetUserMethod == null) {
+            return;
+        }
+        chargeListenerRegistered = true;
+        try {
+            net.neoforged.neoforge.common.NeoForge.EVENT_BUS.addListener(
+                net.neoforged.bus.api.EventPriority.NORMAL,
+                false,
+                (Class) chargeEventClass,
+                (java.util.function.Consumer) IntegrationContract::onPlayerCharge);
+        } catch (Throwable t) {
+            chargeListenerRegistered = false;
+            LOG.warn("Failed to register ChargeActionEvent listener（产出观测的蓄力锚点已禁用）: {}", t.toString());
+        }
+    }
+
+    /** 最近一次玩家蓄力事件的 gameTime（{@code <0} = 本进程从未观测到）。 */
+    private static volatile long lastChargeEventGameTime = -1L;
+    private static volatile String lastChargeEventPlayer;
+    /** 玩家**蓄力**事件回调：只写两个 volatile（不遍历实体、不干预逻辑），供 Boss 采样时取用。 */
+    static void onPlayerCharge(Object event) {
+        try {
+            Object user = chargeEventGetUserMethod.invoke(event);
+            if (!(user instanceof Player player)) {
+                return;
+            }
+            Level level = player.level();
+            if (level == null || level.isClientSide()) {
+                return;
+            }
+            lastChargeEventGameTime = level.getGameTime();
+            lastChargeEventPlayer = player.getName().getString();
+        } catch (Throwable t) {
+            // 单次事件异常忽略，避免监听器抛异常影响 slashblade 事件链。
+        }
+    }
+
+    /** 最近一次玩家蓄力的 gameTime（{@code <0} = 从未观测到）；只读，供 Boss 采样侧消费。 */
+    public static long lastChargeEventGameTime() {
+        return lastChargeEventGameTime;
+    }
+
+    /** 最近一次蓄力的玩家名（可能为 null）。 */
+    public static String lastChargeEventPlayer() {
+        return lastChargeEventPlayer;
+    }
+
     /** DoSlashEvent 事件回调：反射取 getUser()（挥刀玩家），通知在场 Boss 判断远程挥刀避让。 */
     static void onPlayerDoSlash(Object event) {
         try {
@@ -2264,6 +2499,9 @@ public final class IntegrationContract {
             if (!(player.level() instanceof net.minecraft.server.level.ServerLevel serverLevel)) return;
             for (Entity e : serverLevel.getEntities().getAll()) {
                 if (e instanceof RediosEntity boss && boss.isAlive()) {
+                    // 2026-09-12（产出观测）：玩家挥刀锚点（旁路，零行为变更；内部自带 try/catch）。
+                    // 放在 onPlayerRemoteSlash 之前，保证锚点不因主逻辑异常而丢失。
+                    boss.flowPlayerSlash(player.getName().getString());
                     boss.onPlayerRemoteSlash(player);
                 }
             }

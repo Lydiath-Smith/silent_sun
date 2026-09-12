@@ -731,6 +731,8 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             --this.reverseDashCooldownTicks;
         }
         IntegrationContract.registerDoSlashListener();
+        // 2026-09-12（产出观测）：玩家蓄力锚点（ChargeActionEvent）—— 同样惰性注册，失败只 warn。
+        IntegrationContract.registerChargeListener();
         if (this.tickCount % 200 == 0) {
             RuntimeInjectionGuard.scanIfNeeded(RediosEntity.class);
         }
@@ -779,9 +781,11 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         // 实测崩溃（EntityDrive.onHitEntity:303 nextInt(负)）即落在该空窗内：Boss 与崩溃剑气相距仅约 20 格，
         // 本应被每 tick 的 64 格扫描覆盖。移动到此处的代价只是一次实体 AABB 查询，远低于崩服代价。
         IntegrationContract.sanitizeBossBladeEntities(this);
-        // 2026-09-12（tickAction 探针）：每 2 tick 只读采一次 combo/指纹快照（开关关闭时零开销），
+        // 2026-09-12（tickAction 探针）：每 tick 只读采一次 combo/指纹快照（开关关闭时零开销），
         // 用于实测「持刀 Mob 上 ComboState.tickAction 是否被调用」。旁路观测，见 tickComboProbe。
         this.tickComboProbe();
+        // 2026-09-12（产出观测）：每 2 tick 扫一次 Boss 周围模组实体的增量（回答「哪一类实体产出来了」）
+        this.tickEntityProductionProbe();
         if (this.isBladeAttackAllowed() && this.isBladeModeActive()) {
             IntegrationContract.tryTickBossBladePlayerHits(this);
             IntegrationContract.tryFireBossPhantomSwords(this);
@@ -3119,6 +3123,16 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             if (this.tickCount % COMBO_PROBE_SAMPLE_INTERVAL != 0) {
                 return;
             }
+            // 2026-09-12（产出观测）：把玩家蓄力锚点从「静态 volatile」转成报告的相对 tick。
+            // ChargeActionEvent 在蓄力期间每 tick 都 post ⇒ 只有 gameTime 跳变超过 2 tick 才算**新一次**蓄力，
+            // 否则只刷新「最近一次蓄力时刻」（避免报告里出现每 tick 一条的膨胀）。
+            long chargeGameTime = IntegrationContract.lastChargeEventGameTime();
+            if (chargeGameTime >= 0L && chargeGameTime != this.comboProbeLastChargeGameTime) {
+                boolean newCharge = this.comboProbeLastChargeGameTime < 0L
+                    || chargeGameTime - this.comboProbeLastChargeGameTime > 2L;
+                this.comboProbeLastChargeGameTime = chargeGameTime;
+                this.flowPlayerCharge(IntegrationContract.lastChargeEventPlayer(), newCharge);
+            }
             IntegrationContract.ComboProbeSnapshot snap = IntegrationContract.probeCombo(this);
             if (snap == null) {
                 return;
@@ -3145,6 +3159,144 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             }
         } catch (Throwable t) {
             SilentSunMod.LOGGER.warn("[SilentSun] 战斗流程报告记录失败（TICK_ACTION 探针）：{}", t.toString());
+        }
+    }
+
+    /** 2026-09-12（产出观测）：战斗报告是否在采集。false 时 IntegrationContract 侧跳过实体前后快照，零开销。 */
+    boolean flowReportActive() {
+        return this.flowRecorder != null;
+    }
+
+    /** SA_PRODUCTION：某次 SA 施放**同一次调用内**新增的实体（空表 = 这次 SA 空放）。 */
+    void flowSaProduction(String saId, List<String> added) {
+        try {
+            BattleFlowRecorder rec = this.flowRecorder;
+            if (rec == null || this.level() == null || this.level().isClientSide) {
+                return;
+            }
+            this.syncFlowRecorderStart();
+            rec.saProduction(this.gameTimeNow(), saId, added);
+        } catch (Throwable t) {
+            SilentSunMod.LOGGER.warn("[SilentSun] 战斗流程报告记录失败（SA_PRODUCTION）：{}", t.toString());
+        }
+    }
+
+    /**
+     * PLAYER_SLASH 锚点：玩家挥刀（SlashBlade {@code DoSlashEvent}，user 是 Player）时记一次。
+     * <p>
+     * 用途：产出事件带上「距最近一次玩家挥刀多少 tick」后，才能判断那条「第三条路径」是不是**玩家侧**
+     * 触发的（第三方 SA 常挂在挥刀/蓄力事件上）。Boss 自己的 clickAction 也 post 同一事件但 user 是 Mob，
+     * 已被 {@code onPlayerDoSlash} 上游过滤 ⇒ 本锚点只含玩家挥刀，无 Boss 侧污染。
+     */
+    void flowPlayerSlash(String playerName) {
+        try {
+            BattleFlowRecorder rec = this.flowRecorder;
+            if (rec == null || this.level() == null || this.level().isClientSide) {
+                return;
+            }
+            this.syncFlowRecorderStart();
+            rec.playerSlash(this.gameTimeNow(), playerName);
+        } catch (Throwable t) {
+            SilentSunMod.LOGGER.warn("[SilentSun] 战斗流程报告记录失败（PLAYER_SLASH）：{}", t.toString());
+        }
+    }
+
+    // ────────────────────────────────────────────────────────────────────────────
+    // 2026-09-12（产出观测）：实测「到底是哪一类实体产出来了」
+    //
+    // 背景（作者新情报）：实机观察是「有一部分 SA 的对应实体产出成功」——比静态分析的
+    // 「Mob 上 100% 空放」更强，说明至少有一条产出链静态分析没走通。要定死它，必须观测**实体**：
+    //  ・既有的 CommonEvents.diagnoseSlashBladeEntityFlood 有三个不适用点：只在总数超阈值时打日志
+    //    （少量产出全盲）、只看 mods.flammpfeil.slashblade 类名前缀（第三方模组实体不计）、
+    //    快照式且不归因到 Boss；故这里另建一套增量式观测，只在战斗报告开启时运转。
+    //  ・判据：(A) 指纹 > 0 ⇒ 时间线在跑；(B) 指纹 = 0 且产出只在我方驱动窗口内 ⇒ 只走 clickAction；
+    //    (C) 指纹 = 0 但产出出现在我方窗口之外 ⇒ 第三条路径（需靠 byType/trace 定位是哪条链）。
+    // ────────────────────────────────────────────────────────────────────────────
+
+    /** 产出观测扫描间隔（tick）：2 tick 一次（Boss 每 tick 已在做 64 格实体查询，这里只再叠一层低频扫描）。
+     *  取 2 而不是 5：漏检窗口 = 扫描间隔，寿命短的 SA 实体（部分刀光只活十几 tick）在 5 tick 窗口下仍会漏。 */
+    private static final int COMBO_PROBE_ENTITY_SCAN_INTERVAL = 2;
+
+    /** 上一轮扫描到的模组实体 id → 类型（增量 diff 用；只留仍存活的 id）。 */
+    private final Map<Integer, String> comboProbeSeenEntityIds = new HashMap<>();
+    /** 首轮扫描只建基线的标记（见 {@link #tickEntityProductionProbe()}）。 */
+    private boolean comboProbeEntityBaselineDone;
+    /**
+     * 上一次扫描时的「我方写入 comboSeq 计数」基线：两次扫描的差值 &gt; 0 即「本窗口内我方驱动过 combo」。
+     * 用它而不是「距上次写入 ≤ N tick」，否则实体在写入后第 3 tick 才被扫到时会漏标（见
+     * {@code IntegrationContract.selfComboWriteCount()} 的注释）。
+     */
+    private long comboProbeSelfWriteBaseline;
+    /** 最近一次已消费的玩家蓄力 gameTime（用于把静态锚点转成报告的相对 tick，并区分新一次蓄力）。 */
+    private long comboProbeLastChargeGameTime = -1L;
+
+    /**
+     * 2026-09-12（产出观测）：每 {@link #COMBO_PROBE_ENTITY_SCAN_INTERVAL} tick 扫一次 Boss 周围的
+     * **模组实体**，把新出现的实体报给战斗报告（按类型 id + 粗分类 + 归属者）。
+     * <p>
+     * 三条硬约束同 flowXxx：① 开关关闭时立即返回（零开销）；② 全程 try/catch 只 warn；
+     * ③ 纯只读 —— 不生成、不移除、不改任何实体。
+     * <p>
+     * 首轮扫描只建基线不记录：否则会把开战前就已存在的模组实体（玩家身上的、别的模组的杂项实体）
+     * 误算成本场产出。
+     */
+    private void tickEntityProductionProbe() {
+        BattleFlowRecorder rec = this.flowRecorder;
+        if (rec == null) {
+            return;
+        }
+        try {
+            if (this.tickCount % COMBO_PROBE_ENTITY_SCAN_INTERVAL != 0) {
+                return;
+            }
+            Map<Integer, IntegrationContract.ProbeEntityInfo> now =
+                IntegrationContract.scanModEntities(this, IntegrationContract.PRODUCTION_SCAN_RADIUS);
+            // 窗口级归因：两次扫描之间我方是否写过 comboSeq（差值，而不是「距上次写入多久」）
+            long selfWrites = IntegrationContract.selfComboWriteCount();
+            boolean selfDrivenWindow = selfWrites > this.comboProbeSelfWriteBaseline;
+            this.comboProbeSelfWriteBaseline = selfWrites;
+            if (!this.comboProbeEntityBaselineDone) {
+                this.comboProbeEntityBaselineDone = true;
+                rec.productionScanInfo(IntegrationContract.PRODUCTION_SCAN_RADIUS, COMBO_PROBE_ENTITY_SCAN_INTERVAL);
+            } else {
+                for (Map.Entry<Integer, IntegrationContract.ProbeEntityInfo> entry : now.entrySet()) {
+                    if (this.comboProbeSeenEntityIds.containsKey(entry.getKey())) {
+                        continue;
+                    }
+                    IntegrationContract.ProbeEntityInfo info = entry.getValue();
+                    rec.entityProduction(this.gameTimeNow(), info.type(), info.category(), info.owner(),
+                        selfDrivenWindow);
+                }
+            }
+            // 同步跟踪表：只留仍存活的 id（防无限增长），再把本轮全部写回。
+            this.comboProbeSeenEntityIds.keySet().retainAll(now.keySet());
+            for (Map.Entry<Integer, IntegrationContract.ProbeEntityInfo> entry : now.entrySet()) {
+                this.comboProbeSeenEntityIds.put(entry.getKey(), entry.getValue().type());
+            }
+        } catch (Throwable t) {
+            SilentSunMod.LOGGER.warn("[SilentSun] 战斗流程报告记录失败（产出观测）：{}", t.toString());
+        }
+    }
+
+    /**
+     * PLAYER_CHARGE 锚点：玩家蓄力（SlashBlade {@code ChargeActionEvent}）状态变化时记一次。
+     * <p>
+     * 与 PLAYER_SLASH 互补：第三方 SA 也可能挂在**蓄力**事件上（如 recasting 的
+     * {@code TimeBeyondSlashArts.onCharge}）。产出落在我方窗口之外时，这两个锚点用来判断那条
+     * 「第三条路径」是不是玩家侧触发的。
+     *
+     * @param newCharge true = 新一次蓄力（距上次蓄力事件 &gt; 2 tick）；false = 同一次蓄力的持续刷新
+     */
+    void flowPlayerCharge(String playerName, boolean newCharge) {
+        try {
+            BattleFlowRecorder rec = this.flowRecorder;
+            if (rec == null || this.level() == null || this.level().isClientSide) {
+                return;
+            }
+            this.syncFlowRecorderStart();
+            rec.playerCharge(this.gameTimeNow(), playerName, newCharge);
+        } catch (Throwable t) {
+            SilentSunMod.LOGGER.warn("[SilentSun] 战斗流程报告记录失败（PLAYER_CHARGE）：{}", t.toString());
         }
     }
 
