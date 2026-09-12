@@ -177,50 +177,72 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     /** Boss 数据版本：NBT 结构变更时 +1，用于 EntityJoinLevelEvent 剔除旧版本残留 Boss。 */
     private static final int BOSS_DATA_VERSION = 1;
     // ────────────────────────────────────────────────────────────────────────────
-    // 2026-09-12（审计清理 G13 #5 + #6）：删除 failsafe 五连阈值常量与战斗数值常量群。
-    // 逐项核对方式：全库（src 下全部 *.java）Select-String 每个标识符，命中数**恰好 1**＝仅其声明行，
-    // 即零读取；真实取值全部写死在消费点的同义字面量里。按「同一量只留一处」删常量，
-    // 消费点字面量本轮**原样不动**（接线/配置化属独立议题）。
+    // 2026-09-12（作者裁决：G13 #5 + #6 由「零引用即删」改判为「回填接线」）：审计原意是
+    //「常量未接线」——真实取值被写死在消费点的同义裸字面量里。故本批**恢复常量声明**，并把
+    // 那些裸字面量改为引用常量，恢复可调性、消除口径分裂（两方案二选一，不留双份）。
     //
-    // 【G13 #5 删掉的 failsafe 五连（消费点全部在 tickFailsafe() 内，写法照录）】
-    //   FAILSAFE_TICK_SPIKE_NANOS = 2000000000L   → `delta >= 2000000000L`
-    //   FAILSAFE_TICK_SPIKES_TO_TRIGGER = 2       → `tickSpikeCount >= 2` / `tickSpikeCount < 2`
-    //   FAILSAFE_HIGH_MEMORY_RATIO = 0.95         → `ratio >= 0.95`
-    //   FAILSAFE_HIGH_MEMORY_TICKS = 40           → `highMemoryTicks >= 40` / `highMemoryTicks < 40`
-    //   FAILSAFE_DISCARD_DELAY_TICKS = 100        → `this.failsafeCountdownTicks = 100`
+    // 【G13 #5 failsafe 五连 —— 消费点全部在 tickFailsafe() 内】
+    //   FAILSAFE_TICK_SPIKE_NANOS       → `delta >= FAILSAFE_TICK_SPIKE_NANOS`
+    //   FAILSAFE_TICK_SPIKES_TO_TRIGGER → `tickSpikeCount >= …` / `tickSpikeCount < …`
+    //   FAILSAFE_HIGH_MEMORY_RATIO      → `ratio >= FAILSAFE_HIGH_MEMORY_RATIO`
+    //   FAILSAFE_HIGH_MEMORY_TICKS      → `highMemoryTicks >= …` / `highMemoryTicks < …`
+    //   FAILSAFE_DISCARD_DELAY_TICKS    → 触发清场的那一处 `this.failsafeCountdownTicks = FAILSAFE_DISCARD_DELAY_TICKS`
+    private static final long FAILSAFE_TICK_SPIKE_NANOS = 2000000000L;
+    private static final int FAILSAFE_TICK_SPIKES_TO_TRIGGER = 2;
+    private static final double FAILSAFE_HIGH_MEMORY_RATIO = 0.95;
+    private static final int FAILSAFE_HIGH_MEMORY_TICKS = 40;
+    private static final int FAILSAFE_DISCARD_DELAY_TICKS = 100;
     //
-    // 【G13 #6 删掉的战斗数值常量（最左=常量名与原值，右侧=写死同义字面量的真实消费点；用方法名定位避免行号漂移）】
-    //   RIDE_PUNISH_COOLDOWN_TICKS = 40           → AntiCheatLayer.tickRidePunish 的 `this.ridePunishCooldownTicks = 40`
-    //   WISH_REPAIR_INTERVAL_TICKS = 5            → tickWishGrant 的 `wishRepairTicker % 5` 与 `repairAllCarriedItems(..., 5)`
-    //   PHASE1_RESISTANCE_AMPLIFIER = 2           → tickPhase1Resistance 的 `(DAMAGE_RESISTANCE, 40, 2, ...)`
-    //   COLORLESS_RESISTANCE_AMPLIFIER = 3        → tickResistanceBoost 的 `int desired = 3;`
-    //   BASE_MAX_HEALTH_FOR_REGEN_SCALE = 1000.0  → 自愈缩放的 `maxHealth > 1000.0` / `1000.0 / maxHealth`
-    //   DUSTLESS_GOOD_BUFF_COUNT = 4              → rollDustlessGoodBuffs 的 `new ArrayList<>(4)` 与 `i < 4`
-    //   DUSTLESS_GOOD_BUFF_AMPLIFIER = 2          → tickDustlessGood 的 `(buff, 40, 2, ...)`
-    //   DUSTLESS_GOOD_REFRESH_TICKS = 40          → tickDustlessGood 的 `(buff, 40, ...)` 时长
-    //   DUSTLESS_GOOD_HEAL_BOOST_TICKS = 600      → 5 处 `healBoostTicks = 600`
-    //   FIRM_FAITH_PLAYER_RESIST_AMP = 2          → tickFirmFaith 的 `(DAMAGE_RESISTANCE, 40, 2, ...)`
-    //   FIRM_FAITH_PLAYER_RESIST_REFRESH_TICKS=40 → 同上 tickFirmFaith 那处的时长 40
-    //
-    // ⚠️ 审计（docs\_审计-2026-09-11\G13.md §5/§6）的首选方案是「把消费点字面量改为引用常量」；
-    // 本批次按用户裁决执行「零引用即删」。若作者改主意要接线，上面已完整保留 16 个名字与取值，
-    // 回填声明 + 替换消费点即可（两方案二选一，不要留双份）。
+    // 【G13 #6 战斗数值常量群：11 项 = 10 项本类内消费 + 1 项 AntiCheatLayer 跨类消费】
+    //   RIDE_PUNISH_COOLDOWN_TICKS       → AntiCheatLayer.tickRidePunish 的 `this.ridePunishCooldownTicks = …`
+    //                                      （**跨类消费 ⇒ 本常量取包级可见**，改动最小；与原 private 无行为差异）
+    //   WISH_REPAIR_INTERVAL_TICKS       → tickWishGrant 的 `this.wishRepairTicker % …` 与 `repairAllCarriedItems(…, …, …)`
+    //   PHASE1_RESISTANCE_AMPLIFIER      → tickPhase1Resistance 的 `(DAMAGE_RESISTANCE, 40, …)` 放大等级
+    //                                      **以及 reapplySelfBuffs 的 phase==1 分支同址**（2026-09-12 补接，
+    //                                      旧审计 G13.md 的配对表本就含此第二消费点，上一轮接线清单漏记）
+    //   COLORLESS_RESISTANCE_AMPLIFIER   → tickResistanceBoost 的 `int desired = …;` 基准
+    //   BASE_MAX_HEALTH_FOR_REGEN_SCALE  → setHeal 的 `maxHealth > …` 与 `… / maxHealth` 自愈缩放
+    //   DUSTLESS_GOOD_BUFF_COUNT         → rollDustlessGoodBuffs 的 `new ArrayList<>(…)` 与 `i < …`
+    //   DUSTLESS_GOOD_BUFF_AMPLIFIER     → tickDustlessGood 的 `(buff, …, …)` 放大等级
+    //   DUSTLESS_GOOD_REFRESH_TICKS      → tickDustlessGood 的 `(buff, …)` 时长
+    //   DUSTLESS_GOOD_HEAL_BOOST_TICKS   → tickDustlessGood / enterNoResurrectionPhase2 /
+    //                                      applyColorlessPermanentBuffs / applyTitleTransition 两处，共 5 处 `= …`
+    //   FIRM_FAITH_PLAYER_RESIST_AMP     → tickFirmFaith 的 `(DAMAGE_RESISTANCE, 40, …)` 放大等级
+    //   FIRM_FAITH_PLAYER_RESIST_REFRESH_TICKS → 同上 tickFirmFaith 那处的时长
+    /** 骑乘惩罚冷却 tick 数；消费点在 AntiCheatLayer.tickRidePunish ⇒ 包级可见。 */
+    static final int RIDE_PUNISH_COOLDOWN_TICKS = 40;
+    private static final int WISH_REPAIR_INTERVAL_TICKS = 5;
+    private static final int PHASE1_RESISTANCE_AMPLIFIER = 2;
+    private static final int COLORLESS_RESISTANCE_AMPLIFIER = 3;
+    private static final double BASE_MAX_HEALTH_FOR_REGEN_SCALE = 1000.0;
+    private static final int DUSTLESS_GOOD_BUFF_COUNT = 4;
+    private static final int DUSTLESS_GOOD_BUFF_AMPLIFIER = 2;
+    private static final int DUSTLESS_GOOD_REFRESH_TICKS = 40;
+    private static final int DUSTLESS_GOOD_HEAL_BOOST_TICKS = 600;
+    private static final int FIRM_FAITH_PLAYER_RESIST_AMP = 2;
+    private static final int FIRM_FAITH_PLAYER_RESIST_REFRESH_TICKS = 40;
     // ────────────────────────────────────────────────────────────────────────────
     // 2026-09-12（审计清理 G17 #7 已清理）：本常量原为零引用死常量（同值 1000000000 在本文件裸写 3 处）；
     // 现 grantEnrageLevels() 的时长表达式改为引用本常量 ⇒ 已接线，成为激怒「无限时长」的唯一写入点。
     // 原 3 处裸写中，第 1、2 处位于 tickEnrageStacking 的满层续期分支，该分支经核实恒 false 已删除（G17 #6）。
     private static final int ENRAGE_INFINITE_DURATION_TICKS = 1000000000;
-    // 2026-09-12（审计清理 G13 #6 + G07 #5）：删除 UNITY_POWER_* 战斗数值常量群 5 项（逐项核实零引用：每个标识符
-    // 全库命中数恰好 1＝仅声明行），取值与写死同义字面量的消费点（用方法名定位，行号会漂移故不列）：
-    //   UNITY_POWER_FRIENDLY_RADIUS = 20       → tickUnityPower / countNearbyFriendly 内 `getBoundingBox().inflate(20.0)`
-    //   UNITY_POWER_FRIENDLY_RADIUS_SQR = 400  → 同上及 countNearbyFriendly 的 `distanceToSqr(...) <= 400.0`
-    //   UNITY_POWER_STRENGTH_REFRESH_TICKS = 40→ tickUnityPower 的 `tickCount % 40`（40 tick 刷新节奏）与 `(DAMAGE_BOOST, 40, level - 1, ...)`
-    //   UNITY_POWER_STRENGTH_MAX_LEVEL = 10    → tickUnityPower 的两处 `Math.min(10, ...)`
-    //   UNITY_POWER_IMMUNE_CHANCE = 0.2f       → ⚠️ 本类内**完全没有消费点**（分支只挂力量增益，无免疫判定）；
-    //                                            同义概率硬编码在 DamagePipeline.stageUnityColorless 的 `< 0.2f`。
-    //   （注：清单把 G07 #5 登记为「DamagePipeline 里的死常量」，实际声明只有本类这一份，
-    //     DamagePipeline 侧只有该 TODO 注释与那个硬编码 0.2f；两处登记是同一个常量，故只删这一份。）
-    //    2026-09-12 审计清理 G07 #5 要求：**不要动** DamagePipeline 里的 0.2f（改为读配置属独立议题，本轮不做）。
+    // 2026-09-12（作者裁决：G13 #6 + G07 #5 由「删除」改判为「回填接线」）：恢复 UNITY_POWER_* 常量群 5 项，
+    // 并把消费点的同义裸字面量改为引用它们（方法名定位，行号会漂移故不列）：
+    //   UNITY_POWER_FRIENDLY_RADIUS        → tickUnityPower / countNearbyFriendly 内 `getBoundingBox().inflate(…)`
+    //   UNITY_POWER_FRIENDLY_RADIUS_SQR    → 同上及 countNearbyFriendly 的 `distanceToSqr(…) <= …`
+    //   UNITY_POWER_STRENGTH_REFRESH_TICKS → tickUnityPower 的 `this.tickCount % …` 刷新节奏
+    //                                        与 `(DAMAGE_BOOST, …, level - 1, …)` 时长（2 处）
+    //   UNITY_POWER_STRENGTH_MAX_LEVEL     → tickUnityPower 的两处 `Math.min(…, …)`
+    //   UNITY_POWER_IMMUNE_CHANCE          → ⚠️ 本类内**没有消费点**（分支只挂力量增益，无免疫判定）；
+    //                                        唯一消费点在 DamagePipeline.stageUnityColorless 的 `nextFloat() < …`。
+    //                                        **跨类消费 ⇒ 本常量取包级可见**（改动最小；与原 private 无行为差异）。
+    //                                        该处原按 G07 #5「独立议题、本轮不动」保持硬编码 0.2f，
+    //                                        现由 2026-09-12 的 G13 接线裁决**覆盖**，已改为引用本常量。
+    private static final double UNITY_POWER_FRIENDLY_RADIUS = 20.0;
+    private static final double UNITY_POWER_FRIENDLY_RADIUS_SQR = 400.0;
+    private static final int UNITY_POWER_STRENGTH_REFRESH_TICKS = 40;
+    private static final int UNITY_POWER_STRENGTH_MAX_LEVEL = 10;
+    static final float UNITY_POWER_IMMUNE_CHANCE = 0.2f;
     // 2026-09-11（代码审计 G13 #7 修复）：原 STAGE_DIG_RAY_STEPS / STAGE_DIG_INTERVAL_TICKS 在本类
     // 零消费，且与 WeaponManager 的同名常量重复定义（后者才是真实消费方）—— 已删除本类副本。
     // 2026-09-11（B-4）：原 STAGE_BLOCK_BOMB_RANGE = 24 死常量已删除（全库仅声明、0 消费）——
@@ -1507,7 +1529,11 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             this.addEffect(new MobEffectInstance(MobEffects.REGENERATION, 40, 4, true, false), this);
         }
         if (this.phase == 1) {
-            this.addEffect(new MobEffectInstance(MobEffects.DAMAGE_RESISTANCE, 40, 2, true, false), this);
+            // 2026-09-12（G13 #6 接线补漏）：此处原为裸值 `2`，与 tickPhase1Resistance 的
+            // PHASE1_RESISTANCE_AMPLIFIER 同义却各写一遍 —— 旧审计 G13.md 的配对表本就把它列为
+            // 第二个消费点（旧行号 L1439），但上一轮登记的接线清单漏了它，故补接。
+            // 值完全一致（2），零行为变更。
+            this.addEffect(new MobEffectInstance(MobEffects.DAMAGE_RESISTANCE, 40, PHASE1_RESISTANCE_AMPLIFIER, true, false), this);
         }
     }
 
@@ -2535,8 +2561,8 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         if (this.healBoostTicks > 0) {
             amount *= 2.0f;
         }
-        if ((double)(maxHealth = this.getMaxHealth()) > 1000.0) {
-            amount *= (float)(1000.0 / (double)maxHealth);
+        if ((double)(maxHealth = this.getMaxHealth()) > BASE_MAX_HEALTH_FOR_REGEN_SCALE) {
+            amount *= (float)(BASE_MAX_HEALTH_FOR_REGEN_SCALE / (double)maxHealth);
         }
         float newHealth = this.getHealth() + amount;
         float max = this.getMaxHealth();
@@ -3769,7 +3795,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             return;
         }
         ++this.wishRepairTicker;
-        if (this.wishRepairTicker % 5 != 0) {
+        if (this.wishRepairTicker % WISH_REPAIR_INTERVAL_TICKS != 0) {
             return;
         }
         double percentPerSecond = SilentSunConfig.WISH_REPAIR_PERCENT_PER_SECOND.get();
@@ -3779,7 +3805,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         for (UUID id : new HashSet<UUID>(this.battleParticipants)) {
             ServerPlayer player = this.getServerPlayer(id);
             if (player == null || this.expelledPlayers.contains(id) || player.isSpectator() || player.isCreative() || !player.isAlive() || player.level() != this.level()) continue;
-            this.repairAllCarriedItems(player, percentPerSecond, 5);
+            this.repairAllCarriedItems(player, percentPerSecond, WISH_REPAIR_INTERVAL_TICKS);
         }
     }
 
@@ -3787,38 +3813,38 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         if (!this.isFirmFaithActive()) {
             return;
         }
-        this.applyOpponentEffect(() -> new MobEffectInstance(MobEffects.DAMAGE_RESISTANCE, 40, 2, true, false));
+        this.applyOpponentEffect(() -> new MobEffectInstance(MobEffects.DAMAGE_RESISTANCE, FIRM_FAITH_PLAYER_RESIST_REFRESH_TICKS, FIRM_FAITH_PLAYER_RESIST_AMP, true, false));
     }
 
     private void tickUnityPower(ServerLevel serverLevel) {
         if (!this.isUnityPowerActive()) {
             return;
         }
-        if (this.tickCount % 40 != 0) {
+        if (this.tickCount % UNITY_POWER_STRENGTH_REFRESH_TICKS != 0) {
             return;
         }
         for (UUID id : new HashSet<UUID>(this.battleParticipants)) {
             int friendly;
             int level;
             ServerPlayer player = this.getServerPlayer(id);
-            if (player == null || this.expelledPlayers.contains(id) || player.isSpectator() || player.isCreative() || !player.isAlive() || player.level() != this.level() || (level = Math.min(10, friendly = this.countNearbyFriendly(player, serverLevel))) <= 0) continue;
-            player.addEffect(new MobEffectInstance(MobEffects.DAMAGE_BOOST, 40, level - 1, true, false));
+            if (player == null || this.expelledPlayers.contains(id) || player.isSpectator() || player.isCreative() || !player.isAlive() || player.level() != this.level() || (level = Math.min(UNITY_POWER_STRENGTH_MAX_LEVEL, friendly = this.countNearbyFriendly(player, serverLevel))) <= 0) continue;
+            player.addEffect(new MobEffectInstance(MobEffects.DAMAGE_BOOST, UNITY_POWER_STRENGTH_REFRESH_TICKS, level - 1, true, false));
         }
         this.forEachMobOpponent(target -> {
-            int friendly = serverLevel.getEntitiesOfClass(LivingEntity.class, target.getBoundingBox().inflate(20.0), e -> e.isAlive() && !(e instanceof Player) && !(e instanceof Monster) && target.distanceToSqr(e) <= 400.0).size();
-            int level = Math.min(10, friendly);
+            int friendly = serverLevel.getEntitiesOfClass(LivingEntity.class, target.getBoundingBox().inflate(UNITY_POWER_FRIENDLY_RADIUS), e -> e.isAlive() && !(e instanceof Player) && !(e instanceof Monster) && target.distanceToSqr(e) <= UNITY_POWER_FRIENDLY_RADIUS_SQR).size();
+            int level = Math.min(UNITY_POWER_STRENGTH_MAX_LEVEL, friendly);
             if (level > 0) {
-                target.addEffect(new MobEffectInstance(MobEffects.DAMAGE_BOOST, 40, level - 1, true, false));
+                target.addEffect(new MobEffectInstance(MobEffects.DAMAGE_BOOST, UNITY_POWER_STRENGTH_REFRESH_TICKS, level - 1, true, false));
             }
         });
     }
 
     private int countNearbyFriendly(ServerPlayer player, ServerLevel serverLevel) {
-        List entities = serverLevel.getEntitiesOfClass(LivingEntity.class, player.getBoundingBox().inflate(20.0), e -> e.isAlive() && !(e instanceof Player) && !(e instanceof Monster) && player.distanceToSqr(e) <= 400.0);
+        List entities = serverLevel.getEntitiesOfClass(LivingEntity.class, player.getBoundingBox().inflate(UNITY_POWER_FRIENDLY_RADIUS), e -> e.isAlive() && !(e instanceof Player) && !(e instanceof Monster) && player.distanceToSqr(e) <= UNITY_POWER_FRIENDLY_RADIUS_SQR);
         int count = entities.size();
         for (UUID id : this.battleParticipants) {
             ServerPlayer other;
-            if (id.equals(player.getUUID()) || this.expelledPlayers.contains(id) || (other = this.getServerPlayer(id)) == null || !other.isAlive() || !(player.distanceToSqr(other) <= 400.0)) continue;
+            if (id.equals(player.getUUID()) || this.expelledPlayers.contains(id) || (other = this.getServerPlayer(id)) == null || !other.isAlive() || !(player.distanceToSqr(other) <= UNITY_POWER_FRIENDLY_RADIUS_SQR)) continue;
             ++count;
         }
         return count;
@@ -3826,7 +3852,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
 
     private void tickDustlessGood(ServerLevel serverLevel) {
         if (this.isDustlessGoodActive()) {
-            this.healBoostTicks = 600;
+            this.healBoostTicks = DUSTLESS_GOOD_HEAL_BOOST_TICKS;
         } else if (this.healBoostTicks > 0) {
             --this.healBoostTicks;
         }
@@ -3838,21 +3864,21 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             if (player == null || this.expelledPlayers.contains(id) || player.isSpectator() || player.isCreative() || !player.isAlive() || player.level() != this.level()) continue;
             List<Holder<MobEffect>> buffs = this.dustlessGoodBuffs.computeIfAbsent(id, ignored -> this.rollDustlessGoodBuffs());
             for (Holder<MobEffect> buff : buffs) {
-                player.addEffect(new MobEffectInstance(buff, 40, 2, true, false));
+                player.addEffect(new MobEffectInstance(buff, DUSTLESS_GOOD_REFRESH_TICKS, DUSTLESS_GOOD_BUFF_AMPLIFIER, true, false));
             }
         }
         this.forEachMobOpponent(target -> {
             List<Holder<MobEffect>> buffs = this.dustlessGoodBuffs.computeIfAbsent(target.getUUID(), ignored -> this.rollDustlessGoodBuffs());
             for (Holder<MobEffect> buff : buffs) {
-                target.addEffect(new MobEffectInstance(buff, 40, 2, true, false));
+                target.addEffect(new MobEffectInstance(buff, DUSTLESS_GOOD_REFRESH_TICKS, DUSTLESS_GOOD_BUFF_AMPLIFIER, true, false));
             }
         });
     }
 
     private List<Holder<MobEffect>> rollDustlessGoodBuffs() {
         ArrayList<Holder<MobEffect>> pool = new ArrayList<Holder<MobEffect>>(DUSTLESS_GOOD_BUFF_POOL);
-        ArrayList<Holder<MobEffect>> selected = new ArrayList<Holder<MobEffect>>(4);
-        for (int i = 0; i < 4 && !pool.isEmpty(); ++i) {
+        ArrayList<Holder<MobEffect>> selected = new ArrayList<Holder<MobEffect>>(DUSTLESS_GOOD_BUFF_COUNT);
+        for (int i = 0; i < DUSTLESS_GOOD_BUFF_COUNT && !pool.isEmpty(); ++i) {
             int idx = this.random.nextInt(pool.size());
             selected.add(pool.remove(idx));
         }
@@ -3890,11 +3916,11 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     }
 
     private void tickPhase1Resistance() {
-        this.addEffect(new MobEffectInstance(MobEffects.DAMAGE_RESISTANCE, 40, 2, true, false), this);
+        this.addEffect(new MobEffectInstance(MobEffects.DAMAGE_RESISTANCE, 40, PHASE1_RESISTANCE_AMPLIFIER, true, false), this);
     }
 
     private void tickResistanceBoost() {
-        int desired = 3;
+        int desired = COLORLESS_RESISTANCE_AMPLIFIER;
         MobEffectInstance current = this.getEffect(MobEffects.DAMAGE_RESISTANCE);
         if (current != null) {
             desired = Math.max(desired, current.getAmplifier());
@@ -4167,7 +4193,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         long now = System.nanoTime();
         if (this.lastServerTickNanos > 0L) {
             long delta = now - this.lastServerTickNanos;
-            if (delta >= 2000000000L) {
+            if (delta >= FAILSAFE_TICK_SPIKE_NANOS) {
                 ++this.tickSpikeCount;
             } else if (this.tickSpikeCount > 0) {
                 --this.tickSpikeCount;
@@ -4179,17 +4205,17 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         if (max > 0L) {
             long used = rt.totalMemory() - rt.freeMemory();
             double ratio = (double)used / (double)max;
-            if (ratio >= 0.95) {
+            if (ratio >= FAILSAFE_HIGH_MEMORY_RATIO) {
                 ++this.highMemoryTicks;
             } else if (this.highMemoryTicks > 0) {
                 --this.highMemoryTicks;
             }
         }
-        boolean serverLag = this.tickSpikeCount >= 2 || this.highMemoryTicks >= 40;
-        allLowFps = this.tickSpikeCount < 2 && this.highMemoryTicks < 40 && RediosRules.lagProtectionEnabled() && this.areAllParticipantsLowFps(serverLevel);
+        boolean serverLag = this.tickSpikeCount >= FAILSAFE_TICK_SPIKES_TO_TRIGGER || this.highMemoryTicks >= FAILSAFE_HIGH_MEMORY_TICKS;
+        allLowFps = this.tickSpikeCount < FAILSAFE_TICK_SPIKES_TO_TRIGGER && this.highMemoryTicks < FAILSAFE_HIGH_MEMORY_TICKS && RediosRules.lagProtectionEnabled() && this.areAllParticipantsLowFps(serverLevel);
         if (!this.failsafeActive && (serverLag || allLowFps)) {
             this.failsafeActive = true;
-            this.failsafeCountdownTicks = 100;
+            this.failsafeCountdownTicks = FAILSAFE_DISCARD_DELAY_TICKS;
             this.bossEvent.setVisible(false);
             this.setTarget(null);
             this.getNavigation().stop();
@@ -4926,7 +4952,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         this.ashDawnUnlocked = true;
         this.dodgeChance = Math.max(this.dodgeChance, (double)0.15f);
         this.enrageStackingUnlocked = true;
-        this.healBoostTicks = 600;
+        this.healBoostTicks = DUSTLESS_GOOD_HEAL_BOOST_TICKS;
         this.addEffect(new MobEffectInstance(MobEffects.DAMAGE_BOOST, 40, 4, true, false), this);
         this.addEffect(new MobEffectInstance(MobEffects.MOVEMENT_SPEED, 40, 1, true, false), this);
         this.addEffect(new MobEffectInstance(MobEffects.REGENERATION, 40, 4, true, false), this);
@@ -5255,7 +5281,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
      *  调用效果（力量V/迅捷II/恢复V）+ 永久机制标志。重复效果以本永久版本为主
      * （vanilla addEffect 对同效果保留更长 duration，无限不被 40 tick 覆盖）。 */
     private void applyColorlessPermanentBuffs() {
-        this.healBoostTicks = 600;
+        this.healBoostTicks = DUSTLESS_GOOD_HEAL_BOOST_TICKS;
         this.addEffect(new MobEffectInstance(MobEffects.DAMAGE_BOOST, MobEffectInstance.INFINITE_DURATION, 4, true, false), this);
         this.addEffect(new MobEffectInstance(MobEffects.MOVEMENT_SPEED, MobEffectInstance.INFINITE_DURATION, 1, true, false), this);
         this.addEffect(new MobEffectInstance(MobEffects.REGENERATION, MobEffectInstance.INFINITE_DURATION, 4, true, false), this);
@@ -7146,11 +7172,11 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             }
         }
         if (oldPhase == 1 && oldTitleIndex == 1 && (newPhase != 1 || newTitleIndex != 1)) {
-            this.healBoostTicks = 600;
+            this.healBoostTicks = DUSTLESS_GOOD_HEAL_BOOST_TICKS;
             this.dustlessGoodBuffs.clear();
         }
         if (newPhase == 1 && newTitleIndex == 1) {
-            this.healBoostTicks = 600;
+            this.healBoostTicks = DUSTLESS_GOOD_HEAL_BOOST_TICKS;
         }
         if (newPhase == 1 && newTitleIndex == 8 && !this.soulSeverRetiredInPhase1 && this.level() instanceof ServerLevel) {
             for (UUID uUID : new HashSet<UUID>(this.battleParticipants)) {
