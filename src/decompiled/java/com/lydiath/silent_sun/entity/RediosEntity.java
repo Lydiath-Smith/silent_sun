@@ -3443,7 +3443,21 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             float actual = before - living.getHealth();
             float diff = amount - actual;
             if (diff > 0.5f) {
-                living.setHealth(Math.max(0.0f, living.getHealth() - diff));
+                // 2026-09-12（作者裁决：真伤光环不得绕过硬核「保 1 血」）：
+                // 本处的差额补扣走 setHealth，**完全绕过 hurt 链路**，而硬核保护的
+                // clampHardcoreSpare 只在 hurt **之前**钳 —— 于是「玩家被打到 1 血后又挨一次光环」
+                // 会被直接扣到 0：1.6 光环是 1 点/4 tick、2.3 混沌之墟是 3 点/20 tick，都足够致死。
+                // 这与三条绝对真伤攻击路径（混沌之墟/砺锋、无拘疾驰补击）的口径不一致 —— 那三处
+                // 都先跑了 clampHardcoreSpare。现与它们对齐：硬核且本次补扣会致死时，
+                // 钳到 1 血并走同一套假死亡演出（notifyHardcoreSpare），不写 0。
+                float next = living.getHealth() - diff;
+                if (next <= 0.0f && living instanceof ServerPlayer sp
+                    && sp.level().getLevelData().isHardcore()) {
+                    living.setHealth(1.0f);
+                    this.notifyHardcoreSpare(sp);
+                    return;
+                }
+                living.setHealth(Math.max(0.0f, next));
             }
         }
     }

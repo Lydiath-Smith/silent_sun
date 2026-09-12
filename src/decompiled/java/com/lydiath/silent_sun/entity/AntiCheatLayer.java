@@ -235,6 +235,10 @@ final class AntiCheatLayer {
             return;
         }
         this.ridePunishCooldownTicks = 40;
+        // 2026-09-12（作者确认：有意设计，勿当缺陷改）：骑乘惩罚就是「一击必杀」——
+        // 按 ATTACK_DAMAGE 全额走**绝对真伤**（绕过护甲/减伤/无敌帧），基础 30、满激怒 120，
+        // 而玩家满血仅 20 点 ⇒ 骑上 Boss 必死。设计稿 §3.4 已将其列为「骑乘惩罚」，
+        // **不要**改成按比例伤害或击退警告。
         float damage = (float) boss.getAttributeValue(Attributes.ATTACK_DAMAGE);
         for (LivingEntity offender : offenders) {
             boss.addSoulSeverY(50L);
