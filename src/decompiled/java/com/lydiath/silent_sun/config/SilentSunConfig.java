@@ -229,14 +229,57 @@ public final class SilentSunConfig {
     // 且 foxextra 的 VoidSlashPlus 时间线每帧调 Drive.doSlash + AttackManager.doSlash 生成多条
     // 剑气+刀光（刀光洪峰源）。其余 namespace（slashblade 内置、灭却之日、amazingshine、
     // shinkubloodkatana 等）全部进池，保持全随机精神。
+    // 2026-09-12（字节码级复核后订正归因）：本条原先把「排除 foxextra 整包」的理由写成
+    // 「其 SA 有 SE 前提 + 时间线每帧多实体 = 洪峰源」，两条均**不成立**：
+    //   ① SE 方向是反的——foxextra 的 SummonSword 在每次 DoSlashEvent 上
+    //      generateFivePointSwordRain(...,5)，是**放大器**（+5 实体/次），不是「缺 SE 就放不出」；
+    //      AbstractSpecialEffect.isEffective 偏移 1 为 instanceof Player → 非 Player 取
+    //      getRequestLevel()=60，60<=60 为真 ⇒ 对 Mob **恒生效**。
+    //   ② Boss(Mob) 上 combo 时间线**不执行**——ItemStack.inventoryTick 的调用点全版本只有
+    //      Inventory.java（玩家物品栏），LivingEntity 零命中；SlashBlade 里 tickAction 唯一调用点
+    //      是 ItemSlashBlade.lambda$inventoryTick$12 ⇒ Mob 无驱动者，只有 clickAction 生效。
+    // 「刀光洪峰」的真实驱动源仍未知，已另立运行时排查项，**不要再归因到 foxextra 时间线**。
+    // 默认值由 ["foxextra","tianshaxing"] 改为 ["tianshaxing"]：foxextra 改用下面更精确的 SA id 列表，
+    // 其 SA 中 void_slash_plus 当前为空放、sakura_endex 是本环境唯一真有输出者，均无 Player/SE 硬前提。
     public static final ModConfigSpec.ConfigValue<List<? extends String>> BOSS_SA_EXCLUDED_NAMESPACES = BUILDER
         .comment("Boss 随机施放 SA 时排除的注册表 namespace 列表（黑名单模式，其余全进池）。",
-            "默认 [foxextra, tianshaxing]：狐月刀/天杀星刀的 SA 有 SE 前提（Boss 刀无对应 SE 会异常），",
-            "且 foxextra 的 VoidSlashPlus 时间线每帧生成多条剑气/刀光（刀光洪峰源）。",
-            "其余（slashblade 内置、灭却之日、amazingshine、shinkubloodkatana 等）全部进池。",
-            "如需排除更多，把 namespace 加入此列表。修改后最迟 60 秒生效。")
+            "默认 [tianshaxing]：天杀星刀的 SA 以 SE 为硬性前提，Boss 刀无对应 SE，放不出来。",
+            "注：2026-09-12 起 foxextra 不再整包排除——其 3 个 SA 中只有 thrust 有问题，已由下面的",
+            "redios.bossSaExcludedSaIds 精确排除；同一 namespace 里其余 SA 保留在池中。",
+            "如需排除更多 namespace，把 namespace 加入此列表。修改后最迟 60 秒生效。")
         .defineList("redios.bossSaExcludedNamespaces",
-            List.of("foxextra", "tianshaxing"),
+            List.of("tianshaxing"),
+            o -> o instanceof String);
+
+    /**
+     * Boss 随机施放 SA 时的 **SA 级**排除列表（完整 id，形如 {@code foxextra:thrust}）。
+     * <p>
+     * 2026-09-12（用户裁决 + 字节码级复核）：与 {@link #BOSS_SA_EXCLUDED_NAMESPACES} **并行生效**
+     * —— namespace 列表用于整包排除，本列表用于「只排掉某个 namespace 里真正不可用的单个 SA」。
+     * <p>
+     * 默认 {@code ["foxextra:thrust"]}，理由（已用 javap 逐段确认）：
+     * <ul>
+     *   <li>该 SA 的 combo {@code foxextra:thrust_ex} 在 {@code TimeLineTickAction.put(2, …)} 上挂了
+     *       {@code FEXcomboRegsitry.lambda$static$7} → {@code com.dinzeer.foxextra.sa.Thrust.doSlash}，
+     *       其字节码第一句就是 {@code checkcast net/minecraft/world/entity/player/Player}
+     *       → {@code SMoveUtil.sendDashMessage(Player, …)}；</li>
+     *   <li>施放者是 Boss（Mob）时必抛 {@code ClassCastException}，且抛出点在 {@code Item.inventoryTick}
+     *       内，宿主的 {@code try/catch (Exception)} 抓不到，会落到 vanilla {@code guardEntityTick}
+     *       → 每 tick 刷栈；</li>
+     *   <li>当前该时间线**因 Mob 无驱动者而不执行**，所以这是「有驱动就炸」的地雷而非在线故障
+     *       —— 但 {@code checkcast} 的确定性存在，故仍排除（一旦将来恢复 combo 驱动，不排就必酿事故）。</li>
+     * </ul>
+     * 修改后最迟 60 秒生效（SA 注册表键集有 60s TTL 缓存）。
+     */
+    public static final ModConfigSpec.ConfigValue<List<? extends String>> BOSS_SA_EXCLUDED_SA_IDS = BUILDER
+        .comment("Boss 随机施放 SA 时排除的**完整 SA id** 列表（形如 foxextra:thrust）。",
+            "与 redios.bossSaExcludedNamespaces 并行生效：namespace 用于整包排除，本列表用于精确排除单个 SA。",
+            "默认 [foxextra:thrust]：其 combo 时间线的第 2 tick 会执行 checkcast Player，Boss 是 Mob，必抛 ClassCastException。",
+            "同一 namespace 内其余 SA（foxextra 的 void_slash_plus / sakura_endex）经字节码复核无 Player/SE 硬性前提，保留在池中。",
+            "提示：Boss(Mob) 上 combo 时间线不执行（ItemStack.inventoryTick 只对玩家物品栏调用），当前只有 clickAction 生效。",
+            "修改后最迟 60 秒生效。")
+        .defineList("redios.bossSaExcludedSaIds",
+            List.of("foxextra:thrust"),
             o -> o instanceof String);
 
     public static final ModConfigSpec SPEC = BUILDER.build();

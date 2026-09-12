@@ -487,9 +487,11 @@ public final class IntegrationContract {
                 @SuppressWarnings("unchecked")
                 Set<Object> keys = new java.util.HashSet<>((Set<Object>) slashArtsRegistryKeySetMethod.invoke(registry));
                 // NeoForge 1.21.1：Registry.keySet() 返回 ResourceLocation（非 ResourceKey）。
-                // 2026-09-01：随机池 namespace 过滤（黑名单）——狐月刀(foxextra)/天杀星刀
-                // (tianshaxing) 的 SA 有 SE 前提且 foxextra 时间线每帧多实体是刀光洪峰源，
-                // 默认排除；其余全进池（config redios.bossSaExcludedNamespaces 可调）。
+                // 2026-09-01：随机池黑名单过滤，2026-09-12 扩展为 namespace + SA id 双粒度。
+                // 注：原注释把排除 foxextra 的理由写成「其 SA 有 SE 前提 + 时间线每帧多实体是洪峰源」，
+                // 该归因已于 2026-09-12 经源码+javap 双重验证推翻（详见 isSaAllowed 的 javadoc），
+                // 现保留 foxextra 整包排除**仅因**其中的 foxextra:thrust 会让 Mob 抛 CCE，
+                // 且已改为只排那一个 id（config redios.bossSaExcludedSaIds）。
                 keys.removeIf(k -> k instanceof ResourceLocation rl
                     && (!isSaAllowed(rl) || SLASH_ARTS_NONE_ID.equals(rl)));
                 keyList = new ArrayList<>(keys);
@@ -544,9 +546,35 @@ public final class IntegrationContract {
      * 回不到 NONE → tickAction 每 tick 刷实体 → 刀光洪峰（实测成千/秒）。其余第三方
      * （amazingshine/shinkubloodkatana 等）无 SE 前提，保留进池，维持全随机。
      */
+    /**
+     * SA 随机池过滤（黑名单模式；2026-09-01 引入，2026-09-12 扩展为 namespace + SA id 双粒度）。
+     * <p>
+     * 默认全放行，排除两类，二者**并行**判断：
+     * <ul>
+     *   <li>{@code redios.bossSaExcludedNamespaces} 整包排除（默认 {@code tianshaxing}
+     *       —— 天杀星刀的 SA 以 SE 为硬性前提，Boss 刀无对应 SE，放不出来）；</li>
+     *   <li>{@code redios.bossSaExcludedSaIds} 精确排除单个 SA（默认 {@code foxextra:thrust}
+     *       —— 其 combo {@code foxextra:thrust_ex} 的时间线 {@code put(2, …)} 调
+     *       {@code Thrust.doSlash}，源码即 {@code (Player) playerIn} 硬转，
+     *       施放者为 Mob 时必抛 {@code ClassCastException}）。</li>
+     * </ul>
+     * <p>
+     * <b>2026-09-12 归因订正</b>（本条原先把「整包排除 foxextra」的理由写为「其 SA 有 SE 前提 +
+     * 时间线每帧多实体 = 刀光洪峰源」，经 <b>foxextra 源码 + javap 字节码双重验证，两条均不成立</b>）：
+     * ① SE 方向是反的 —— {@code SummonSword} 在每次 {@code DoSlashEvent} 上额外生成 5 个剑雨实体，
+     * 是**放大器**而非「缺 SE 就放不出」；且 Boss 刀 {@code miedao_duan_prototype} 的
+     * {@code special_effects} 只有 soul_sever / triple_whammy / super_burst_drive，本就不含它；
+     * ② Boss(Mob) 上 combo 时间线**根本不执行** —— {@code ItemStack.inventoryTick} 的调用点只有
+     * {@code Inventory}（玩家物品栏），Mob 无驱动者 ⇒ 只有 {@code clickAction} 生效，
+     * 故 {@code void_slash_plus} 当前是空放、{@code sakura_endex} 才是 foxextra 里唯一真有输出的。
+     * 「刀光洪峰」的真实驱动源仍未知，已另立运行时排查项，<b>勿再归因到 foxextra 时间线</b>。
+     */
     static boolean isSaAllowed(ResourceLocation rl) {
         try {
-            return !SilentSunConfig.BOSS_SA_EXCLUDED_NAMESPACES.get().contains(rl.getNamespace());
+            if (SilentSunConfig.BOSS_SA_EXCLUDED_NAMESPACES.get().contains(rl.getNamespace())) {
+                return false;
+            }
+            return !SilentSunConfig.BOSS_SA_EXCLUDED_SA_IDS.get().contains(rl.toString());
         } catch (Exception e) {
             // 配置读取失败兜底：全放行
             return true;
