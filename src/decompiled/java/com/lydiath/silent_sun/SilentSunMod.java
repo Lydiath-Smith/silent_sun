@@ -55,8 +55,12 @@ public final class SilentSunMod {
                 modEventBus.register(clazz);
             }
             catch (Exception e) {
-                // TODO(审计清理 G01 #4)：客户端事件注册失败仅 warn 就继续启动，三个实体渲染器缺失要到战斗现场才崩 —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
-                LOGGER.warn("Failed to register client events: {}", (Object)e.toString());
+                // 2026-09-12（审计清理 G01 #4）：原先只有一行 warn + e.toString()，日志里既没有栈、也没说清
+                // 「后果」——三个实体渲染器（Redios / StarfallSalvo / StarfallCurtain）缺失后，服务端照常启动，
+                // 直到 Boss 或星落演出登场才在客户端崩。这里带上异常对象（保留栈）与后果说明以便直接定位。
+                // 级别维持 warn（启动期一次性事件，不会刷屏；且属「同类注册失败」的功能性故障）。（补日志增强，无行为变更）
+                LOGGER.warn("客户端事件类 ClientModEvents 注册失败：三个实体渲染器（Redios / StarfallSalvo / "
+                    + "StarfallCurtain）均未注册，服务端可正常启动，但 Boss 或星落实体出现时会崩客户端。", e);
             }
         }
         modContainer.registerConfig(ModConfig.Type.COMMON, (IConfigSpec)SilentSunConfig.SPEC);

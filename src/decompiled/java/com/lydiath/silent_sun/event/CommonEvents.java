@@ -188,7 +188,12 @@ public final class CommonEvents {
         MinecraftServer server = event.getServer();
         RediosEntity.purgeAllResidualBosses(server);
         ServerLevel overworld = server.overworld();
-        // TODO(审计清理 G05 #6)：!seenTickingSinceLoad 分支不可达（启动即清账本） —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
+        // 2026-09-12（审计清理 G05 #6 已清理）：**本行是「启动即清账本」的唯一依据** ——
+        // RediosBattleData.get(overworld) 触发 DataStorage.computeIfAbsent → load() 读出存档记录，
+        // 紧接着的 clearAllRecords() 把它们全部清掉，且 SavedData 有缓存、运行期不会重新 load。
+        // 因此运行期存在的记录必由 upsert() 创建（其内无条件置 seenTickingSinceLoad = true），
+        // tickServer 里依赖该字段的「10 分钟账本残留清理」分支不可达，已在 RediosBattleData 侧删除
+        // （含常量 UNLOADED_SETTLE_TICKS）。此处启动清理逻辑**刻意保持不动**。
         RediosBattleData.get(overworld).clearAllRecords();
         RediosCooldownData.get(overworld).resetCooldown();
     }
@@ -233,8 +238,11 @@ public final class CommonEvents {
             (ctx.getSource()).getServer().getCommands().performPrefixedCommand(ctx.getSource(), "reload");
             return 1;
         }
-        // TODO(审计清理 G12 #6)：runReloadAll 的 catch 丢弃异常对象，失败原因无任何日志 —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
+        // 2026-09-12（审计清理 G12 #6）：原先本 catch 只回执失败、异常对象直接丢弃，reload 为何失败无任何日志。
+        // 补一条 warn 并带上异常对象（warn(String, Throwable) 形式保留完整栈，而非 e.getMessage()），
+        // 便于定位是哪个数据包 / 重载监听器抛错。级别 warn：管理员显式执行 reload_all 才触发，非高频路径。（补日志，无行为变更）
         catch (Exception e) {
+            SilentSunMod.LOGGER.warn("/silent_sun reload_all 执行原版 reload 失败，配置/数据包未被重载", e);
             (ctx.getSource()).sendFailure(Component.translatable("command.silent_sun.reload_all.dispatch_failed"));
             return 0;
         }

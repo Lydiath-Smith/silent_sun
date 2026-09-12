@@ -164,10 +164,11 @@ public final class AbsoluteDamageUtil {
      * 分支早退，其 200 上限由 {@code RediosEntity.applyDamageCap}（读 {@code redios.damageHardCap}）承担。
      */
     private static float adjustAbsoluteDamage(DamageSource source, LivingEntity target, float amount) {
-        // TODO(审计清理 G04 #3)：IAbsoluteDamageImmune 判断恒真（与 damage() 入口重复判定），本身可安全删除 —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
-        if (target instanceof IAbsoluteDamageImmune) {
-            return amount; // 防御性：damage() 开头已对免疫目标早退，正常不可达
-        }
+        // 2026-09-12（审计清理 G04 #3）：删除 `target instanceof IAbsoluteDamageImmune` 早退分支 ——
+        // 本方法唯一调用点是 damage(target, source, amount, allowCreative) 的 L65，而该方法开头
+        // （L59）已对 IAbsoluteDamageImmune 目标直接 return false，因此到达此处时 target **必然不**
+        // 实现该接口，该判断恒不成立、分支不可达（原注释自称"防御性"，但重复判定既不能防御也不能生效）。
+        // 依据：全库检索 adjustAbsoluteDamage → 仅 AbsoluteDamageUtil.java L65 一处调用；方法为 private。
         if (source != null && source.getEntity() instanceof RediosEntity) {
             return amount; // 设计稿 §7.1 A1：Boss 的绝对伤害无视全局硬上限与保底减免
         }

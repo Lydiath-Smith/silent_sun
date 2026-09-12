@@ -436,7 +436,10 @@ public final class DamagePipeline {
             return DamageResult.proceed();
         }
         if ((boss.isUnityPowerActive() || boss.isColorlessActive())
-            // TODO(审计清理 G07 #5)：UNITY_POWER_IMMUNE_CHANCE 零消费死常量，同义概率在此硬编码 0.2f —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
+            // 2026-09-12（审计清理 G07 #5 已清理）：零消费死常量 UNITY_POWER_IMMUNE_CHANCE 已删除
+            // —— 声明只有 RediosEntity 一份（清单把本文件登记为声明点，实为误记；本文件此前只有这条 TODO）。
+            // 下方 0.2f 是「同心之力/无色 20% 免疫」的唯一真实实现，按用户裁决**本轮刻意保持硬编码**
+            // （迁移为 RediosRules 配置键属独立议题，不在本批）。
             && ctx.amount > 0.0f && boss.getRandom().nextFloat() < 0.2f) {
             boss.addSoulSeverY(Math.max(0L, (long) Math.ceil(ctx.amount)));
             return DamageResult.cancel();

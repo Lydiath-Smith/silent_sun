@@ -176,30 +176,51 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     private static final int VOID_BATTLE_RANGE_BLOCKS_SQR = 4096;
     /** Boss 数据版本：NBT 结构变更时 +1，用于 EntityJoinLevelEvent 剔除旧版本残留 Boss。 */
     private static final int BOSS_DATA_VERSION = 1;
-    // TODO(审计清理 G13 #5 / #6)：本段 failsafe 五连阈值常量与下方 UNITY_POWER_* 战斗数值群（含 UNITY_POWER_IMMUNE_CHANCE）全库零消费、消费点写死字面量 —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
-    private static final long FAILSAFE_TICK_SPIKE_NANOS = 2000000000L;
-    private static final int FAILSAFE_TICK_SPIKES_TO_TRIGGER = 2;
-    private static final double FAILSAFE_HIGH_MEMORY_RATIO = 0.95;
-    private static final int FAILSAFE_HIGH_MEMORY_TICKS = 40;
-    private static final int FAILSAFE_DISCARD_DELAY_TICKS = 100;
-    private static final int RIDE_PUNISH_COOLDOWN_TICKS = 40;
-    private static final int WISH_REPAIR_INTERVAL_TICKS = 5;
-    private static final int PHASE1_RESISTANCE_AMPLIFIER = 2;
-    private static final int COLORLESS_RESISTANCE_AMPLIFIER = 3;
-    private static final double BASE_MAX_HEALTH_FOR_REGEN_SCALE = 1000.0;
-    private static final int DUSTLESS_GOOD_BUFF_COUNT = 4;
-    private static final int DUSTLESS_GOOD_BUFF_AMPLIFIER = 2;
-    private static final int DUSTLESS_GOOD_REFRESH_TICKS = 40;
-    private static final int DUSTLESS_GOOD_HEAL_BOOST_TICKS = 600;
-    private static final int FIRM_FAITH_PLAYER_RESIST_AMP = 2;
-    private static final int FIRM_FAITH_PLAYER_RESIST_REFRESH_TICKS = 40;
-    // TODO(审计清理 G17 #7)：本常量零引用，同值 1000000000 在本文件 3 处裸写 —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
+    // ────────────────────────────────────────────────────────────────────────────
+    // 2026-09-12（审计清理 G13 #5 + #6）：删除 failsafe 五连阈值常量与战斗数值常量群。
+    // 逐项核对方式：全库（src 下全部 *.java）Select-String 每个标识符，命中数**恰好 1**＝仅其声明行，
+    // 即零读取；真实取值全部写死在消费点的同义字面量里。按「同一量只留一处」删常量，
+    // 消费点字面量本轮**原样不动**（接线/配置化属独立议题）。
+    //
+    // 【G13 #5 删掉的 failsafe 五连（消费点全部在 tickFailsafe() 内，写法照录）】
+    //   FAILSAFE_TICK_SPIKE_NANOS = 2000000000L   → `delta >= 2000000000L`
+    //   FAILSAFE_TICK_SPIKES_TO_TRIGGER = 2       → `tickSpikeCount >= 2` / `tickSpikeCount < 2`
+    //   FAILSAFE_HIGH_MEMORY_RATIO = 0.95         → `ratio >= 0.95`
+    //   FAILSAFE_HIGH_MEMORY_TICKS = 40           → `highMemoryTicks >= 40` / `highMemoryTicks < 40`
+    //   FAILSAFE_DISCARD_DELAY_TICKS = 100        → `this.failsafeCountdownTicks = 100`
+    //
+    // 【G13 #6 删掉的战斗数值常量（最左=常量名与原值，右侧=写死同义字面量的真实消费点；用方法名定位避免行号漂移）】
+    //   RIDE_PUNISH_COOLDOWN_TICKS = 40           → AntiCheatLayer.tickRidePunish 的 `this.ridePunishCooldownTicks = 40`
+    //   WISH_REPAIR_INTERVAL_TICKS = 5            → tickWishGrant 的 `wishRepairTicker % 5` 与 `repairAllCarriedItems(..., 5)`
+    //   PHASE1_RESISTANCE_AMPLIFIER = 2           → tickPhase1Resistance 的 `(DAMAGE_RESISTANCE, 40, 2, ...)`
+    //   COLORLESS_RESISTANCE_AMPLIFIER = 3        → tickResistanceBoost 的 `int desired = 3;`
+    //   BASE_MAX_HEALTH_FOR_REGEN_SCALE = 1000.0  → 自愈缩放的 `maxHealth > 1000.0` / `1000.0 / maxHealth`
+    //   DUSTLESS_GOOD_BUFF_COUNT = 4              → rollDustlessGoodBuffs 的 `new ArrayList<>(4)` 与 `i < 4`
+    //   DUSTLESS_GOOD_BUFF_AMPLIFIER = 2          → tickDustlessGood 的 `(buff, 40, 2, ...)`
+    //   DUSTLESS_GOOD_REFRESH_TICKS = 40          → tickDustlessGood 的 `(buff, 40, ...)` 时长
+    //   DUSTLESS_GOOD_HEAL_BOOST_TICKS = 600      → 5 处 `healBoostTicks = 600`
+    //   FIRM_FAITH_PLAYER_RESIST_AMP = 2          → tickFirmFaith 的 `(DAMAGE_RESISTANCE, 40, 2, ...)`
+    //   FIRM_FAITH_PLAYER_RESIST_REFRESH_TICKS=40 → 同上 tickFirmFaith 那处的时长 40
+    //
+    // ⚠️ 审计（docs\_审计-2026-09-11\G13.md §5/§6）的首选方案是「把消费点字面量改为引用常量」；
+    // 本批次按用户裁决执行「零引用即删」。若作者改主意要接线，上面已完整保留 16 个名字与取值，
+    // 回填声明 + 替换消费点即可（两方案二选一，不要留双份）。
+    // ────────────────────────────────────────────────────────────────────────────
+    // 2026-09-12（审计清理 G17 #7 已清理）：本常量原为零引用死常量（同值 1000000000 在本文件裸写 3 处）；
+    // 现 grantEnrageLevels() 的时长表达式改为引用本常量 ⇒ 已接线，成为激怒「无限时长」的唯一写入点。
+    // 原 3 处裸写中，第 1、2 处位于 tickEnrageStacking 的满层续期分支，该分支经核实恒 false 已删除（G17 #6）。
     private static final int ENRAGE_INFINITE_DURATION_TICKS = 1000000000;
-    private static final int UNITY_POWER_FRIENDLY_RADIUS = 20;
-    private static final int UNITY_POWER_FRIENDLY_RADIUS_SQR = 400;
-    private static final float UNITY_POWER_IMMUNE_CHANCE = 0.2f;
-    private static final int UNITY_POWER_STRENGTH_REFRESH_TICKS = 40;
-    private static final int UNITY_POWER_STRENGTH_MAX_LEVEL = 10;
+    // 2026-09-12（审计清理 G13 #6 + G07 #5）：删除 UNITY_POWER_* 战斗数值常量群 5 项（逐项核实零引用：每个标识符
+    // 全库命中数恰好 1＝仅声明行），取值与写死同义字面量的消费点（用方法名定位，行号会漂移故不列）：
+    //   UNITY_POWER_FRIENDLY_RADIUS = 20       → tickUnityPower / countNearbyFriendly 内 `getBoundingBox().inflate(20.0)`
+    //   UNITY_POWER_FRIENDLY_RADIUS_SQR = 400  → 同上及 countNearbyFriendly 的 `distanceToSqr(...) <= 400.0`
+    //   UNITY_POWER_STRENGTH_REFRESH_TICKS = 40→ tickUnityPower 的 `tickCount % 40`（40 tick 刷新节奏）与 `(DAMAGE_BOOST, 40, level - 1, ...)`
+    //   UNITY_POWER_STRENGTH_MAX_LEVEL = 10    → tickUnityPower 的两处 `Math.min(10, ...)`
+    //   UNITY_POWER_IMMUNE_CHANCE = 0.2f       → ⚠️ 本类内**完全没有消费点**（分支只挂力量增益，无免疫判定）；
+    //                                            同义概率硬编码在 DamagePipeline.stageUnityColorless 的 `< 0.2f`。
+    //   （注：清单把 G07 #5 登记为「DamagePipeline 里的死常量」，实际声明只有本类这一份，
+    //     DamagePipeline 侧只有该 TODO 注释与那个硬编码 0.2f；两处登记是同一个常量，故只删这一份。）
+    //    2026-09-12 审计清理 G07 #5 要求：**不要动** DamagePipeline 里的 0.2f（改为读配置属独立议题，本轮不做）。
     // 2026-09-11（代码审计 G13 #7 修复）：原 STAGE_DIG_RAY_STEPS / STAGE_DIG_INTERVAL_TICKS 在本类
     // 零消费，且与 WeaponManager 的同名常量重复定义（后者才是真实消费方）—— 已删除本类副本。
     // 2026-09-11（B-4）：原 STAGE_BLOCK_BOMB_RANGE = 24 死常量已删除（全库仅声明、0 消费）——
@@ -457,7 +478,9 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     private ResourceLocation battleAnchorDim = null;
     // 2026-09-11（代码审计 G13 #7 修复）：原 ANTI_EXILE_RANGE(256.0) / ANTI_EXILE_VOID_MARGIN(8.0)
     // 零消费 —— tickAntiExile 里写死 65536.0（= 256²）与 8.0 —— 已删除。
-    private int deathViaHurtTick = -1;
+    // 2026-09-12（审计清理 G14 #11）：原 `private int deathViaHurtTick = -1;`（受击致死时记下 tickCount、
+    // 供 isLegitDeathFlow() 判「1 tick 内」）已随其唯一读点一并删除 —— 该字段**永远写不进**（自锁，论证见
+    // isLegitDeathFlow() 内注释与 docs\_审计-2026-09-11\G14.md §11）。
     private int removalPunishCooldownTicks = 0;
     private static final SoundEvent[] DARKNESS_AMBIENT_SOUNDS = new SoundEvent[]{SoundEvents.WARDEN_HEARTBEAT, SoundEvents.WARDEN_LISTENING, SoundEvents.WARDEN_AMBIENT, SoundEvents.WARDEN_ANGRY};
     private int darknessSoundCooldown = 0;
@@ -2037,9 +2060,9 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
                 this.recordPlayerDamageType(source, ctx.amount);
                 this.recordPlayerNetDamage((Player)attacker, source, ctx.amount);
             }
-            if (this.isDeadOrDying()) {
-                this.deathViaHurtTick = this.tickCount;
-            }
+            // 2026-09-12（审计清理 G14 #11）：原此处 `if (this.isDeadOrDying()) { this.deathViaHurtTick = this.tickCount; }`
+            // 已删除（字段同批删除）—— 该写入恒不执行：到达此处时 inHurtProcessing 已在上面的 finally 复位，
+            // 覆写版 isDeadOrDying() 因 !isLegitDeathFlow() 直接返回 false。详见 isLegitDeathFlow() 内注释。
         }
         return dealt;
     }
@@ -2758,8 +2781,18 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         if (this.inHurtProcessing) {
             return true;
         }
-        // TODO(审计清理 G14 #11)：本分支不可达（已复核确认，非存疑）：L2028 写 deathViaHurtTick 的前置是 isDeadOrDying()，而覆写版 isDeadOrDying()（L2801）在 !isLegitDeathFlow() 时直接 return false，本判据又依赖该字段 ≥ 0 ⇒ 自锁；且到达 L2027 时 inHurtProcessing 已在 L2014 复位（L2009/L2014 是无嵌套保存的置位/复位，重入同样被清）⇒ 字段永远写不进。建议二选一：删字段 + 本分支（保留 inHurtProcessing 判据），或把写入判据改为 super.isDeadOrDying() 让兜底真正可达 —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
-        return this.deathViaHurtTick >= 0 && this.tickCount - this.deathViaHurtTick <= 1;
+        // 2026-09-12（审计清理 G14 #11）：删除原末行判据
+        // `return this.deathViaHurtTick >= 0 && this.tickCount - this.deathViaHurtTick <= 1;` 与 deathViaHurtTick 字段
+        // —— **已确认不可达**（非存疑）：
+        //   ① 写 deathViaHurtTick 的前置是 `if (this.isDeadOrDying())`（hurt 收尾处），而覆写版
+        //      {@link #isDeadOrDying()} 在 `!isLegitDeathFlow()` 时直接 return false，本判据又依赖该字段 ≥ 0 ⇒ **自锁**；
+        //   ② 到达写入点时 inHurtProcessing 已在 finally 复位（无嵌套保存的置位/复位，重入同样被清）
+        //      ⇒ 上面第一条判据也不成立 ⇒ 字段永远写不进。
+        //   （唯一退化例外是 legitRemoval 已为 true 的「结算后同 tick 二次受击」，不构成有效判据。）
+        // ⇒ 本方法的合法死亡判据**只剩 inHurtProcessing**（与原注释口径一致：合法死亡只可能发生在 super.hurt 链路内）。
+        // 保留本方法本身（setHealth 钳制 / isDeadOrDying / 无掉落结算等仍有多个调用者）。
+        // 依据：docs\_审计-2026-09-11\G14.md §11（本轮已按当前行号逐条复核）。
+        return false;
     }
 
     private void forceSetHealth(float health) {
@@ -6278,14 +6311,11 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         return true;
     }
 
-    // TODO(审计清理 G17 #5)：createDefeatBookAndQuill 与 createVictoryBook 零调用者，连带死配置 redios_victory_book_title / redios_defeat_book_title —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
-    private ItemStack createDefeatBookAndQuill() {
-        ItemStack book = new ItemStack(Items.WRITTEN_BOOK);
-        List<Filterable<Component>> pages = List.of(Filterable.passThrough(Component.translatable("book.silent_sun.redios.defeat.page0")));
-        WrittenBookContent content = new WrittenBookContent(Filterable.passThrough(RediosRules.rediosDefeatBookTitle()), RediosRules.rediosBookAuthor(), 0, pages, true);
-        book.set(DataComponents.WRITTEN_BOOK_CONTENT, content);
-        return book;
-    }
+    // 2026-09-12（审计清理 G17 #5）：删除无调用者的 `createDefeatBookAndQuill()`（与 createVictoryBook 同批）——
+    // 全库检索两个方法名只有声明行命中（private 且无反射调用）；成品书实际走 createOutcomeBook /
+    // applyOutcomeBookContent（标题用 OUTCOME_BOOK_TITLE）。连带死配置 redios_defeat_book_title /
+    // redios_victory_book_title 已从 RediosRules 与 RediosRulesReloadListener 一并移除。
+    // 依据：docs\_审计-2026-09-11\G17.md §5。
 
     private int getEnrageLevel() {
         return this.stats.enrageLevel();
@@ -6332,7 +6362,6 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     }
 
     private void tickEnrageStacking() {
-        MobEffectInstance current;
         boolean active;
         if (this.bossState.isVoteOrTransition()) {
             this.enrageStackCooldownTicks = 0;
@@ -6353,10 +6382,14 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         }
         this.enrageStackCooldownTicks = 60;
         this.grantEnrageLevels(1);
-        // TODO(审计清理 G17 #6)：激怒满层「续期」分支 current.getDuration() < 1e9 恒 false（本类授予激怒的时长一律 ≥ 1e9） —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
-        if (firmFaith && this.isEnrageMax() && (current = this.getEffect(ModEffects.ENRAGE)) != null && current.getDuration() < 1000000000) {
-            this.addEffect(new MobEffectInstance(ModEffects.ENRAGE, 1000000000, current.getAmplifier(), true, true), this);
-        }
+        // 2026-09-12（审计清理 G17 #6）：删除原「满层续期」分支
+        // `if (firmFaith && this.isEnrageMax() && (current = this.getEffect(ENRAGE)) != null && current.getDuration() < 1e9) { addEffect(...1e9...) }`
+        // 及其局部变量 `MobEffectInstance current` —— 条件恒为 false（依据：本类授予激怒的时长一律 ≥ 1e9）：
+        //   · 上一行 grantEnrageLevels() 保证 `duration = current == null ? 1e9 : max(current.getDuration(), 1e9)`；
+        //   · 其余 ENRAGE 写入点（super.addEffect 回挂既有实例、本类 addEffect 覆写里
+        //     `Math.max(current.getDuration(), effect.getDuration())` 的钳制）都不会把时长改短；
+        //   · 全库检索确认没有任何一处以更短时长授予 ENRAGE（EnrageEffect 的 INFINITE_DURATION 用于 FRAGILE，非激怒）。
+        // 故该分支从未执行，删除后行为不变。依据：docs\_审计-2026-09-11\G17.md §6（本轮已复核）。
     }
 
     private void grantEnrageLevels(int levels) {
@@ -6369,7 +6402,10 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         if (current == null) {
             desiredAmp = Math.min(9, levels - 1);
         }
-        int duration = current == null ? 1000000000 : Math.max(current.getDuration(), 1000000000);
+        // 2026-09-12（审计清理 G17 #7）：原两处裸写 1000000000 改为引用 ENRAGE_INFINITE_DURATION_TICKS
+        // —— 语义完全一致（该常量值就是 1000000000，且此处的含义正是「激怒无限时长」），
+        // 使常量从死常量变为唯一写入点（原先改常量不生效、改这里也不同步）。
+        int duration = current == null ? ENRAGE_INFINITE_DURATION_TICKS : Math.max(current.getDuration(), ENRAGE_INFINITE_DURATION_TICKS);
         this.addEffect(new MobEffectInstance(ModEffects.ENRAGE, duration, desiredAmp, true, true), this);
         // 2026-09-10（用户裁决 D1）：脆弱施加给「参战玩家」而不是 Boss 自身——
         // 原写法把 FRAGILE 挂在自己身上且被自身负面免疫拒绝，整条 2.8 脆弱链是死代码。
@@ -6717,13 +6753,11 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         this.hurtMarked = true; // 触发客户端位置/速度同步
     }
 
-    private ItemStack createVictoryBook() {
-        ItemStack book = new ItemStack(Items.WRITTEN_BOOK);
-        List<Filterable<Component>> pages = List.of(Filterable.passThrough(Component.translatable("book.silent_sun.redios.victory.page0")));
-        WrittenBookContent content = new WrittenBookContent(Filterable.passThrough(RediosRules.rediosVictoryBookTitle()), RediosRules.rediosBookAuthor(), 0, pages, true);
-        book.set(DataComponents.WRITTEN_BOOK_CONTENT, content);
-        return book;
-    }
+    // 2026-09-12（审计清理 G17 #5）：删除无调用者的 `createVictoryBook()`（与 createDefeatBookAndQuill 同批）——
+    // 全库检索只有声明行命中；真正的结算书由 createOutcomeBook / applyOutcomeBookContent 产出
+    // （标题用 OUTCOME_BOOK_TITLE，成书/列表书另有 DROP_LIST_BOOK_TITLE / DROP_STATS_BOOK_TITLE）。
+    // 其唯一读取的配置 RediosRules.rediosVictoryBookTitle() 已随之删除（含 json 键 redios_victory_book_title）。
+    // 依据：docs\_审计-2026-09-11\G17.md §5。
 
     private void enableBossOutline(ServerLevel serverLevel) {
         String teamName;

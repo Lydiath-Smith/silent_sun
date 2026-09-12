@@ -57,8 +57,15 @@ extends HumanoidMobRenderer<RediosEntity, HumanoidModel<RediosEntity>> {
             Object layer = ctor.newInstance(this);
             this.addLayer((RenderLayer) layer);
             SilentSunMod.LOGGER.info("[SilentSun] SlashBlade main-blade layer attached to RediosRenderer");
-        // TODO(审计清理 G20 #5)：tryAttachMainBladeLayer 的空 catch(Throwable) 连 LinkageError / NoClassDefFoundError 一并吞掉，挂层失败无日志无痕迹 —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
         } catch (Throwable ignored) {
+            // 2026-09-12（审计清理 G20 #5）：原先空 catch 连 LinkageError / NoClassDefFoundError 一并吞掉，
+            // 挂层失败无日志无痕迹。级别判断依据：本方法是无 SlashBlade 时的软依赖探测 —— 没装拔刀剑时
+            // Class.forName 必然抛 ClassNotFoundException，属**预期失败**，故用 debug，绝不能上 warn/error。
+            // 区分方式：日志首段打印异常类名 —— ClassNotFoundException（或 LayerMainBlade 缺失引发的
+            // NoClassDefFoundError）= 没装拔刀剑，正常；其它异常（NoSuchMethodException / InvocationTargetException /
+            // LinkageError 等）= 拔刀剑已装但挂层失败，可能有问题 —— 排查时把本类日志级别开到 DEBUG 即可看到（含栈）。
+            SilentSunMod.LOGGER.debug("[SilentSun] SlashBlade main-blade layer not attached to RediosRenderer: {} — {}",
+                ignored.getClass().getName(), ignored.getMessage(), ignored);
         }
     }
 

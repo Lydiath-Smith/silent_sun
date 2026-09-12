@@ -53,16 +53,13 @@ public final class RuntimeInjectionGuard {
         }
     }
 
-    /** 检测到调试器 / agent 注入特征。 */
-    // TODO(审计清理 G04 #5)：agentDetected() / classSourceSuspicious() 两个 getter 零消费者 —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
-    public static boolean agentDetected() {
-        return agentDetected;
-    }
-
-    /** 核心防护类加载来源可疑（非本模组加载源）。 */
-    public static boolean classSourceSuspicious() {
-        return classSourceSuspicious;
-    }
+    // 2026-09-12（审计清理 G04 #5）：删除零消费者 getter `agentDetected()` 与 `classSourceSuspicious()` ——
+    // 全库检索（agentDetected|classSourceSuspicious）确认这两个 getter 的唯一命中就是它们自身的声明，
+    // 无任何调用点；类 javadoc 所述「暴露给反作弊层参考」的接线从未落地。
+    // **保留**：scanAgentFlags() / scanClassSource() 内的赋值与 scanIfNeeded() 里的「首次检测到即 WARN」
+    // 告警（诊断价值所在），以及两个 private 字段本身 —— 字段在 scanIfNeeded() 内被读取做告警去重
+    // （prevAgent / prevSource 快照比较），并非只写不读，故不删字段、不删告警。
+    // 依据：docs\审计剩余交接清单-2026-09-11.md §三。
 
     private static void scanAgentFlags() {
         List<String> args = ManagementFactory.getRuntimeMXBean().getInputArguments();

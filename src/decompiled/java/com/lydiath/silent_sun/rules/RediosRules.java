@@ -98,8 +98,10 @@ public final class RediosRules {
 
     // ========== 成书与文本 ==========
     private static volatile String rediosBookAuthor = "Redios";
-    private static volatile String rediosDefeatBookTitle = "谢谢惠顾，下次再来。";
-    private static volatile String rediosVictoryBookTitle = "干得漂亮！欢迎再来！";
+    // 2026-09-12（审计清理 G17 #5）：删除死配置 rediosDefeatBookTitle / rediosVictoryBookTitle
+    //（及 getter/setter、json 键 redios_defeat_book_title / redios_victory_book_title）——
+    // 它们唯一的读取点是 RediosEntity 的两个无调用者方法 createDefeatBookAndQuill / createVictoryBook，
+    // 两者已删除；成品书标题改用常量 OUTCOME_BOOK_TITLE。依据：docs\_审计-2026-09-11\G17.md §5。
     private static volatile String rediosNotePhase1WinPhase2Lose = "干的很好了，想与整个世界为敌，光是让世界看你是不行的。\n\n[战斗记录]\n维度: {dimension}\n坐标: {x} {y} {z}\n参战者: {participants}\n用时: {duration_seconds}s";
     private static volatile ResourceLocation rediosOutcomeTextPhase1WinOnlyFile = ResourceLocation.fromNamespaceAndPath("silent_sun", "books/redios/outcome_phase1_win_only.txt");
     private static volatile ResourceLocation rediosOutcomeTextPhase1WinPhase2LoseFile = ResourceLocation.fromNamespaceAndPath("silent_sun", "books/redios/outcome_phase1_win_phase2_lose.txt");
@@ -291,10 +293,8 @@ public final class RediosRules {
     // ================================================================
     public static String rediosBookAuthor() { return rediosBookAuthor; }
     public static void setRediosBookAuthor(String v) { rediosBookAuthor = v == null || v.isBlank() ? "Redios" : v.strip(); }
-    public static String rediosDefeatBookTitle() { return rediosDefeatBookTitle; }
-    public static void setRediosDefeatBookTitle(String v) { rediosDefeatBookTitle = v == null || v.isBlank() ? "谢谢惠顾，下次再来。" : v.strip(); }
-    public static String rediosVictoryBookTitle() { return rediosVictoryBookTitle; }
-    public static void setRediosVictoryBookTitle(String v) { rediosVictoryBookTitle = v == null || v.isBlank() ? "干得漂亮！欢迎再来！" : v.strip(); }
+    // 2026-09-12（审计清理 G17 #5）：原 rediosDefeatBookTitle() / setRediosDefeatBookTitle() /
+    // rediosVictoryBookTitle() / setRediosVictoryBookTitle() 四个访问器已删除（零消费者，见上方字段处说明）。
     public static String rediosNotePhase1WinPhase2Lose() { return rediosNotePhase1WinPhase2Lose; }
     public static void setRediosNotePhase1WinPhase2Lose(String v) {
         // N3: null 回退值与静态默认保持一致（完整版含战斗记录占位符）

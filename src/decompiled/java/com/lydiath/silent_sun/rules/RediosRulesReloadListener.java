@@ -53,8 +53,8 @@ extends SimpleJsonResourceReloadListener {
         "phase2_vote_yes_tokens", "push_away_distance", "push_away_range", "push_away_strength",
         "redios_battle_music_enabled", "redios_battle_music_outro_enabled", "redios_battle_music_phase1_intro_ticks", "redios_battle_music_phase1_loop_ticks",
         "redios_battle_music_phase2_intro_ticks", "redios_battle_music_phase2_loop_ticks", "redios_battle_music_volume", "redios_book_author",
-        "redios_defeat_book_title", "redios_note_phase1_win_phase2_lose", "redios_outcome_text_phase1_win_only_file", "redios_outcome_text_phase1_win_phase2_lose_file",
-        "redios_outcome_text_phase2_win_file", "redios_victory_book_title", "restore_nbt", "restored_blocks_whitelist",
+        "redios_note_phase1_win_phase2_lose", "redios_outcome_text_phase1_win_only_file", "redios_outcome_text_phase1_win_phase2_lose_file",
+        "redios_outcome_text_phase2_win_file", "restore_nbt", "restored_blocks_whitelist",
         "skip_vote", "twilight_moment_apply_effect", "twilight_moment_debug_messages", "twilight_moment_expel_enabled",
         "twilight_moment_mode", "twilight_moment_notify_cooldown_ticks", "twilight_moment_punishment", "twilight_moment_satisfy_effects",
         "twilight_moment_timed_grace_ticks", "uncontrolled_sprint_aoe_dodge_chance", "uncontrolled_sprint_extra_cooldown_ticks", "uncontrolled_sprint_extra_damage_ratio",
@@ -127,8 +127,8 @@ extends SimpleJsonResourceReloadListener {
             RediosRules.setPhase2VoteYesTokens(null);
             RediosRules.setPhase2VoteNoTokens(null);
             RediosRules.setRediosBookAuthor(null);
-            RediosRules.setRediosDefeatBookTitle(null);
-            RediosRules.setRediosVictoryBookTitle(null);
+            // 2026-09-12（审计清理 G17 #5）：原 setRediosDefeatBookTitle(null) / setRediosVictoryBookTitle(null)
+            // 两行已删除（配置键 redios_defeat_book_title / redios_victory_book_title 已废弃并移出 KNOWN_KEYS）。
             RediosRules.setRediosNotePhase1WinPhase2Lose(null);
             RediosRules.setRediosOutcomeTextPhase1WinOnlyFile(null);
             RediosRules.setRediosOutcomeTextPhase1WinPhase2LoseFile(null);
@@ -512,24 +512,9 @@ extends SimpleJsonResourceReloadListener {
                 rediosBookAuthor = null;
             }
         }
-        String rediosDefeatBookTitle = null;
-        if (root.has("redios_defeat_book_title")) {
-            try {
-                rediosDefeatBookTitle = root.get("redios_defeat_book_title").getAsString();
-            }
-            catch (RuntimeException e) {
-                rediosDefeatBookTitle = null;
-            }
-        }
-        String rediosVictoryBookTitle = null;
-        if (root.has("redios_victory_book_title")) {
-            try {
-                rediosVictoryBookTitle = root.get("redios_victory_book_title").getAsString();
-            }
-            catch (RuntimeException e) {
-                rediosVictoryBookTitle = null;
-            }
-        }
+        // 2026-09-12（审计清理 G17 #5）：原解析块 redios_defeat_book_title / redios_victory_book_title 已删除
+        //（对应 RediosRules 字段与访问器已移除；两个死方法 createDefeatBookAndQuill / createVictoryBook 是
+        //  它们唯一的消费者）。json 里若仍留有这两个键，会被 KNOWN_KEYS 校验判为未知键并汇总告警（不再生效）。
         String rediosNotePhase1WinPhase2Lose = null;
         if (root.has("redios_note_phase1_win_phase2_lose")) {
             try {
@@ -873,8 +858,7 @@ extends SimpleJsonResourceReloadListener {
         RediosRules.setPhase2VoteYesTokens(phase2VoteYesTokens);
         RediosRules.setPhase2VoteNoTokens(phase2VoteNoTokens);
         RediosRules.setRediosBookAuthor(rediosBookAuthor);
-        RediosRules.setRediosDefeatBookTitle(rediosDefeatBookTitle);
-        RediosRules.setRediosVictoryBookTitle(rediosVictoryBookTitle);
+        // 2026-09-12（审计清理 G17 #5）：原 setRediosDefeatBookTitle(...) / setRediosVictoryBookTitle(...) 已删除。
         RediosRules.setRediosNotePhase1WinPhase2Lose(rediosNotePhase1WinPhase2Lose);
         RediosRules.setRediosOutcomeTextPhase1WinOnlyFile(rediosOutcomeTextPhase1WinOnlyFile);
         RediosRules.setRediosOutcomeTextPhase1WinPhase2LoseFile(rediosOutcomeTextPhase1WinPhase2LoseFile);

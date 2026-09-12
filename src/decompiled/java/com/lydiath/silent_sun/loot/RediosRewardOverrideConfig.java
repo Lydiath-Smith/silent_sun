@@ -52,6 +52,11 @@ public final class RediosRewardOverrideConfig {
                 RewardOverride[] parsed = (RewardOverride[])GSON.fromJson((Reader)reader, RewardOverride[].class);
                 overrides = parsed == null ? List.of() : List.of(parsed);
             }
+            // 2026-09-12（审计清理 G11 #5 修复，选项①：只补日志、不改生效语义）：对重复的 (phase,titleIndex)
+            // 键发一次 WARN，把「配置写了却不生效」变成可见。**保持「第一条生效」**，不改为后写覆盖前写 ——
+            // 理由：已成型的配置文件里若已存在重复键，改成后写覆盖会让既有存档的掉落奖励凭空变化（发给玩家
+            // 的物品会变），属高风险静默行为变更；而保留先写语义 + 告警既能提示管理员，又零行为变化。
+            warnDuplicateKeys(overrides);
             lastError = null;
             return true;
         }
@@ -73,7 +78,10 @@ public final class RediosRewardOverrideConfig {
 
     public static List<ItemStack> getOverrideStacks(int phase, int titleIndex) {
         for (RewardOverride o : overrides) {
-            // TODO(审计清理 G11 #5)：重复的 (phase,titleIndex) 覆盖条目只有第一条生效（命中即 return），其余同键条目静默失效、无告警 —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
+            // 2026-09-12（审计清理 G11 #5 已清理）：本循环「命中即 return」＝同键条目**第一条生效**、其余静默失效。
+            // 该语义**刻意保留**（改成后写覆盖前写会让既有配置文件的掉落凭空变化，属高风险行为变更）；
+            // 未生效的重复键现在由 reload() 里的 warnDuplicateKeys() 明确告警。
+            // 依据：docs\_审计-2026-09-11\G11.md §5（两个消费点行为一致，问题不会自行暴露）。
             if (o == null || o.phase != phase || o.titleIndex != titleIndex) continue;
             List<RewardItem> items = o.items;
             if (items == null || items.isEmpty()) {
@@ -89,6 +97,22 @@ public final class RediosRewardOverrideConfig {
             return stacks;
         }
         return List.of();
+    }
+
+    /** 2026-09-12（审计清理 G11 #5）：告警重复的 (phase,titleIndex) 键 —— 生效的是**先出现**的那一条。 */
+    private static void warnDuplicateKeys(List<RewardOverride> list) {
+        ArrayList<String> seen = new ArrayList<String>();
+        for (RewardOverride o : list) {
+            if (o == null) continue;
+            String key = "phase=" + o.phase + ",titleIndex=" + o.titleIndex;
+            if (seen.contains(key)) {
+                SilentSunMod.LOGGER.warn(
+                    "[Redios] 奖励覆盖配置存在重复键 {}：生效的是**先出现**的那一条，本条被忽略（getOverrideStacks 命中即 return）。请删除重复条目。",
+                    key);
+            } else {
+                seen.add(key);
+            }
+        }
     }
 
     private RediosRewardOverrideConfig() {

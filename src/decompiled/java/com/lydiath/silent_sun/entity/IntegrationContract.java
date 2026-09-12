@@ -865,6 +865,12 @@ public final class IntegrationContract {
         try {
             return iShootableGetShooterMethod.invoke(e) == null;
         } catch (Exception ex) {
+            // 2026-09-12（审计清理 G19 #5）：原先静默 return false（语义＝「该投射物没有 null shooter」），
+            // 反射失败原因无痕、孤儿投射物会静默漏清理。级别判断依据：本方法被 globalSanitizeBladeDrives 的
+            // 「全维度全实体」循环与 sanitizeBossSummonedSwordShooters 的 16 格实体谓词逐实体调用，
+            // 属每战斗 tick 的高频路径 ⇒ 必须 debug，否则反射一旦失效会每 tick 刷屏。
+            // 上面 iShootableGetShooterMethod == null 的早退是「没装拔刀剑」的正常路径（返回值本就是正确语义），故不记日志。
+            LOG.debug("hasNullShooter 反射判定失败，按「无 null shooter」处理（可能漏清理孤儿投射物）：", ex);
             return false;
         }
     }
@@ -1439,8 +1445,13 @@ public final class IntegrationContract {
             if (stateOpt instanceof Optional<?> opt && opt.isPresent()) {
                 return ((Number) getColorCodeMethod.invoke(opt.get())).intValue();
             }
-        // TODO(审计清理 G19 #5)：bladeColorCode 空 catch 吞掉反射异常、直接回退白色（同类静默失败见 hasNullShooter 的 return false），失败无任何日志 —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
         } catch (Exception ignored) {
+            // 2026-09-12（审计清理 G19 #5）：原先空 catch 静默回退白色，刀色偏差在日志里毫无痕迹。
+            // 级别判断依据：本方法只有两个调用点（tryApplyBossTripleWhammy 的 L710、trySpawnBossPhantomSwords
+            // 的 L1205），都在服务端且被 60~90 tick 的齐射冷却限频（≈每 3~4.5s 至多一次），不在每 tick / 渲染路径上；
+            // 同时无 SlashBlade 时 ensureReflectionReady() 已提前返回 false，根本走不到这里 ⇒ 失败必属
+            // 「已装拔刀剑但反射异常」的真实故障，用 warn 合适（形参仍名 ignored，为控制改动面保留原名）。
+            LOG.warn("bladeColorCode 反射读取刀刃颜色失败，回退白色 0xFFFFFF（幻影剑/三连刀光会偏色）", ignored);
         }
         return 0xFFFFFF;
     }

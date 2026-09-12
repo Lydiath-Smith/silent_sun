@@ -38,15 +38,10 @@ extends SavedData {
      *  让"Boss 被删 → 回场"之间白空 20 秒。保留 1 tick 仅用于避开同 tick 的移除/重建竞态。
      *  真正未加载/未到实体 tick 距离的情形走下方"走远/卸载"分支（仍等 100 tick）。 */
     private static final int REBUILD_GRACE_TICKS_LOADED = 1;
-    /**
-     * 2026-09-10：**真正被使用**的长兜底窗口（10 分钟 = 12000 tick）。
-     * <p>
-     * 历史提示：同名常量在 0.0.17 ~ 2026-09-08 期间是**死常量**（全程只有声明、代码一律写字面量 12000L），
-     * 因此本批次早期已将它删除。本次重新引入是因为它终于有了真实用途：
-     * 为「**本次启动从未见过实体 tick**」的账本记录（崩服/重启后 Boss 区块始终未加载）提供最终清理，
-     * 避免记录永久残留成幽灵账本。
-     */
-    private static final int UNLOADED_SETTLE_TICKS = 12000;
+    // 2026-09-12（审计清理 G05 #6）：此处原有常量 `UNLOADED_SETTLE_TICKS = 12000`（10 分钟账本残留清理兜底）
+    // 已删除 —— 它当时的**唯一**消费者是 tickServer 里「本次启动从未见过实体 tick」分支，该分支经核实
+    // 不可达（完整论证见 tickServer 中该处的删除注释），常量随之成为死常量。
+    // （历史：该常量在 0.0.17 ~ 2026-09-08 期间本就是死常量，本次是第二次归零，故连常量一起删，不留残留。）
     /**
      * 2026-09-10（实测崩坏修复）：两次重建尝试之间的最小间隔（5 秒）。
      * 防止"重建出的 Boss 没能站住"时每 tick 重建一次（实测出现过聊天栏被刷爆的风暴）。
@@ -392,23 +387,19 @@ extends SavedData {
                 this.remove(r.bossId);
                 continue;
             }
-            //    ⚠️ 2026-09-10 实测修复：**必须先确认本次启动后见过实体 tick**，否则不能按"走远"判离场。
-            //    服务器崩服/重启后，Boss 所在区块通常还没加载；若直接走下面的 5s 离场，
-            //    就会出现「刚重启，Boss 无奖励消失，玩家不知道为什么离场」——这正是实测遇到的现象。
-            //    本字段**不写档**：每次从存档载入 RediosBattleData 都重置为 false，
-            //    因此只有"本次启动后确实见过 Boss 在 tick"（= 战斗正常进行过）才允许走 5s 离场。
-            //    兜底：万一区块永远不再加载（玩家再也不会回来），10 分钟（UNLOADED_SETTLE_TICKS）
-            //    后清掉记录，避免账本永久残留。
-            // TODO(审计清理 G05 #6)：!seenTickingSinceLoad 分支不可达（启动即清账本） —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
-            if (!r.seenTickingSinceLoad) {
-                if (since >= (long)UNLOADED_SETTLE_TICKS) {
-                    SilentSunMod.LOGGER.warn(
-                        "[Redios] 账本残留清理（本次启动从未见过实体 tick，超过 {} tick）：boss={} pos={} since={}",
-                        UNLOADED_SETTLE_TICKS, r.bossId, r.pos, since);
-                    this.remove(r.bossId);
-                }
-                continue;
-            }
+            // 2026-09-12（审计清理 G05 #6）：删除「本次启动从未见过实体 tick」兜底分支
+            // `if (!r.seenTickingSinceLoad) { if (since >= UNLOADED_SETTLE_TICKS) {...} continue; }`
+            // 及其唯一消费者常量 UNLOADED_SETTLE_TICKS —— 核实结论：**该分支不可达**。
+            //   ① `seenTickingSinceLoad` 的置 false 只来自字段默认值，而 BattleRecord 全库仅在两处被 new：
+            //      load()（本文件，从存档读出）与 upsert()；
+            //   ② upsert() 无条件置 true，其唯一调用点是 RediosEntity 的战斗心跳（updateBattleRecord）；
+            //   ③ load() 读出的记录在服务器启动时被无条件清空 —— CommonEvents.onServerStarting 里
+            //      `RediosBattleData.get(overworld)` 正是触发 computeIfAbsent → load() 的那一步，
+            //      紧随其后的 clearAllRecords() 把刚读出的记录全清，且 SavedData 有缓存、运行期不会重新 load。
+            //   ⇒ 运行期存在的记录一律 seenTickingSinceLoad == true，本分支恒不进入。
+            // 原注释所述「崩服/重启后不按走远判离场」的保护，在启动清账本之后已无对象可保护；
+            // 真正生效的兜底是下方走远/卸载判据（WALK_AWAY_SETTLE_TICKS = 5s）。
+            // 依据：docs\_审计-2026-09-11\G05.md §6（本轮已逐点回源码复核，行号已按当前文件重定位）。
             // 走远 / 区块卸载：5s（100 tick）内区块未重新加载（实体未恢复）即合法离场结算。
             // 2026-09-12（用户裁决）：原裸值 100L 改用共享常量 WALK_AWAY_SETTLE_TICKS，
             // 与 RediosEntity.checkBattleAreaUnloaded 的等待窗口同源。
@@ -498,8 +489,12 @@ extends SavedData {
          * 2026-09-10：本次启动后**是否见过该 Boss 正在实体 tick**（心跳 upsert 或 tickServer 观测到即置位）。
          * <p>
          * **刻意不写入存档**——每次从存档载入本 SavedData 时都重置为 false。
-         * 用途：只有"本次启动确实跑过战斗"才允许走 5 秒「走远/卸载离场」判定；
-         * 否则崩服/重启后 Boss 所在区块未加载，会被误判成走远而无奖励消失。
+         * <p>
+         * 2026-09-12（审计清理 G05 #6）：**本字段当前已无读者**。原唯一读点（tickServer 的
+         * `if (!r.seenTickingSinceLoad)` 兜底分支）经核实不可达已删除，其唯一消费者常量
+         * UNLOADED_SETTLE_TICKS 亦一并删除；本字段与其两处置位（upsert 心跳 / tickServer 实体 tick 观测）
+         * 暂时保留 —— 是否连字段一起删除待作者裁决（若将来改回「启动不清账本」，此处正是要重新接线的点，
+         * 故先保留写点、只标注状态，避免下一轮审计重复提案）。
          */
         public boolean seenTickingSinceLoad = false;
         /** 2026-09-10：上次重建尝试的 gameTime（**不写档**，仅用于 5 秒重试冷却，防重建风暴）。 */
