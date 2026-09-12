@@ -1,6 +1,8 @@
 package com.lydiath.silent_sun.entity;
 
 import com.lydiath.silent_sun.config.SilentSunConfig;
+// 2026-09-12（SA 名单热配置化）：SA 池三个名单键的热配置载体（redios_rules.json → RediosRules）
+import com.lydiath.silent_sun.rules.RediosRules;
 
 import net.minecraft.ChatFormatting;
 import net.minecraft.core.Holder;
@@ -317,6 +319,15 @@ public final class IntegrationContract {
     private static volatile long cachedSlashArtsKeysAt;
     /** SA 键集缓存有效期：60s 后重新 keySet 收录新增 SA */
     private static final long SLASH_ARTS_KEYS_TTL_MS = 60_000L;
+    // 2026-09-12（SA 名单热配置化）：空白名单告警「只打一次」的标记 —— isSaAllowed 在池重建时对每个
+    // 候选 SA 各调一次，不能在它里面打日志（会刷屏）；标记由取值方法 warnEmptySaWhitelistOnce 维护，
+    // 名单恢复非空时复位。
+    private static volatile boolean emptySaWhitelistWarned;
+    // 2026-09-12（SA 名单热配置化）：池为空时的诊断快照（每次真正重建池缓存时刷新），
+    // 用于区分「slash_arts 注册表真的空」与「注册表非空但被三份名单滤空」（后者才是常见情况，
+    // 也是作者唯一能发现「namespace 拼错 / 模组没装 / 白名单写空」的地方）。
+    private static volatile int cachedSlashArtsRawCount = -1;
+    private static volatile List<String> cachedSlashArtsExcludedSample = List.of();
 
     // ── Public API ──
 
@@ -518,9 +529,28 @@ public final class IntegrationContract {
                 List<String> flowExcluded = new ArrayList<>(flowAllIds);
                 flowExcluded.removeAll(flowInPool);
                 reportSaPool(flowBoss, flowInPool, flowExcluded);
+                // 2026-09-12（SA 名单热配置化）：留下池为空时的诊断数据（注册表原始条目数 + 被滤掉的 id 采样）。
+                // 只在真正重建缓存时算一次，池为空的告警分支直接读这两个值，零额外反射开销。
+                cachedSlashArtsRawCount = flowAllIds.size();
+                cachedSlashArtsExcludedSample = flowExcluded.size() > 5
+                    ? new ArrayList<>(flowExcluded.subList(0, 5)) : new ArrayList<>(flowExcluded);
             }
             if (keyList.isEmpty()) {
-                LOG.warn("slash_arts registry is empty, cannot invoke random SA.");
+                // 2026-09-12（SA 名单热配置化）：原实现只有一句 "slash_arts registry is empty"，把
+                // 「注册表真的空」与「注册表非空但被三份名单滤空」混为一谈 —— 后者才是常见情况，且是
+                // 作者唯一能发现「白名单配错（namespace 拼错 / 模组装错 / 写成 []）」的地方。
+                // 故分成两种措辞：滤空时打出原始条目数、滤后池大小、当前生效的三条规则与被滤掉的 id 采样。
+                if (cachedSlashArtsRawCount > 0) {
+                    LOG.warn("[SilentSun] SA 候选池被名单滤空：slash_arts 注册表共 {} 条，滤后 0 条。"
+                            + "当前生效规则 —— 白名单 namespace={}，排除 namespace={}，排除 SA id={}；"
+                            + "被滤掉的 id 采样（最多 5 个）：{}。"
+                            + "若这不是本意，请检查 silent_sun/redios_rules.json 的 boss_sa_whitelist_namespaces"
+                            + "（写 [] = 显式全禁；namespace 拼错或模组未装都会导致池为空）。",
+                        cachedSlashArtsRawCount, saWhitelistNamespaces(), saExcludedNamespaces(),
+                        saExcludedSaIds(), cachedSlashArtsExcludedSample);
+                } else {
+                    LOG.warn("slash_arts registry is empty, cannot invoke random SA.");
+                }
                 // 2026-09-12（战斗流程报告）：候选池为空 = 一次「未能施放」。
                 reportSaCast(flowBoss, null, false, null, "候选池为空（slash_arts 注册表无可用条目）");
                 return;
@@ -602,17 +632,123 @@ public final class IntegrationContract {
             return;
         }
         try {
+            // 2026-09-12（SA 名单热配置化）：快照改走取值方法 —— 否则报告的名单仍印静态键的旧值，
+            // 答不了「池为什么是这些」（键已迁到 json，热配置才是当前生效来源）；读取失败记空表。
+            List<String> whitelist = saWhitelistNamespaces();
+            List<String> excludedNamespaces = saExcludedNamespaces();
+            List<String> excludedSaIds = saExcludedSaIds();
             boss.flowSaPool(inPool, excluded,
-                new ArrayList<>(SilentSunConfig.BOSS_SA_WHITELIST_NAMESPACES.get()),
-                new ArrayList<>(SilentSunConfig.BOSS_SA_EXCLUDED_NAMESPACES.get()),
-                new ArrayList<>(SilentSunConfig.BOSS_SA_EXCLUDED_SA_IDS.get()));
+                whitelist == null ? List.of() : whitelist,
+                excludedNamespaces == null ? List.of() : excludedNamespaces,
+                excludedSaIds == null ? List.of() : excludedSaIds);
         } catch (Throwable t) {
             LOG.warn("Failed to report SA pool snapshot: {}", t.toString());
         }
     }
 
     /**
+     * SA 池名单取值（**热配置优先 / 静态配置兜底**，均按三态语义）——三个取值方法的统一契约，实现见下三处。
+     * <p>
+     * 2026-09-12（SA 名单热配置化）：白名单 / 二次排除 namespace / 二次排除 SA id 三个名单键已迁到热配置
+     * {@code silent_sun/redios_rules.json}（{@code boss_sa_whitelist_namespaces} 等三键，由
+     * {@code RediosRulesReloadListener} 解析进 {@link RediosRules}），改完重载即生效、无需重启服务器。
+     * {@code SilentSunConfig} 里原来的三个静态键**保留**作兼容回退。
+     * <p>
+     * <b>三态语义</b>（区分「没配」与「显式配空」是本次迁移的硬要求，否则「写 [] 想禁掉全部 SA」会被
+     * 静默回退成默认名单，现象是「改了 json + reload 看起来正常、白名单其实没变」）：
+     * <ul>
+     *   <li>热配置值 {@code != null} ⇒ <b>原样返回</b>（**空表也直接返回**，那是作者的显式意图）；</li>
+     *   <li>热配置值 {@code == null}（键从未配置）⇒ 回退读 {@code SilentSunConfig} 静态键；</li>
+     *   <li>整个过程 try/catch：静态键 {@code get()} 在 FML 未初始化时会抛，读取失败按现有语义
+     *       「不放行 + warn」⇒ 返回 {@code null}，由 {@link #isSaAllowed(ResourceLocation)} 判为拒绝。</li>
+     * </ul>
+     * <b>为何失败返回 {@code null} 而不是空表</b>：空表在②③两条排除判定里恰好是「不排除 ＝ 放行」，
+     * 会把配置损坏变成放行；{@code null} 才能同时满足「三条判定通用」与「失败即拒绝」。
+     *
+     * @return 生效名单；热配置与静态回退都读不到时返回 {@code null}（＝读取失败，调用方拒绝放行）
+     */
+    private static List<String> saWhitelistNamespaces() {
+        try {
+            // 2026-09-12（SA 名单热配置化）：三态 —— null=键从未配置 ⇒ 回退静态；空表=显式全禁 ⇒ 原样返回
+            List<String> hot = RediosRules.bossSaWhitelistNamespaces();
+            if (hot != null) {
+                warnEmptySaWhitelistOnce(hot, "silent_sun/redios_rules.json 的 boss_sa_whitelist_namespaces");
+                return hot;
+            }
+            // 2026-09-12（SA 名单热配置化）：热配置为 null（未配置）⇒ 回退静态键（改静态 toml 仍需重启）
+            List<String> fallback = new ArrayList<>(SilentSunConfig.BOSS_SA_WHITELIST_NAMESPACES.get());
+            warnEmptySaWhitelistOnce(fallback, "config 的 redios.bossSaWhitelistNamespaces（静态回退）");
+            return fallback;
+        } catch (Throwable t) {
+            // 2026-09-12（SA 名单热配置化）：两个来源都读不到 ⇒ 降级为 null（调用方判为拒绝放行），
+            // 并留 warn —— 否则「SA 池莫名变空」无从定位（与改动前的兜底方向一致）。
+            LOG.warn("[SilentSun] SA 白名单（热配置 + 静态回退）读取失败，本次不放行任何 SA：{}", t.toString());
+            return null;
+        }
+    }
+
+    /**
+     * 2026-09-12（SA 名单热配置化）：空白名单的**一次性**告警。
+     * <p>
+     * 白名单为空时 {@link #isSaAllowed(ResourceLocation)} 每次调用都返回 false，而它在池重建（60s TTL）
+     * 时会对每个候选 SA 各调一次 —— 在那里打日志会刷屏，故把告警放在这里并用静态标记只打一次。
+     * 名单恢复非空时复位标记，于是「修好又写空」能再次告警。
+     */
+    private static void warnEmptySaWhitelistOnce(List<String> whitelist, String source) {
+        if (whitelist != null && !whitelist.isEmpty()) {
+            // 2026-09-12（SA 名单热配置化）：恢复非空 ⇒ 复位标记，下次再被清空时能重新告警
+            emptySaWhitelistWarned = false;
+            return;
+        }
+        if (emptySaWhitelistWarned) {
+            return;
+        }
+        emptySaWhitelistWarned = true;
+        // 2026-09-12（SA 名单热配置化）：点明后果 + 指向具体键名，避免「改了没生效且无提示」
+        LOG.warn("[SilentSun] SA 白名单为空（来源：{}）⇒ Boss 不会施放任何 SA（候选池必为空）。"
+                + "若这不是你的本意，请检查 boss_sa_whitelist_namespaces：写 [] 表示显式全禁，"
+                + "键缺失/写成非数组才会回退 config 的 redios.bossSaWhitelistNamespaces。", source);
+    }
+
+    /** 二次排除 namespace 名单；热配置优先（空表=显式不排除）、静态兜底，读取失败返回 {@code null}（= 拒绝放行）。 */
+    private static List<String> saExcludedNamespaces() {
+        try {
+            // 2026-09-12（SA 名单热配置化）：三态 —— 只有 null（未配置）才回退静态键；空表的含义是「不排除任何 namespace」
+            List<String> hot = RediosRules.bossSaExcludedNamespaces();
+            if (hot != null) {
+                return hot;
+            }
+            return new ArrayList<>(SilentSunConfig.BOSS_SA_EXCLUDED_NAMESPACES.get());
+        } catch (Throwable t) {
+            LOG.warn("[SilentSun] SA 二次排除 namespace 名单（热配置 + 静态回退）读取失败，本次不放行任何 SA：{}", t.toString());
+            return null;
+        }
+    }
+
+    /** 二次排除 SA id 名单；热配置优先（空表=显式不排除）、静态兜底，读取失败返回 {@code null}（= 拒绝放行）。 */
+    private static List<String> saExcludedSaIds() {
+        try {
+            // 2026-09-12（SA 名单热配置化）：三态 —— 只有 null（未配置）才回退静态键；空表的含义是「不排除任何 SA id」
+            List<String> hot = RediosRules.bossSaExcludedSaIds();
+            if (hot != null) {
+                return hot;
+            }
+            return new ArrayList<>(SilentSunConfig.BOSS_SA_EXCLUDED_SA_IDS.get());
+        } catch (Throwable t) {
+            LOG.warn("[SilentSun] SA 二次排除 id 名单（热配置 + 静态回退）读取失败，本次不放行任何 SA：{}", t.toString());
+            return null;
+        }
+    }
+
+    /**
      * SA 随机池过滤（**白名单模式** + 两层二次排除；2026-09-01 引入黑名单，2026-09-12 用户裁决改为白名单）。
+     * <p>
+     * 2026-09-12（SA 名单热配置化）：下面三个名单键已迁到热配置 {@code silent_sun/redios_rules.json}
+     * （{@code boss_sa_whitelist_namespaces} / {@code boss_sa_excluded_namespaces} /
+     * {@code boss_sa_excluded_sa_ids}），取值统一经 {@link #saWhitelistNamespaces()} /
+     * {@link #saExcludedNamespaces()} / {@link #saExcludedSaIds()}（热配置优先、键缺失才回退静态配置），
+     * 本方法不再直接读配置。三重判定与顺序保持不变；白名单被显式配成空表时本方法恒返回 false
+     * （全禁），告警在取值方法里做一次性输出，此处不打日志以免刷屏。
      * <p>
      * 放行条件（三者**全部**满足）：
      * <ol>
@@ -644,16 +780,21 @@ public final class IntegrationContract {
      */
     static boolean isSaAllowed(ResourceLocation rl) {
         try {
+            // 2026-09-12（SA 名单热配置化）：三处取值改为调本类取值方法（热配置优先 / 静态兜底）；
+            // 取值失败返回 null ⇒ 拒绝放行（三重判定的顺序与语义不变，仅多了「失败」这一路的显式判据）。
+            List<String> whitelist = saWhitelistNamespaces();
             // ① 白名单：不在名单里的 namespace 一律不进池（fail-safe —— 新装模组默认不放行）
-            if (!SilentSunConfig.BOSS_SA_WHITELIST_NAMESPACES.get().contains(rl.getNamespace())) {
+            if (whitelist == null || !whitelist.contains(rl.getNamespace())) {
                 return false;
             }
             // ② 白名单内部的 namespace 二次排除
-            if (SilentSunConfig.BOSS_SA_EXCLUDED_NAMESPACES.get().contains(rl.getNamespace())) {
+            List<String> excludedNamespaces = saExcludedNamespaces();
+            if (excludedNamespaces == null || excludedNamespaces.contains(rl.getNamespace())) {
                 return false;
             }
             // ③ 白名单内部的 SA id 二次排除
-            return !SilentSunConfig.BOSS_SA_EXCLUDED_SA_IDS.get().contains(rl.toString());
+            List<String> excludedSaIds = saExcludedSaIds();
+            return excludedSaIds != null && !excludedSaIds.contains(rl.toString());
         } catch (Exception e) {
             // 2026-09-12（白名单化）：兜底方向**翻转** —— 配置读取失败时**拒绝**放行，而非全放行。
             // 白名单模式里「放行」才是危险方向：若此处仍 return true，配置一损坏就退化成全放行，

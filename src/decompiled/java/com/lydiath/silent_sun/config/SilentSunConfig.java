@@ -241,6 +241,8 @@ public final class SilentSunConfig {
     // 「刀光洪峰」的真实驱动源仍未知，已另立运行时排查项，**不要再归因到 foxextra 时间线**。
     // 默认值由 ["foxextra","tianshaxing"] 改为 ["tianshaxing"]：foxextra 改用下面更精确的 SA id 列表，
     // 其 SA 中 void_slash_plus 当前为空放、sakura_endex 是本环境唯一真有输出者，均无 Player/SE 硬前提。
+    // 2026-09-12（SA 名单热配置化）：本键已降级为**回退**——优先读热配置 silent_sun/redios_rules.json
+    // 的 boss_sa_whitelist_namespaces（改完重载即生效）；仅当热配置未提供或为空时才回退读本静态键（改它需重启）。
     /**
      * Boss 随机施放 SA 的 **namespace 白名单**（2026-09-12 用户裁决：由黑名单改为白名单）。
      * <p>
@@ -274,20 +276,25 @@ public final class SilentSunConfig {
             "           slashbladeamazingshine / shinkubloodkatana / feibiblade",
             "新装模组的 SA 默认**不**进池（fail-safe）；要启用需针对性测试后把其 namespace 加进本列表。",
             "白名单之下还有两层二次排除：bossSaExcludedNamespaces 与 bossSaExcludedSaIds。",
-            "修改后最迟 60 秒生效。")
+            "2026-09-12（SA 名单热配置化）：本键已降级为**回退**，当前生效值优先取热配置",
+            "silent_sun/redios_rules.json 的 boss_sa_whitelist_namespaces（改 json + 重载即生效）；",
+            "仅当该热配置键未提供或为空时才使用本值，此时修改 TOML 仍需重启服务器。")
         .defineList("redios.bossSaWhitelistNamespaces",
             List.of("slashblade", "slashblade_addon", "extinction_day_mod_1784441698",
                     "foxextra", "slashbladeamazingshine", "shinkubloodkatana", "feibiblade"),
             o -> o instanceof String);
 
+    // 2026-09-12（SA 名单热配置化）：本键已降级为**回退**——优先读热配置 silent_sun/redios_rules.json
+    // 的 boss_sa_excluded_namespaces；仅当热配置未提供或为空时才回退读本静态键（改它需重启）。
     /**
      * 白名单**内部**的 namespace 二次排除（2026-09-12 语义变更：原先它是全局黑名单，现在只在白名单内生效）。
      * <p>
-     * 默认三项及理由：
+     * 默认四项及理由：
      * <ul>
-     *   <li>{@code tianshaxing} —— 天杀星刀：其 SA 以 **SE 为硬性前提**，Boss 刀无对应 SE，根本放不出来。
-     *       （实际 mod id 为 {@code tianshaxing}，佐证：实例 {@code config/tianshaxing-common.toml} 存在，
-     *       NeoForge 配置文件名规则是 {@code <modid>-<type>.toml}。）</li>
+     *   <li>{@code tianshaxing} / {@code tiansha_extinction} —— 天杀星刀：其 SA 以 **SE 为硬性前提**，
+     *       Boss 刀无对应 SE，根本放不出来。（{@code tianshaxing} 是 mod id，佐证：实例
+     *       {@code config/tianshaxing-common.toml} 存在，NeoForge 配置文件名规则是 {@code <modid>-<type>.toml}；
+     *       {@code tiansha_extinction} 是该模组注册的**第二个** namespace，2026-09-12 补入。）</li>
      *   <li>{@code annihilationblade} —— 湮灭之刃（Arcsea/AnnihilationBlade）：**清除系作弊 SA**，
      *       其 {@code AbsoluteRemovalService} / {@code NuclearRemovalService} 会强制移除/终止实体。
      *       作者备注：「放出来出事我管不了」。详见 {@code docs/项目彻查报告-2026-09-10.md} §4.7。</li>
@@ -297,15 +304,20 @@ public final class SilentSunConfig {
      */
     public static final ModConfigSpec.ConfigValue<List<? extends String>> BOSS_SA_EXCLUDED_NAMESPACES = BUILDER
         .comment("白名单内部的 namespace 二次排除（不在白名单里的 namespace 本来就不进池）。",
-            "默认 [tianshaxing, annihilationblade, annihilationbladeex]：",
-            "  tianshaxing      —— 天杀星刀：SA 以 SE 为硬性前提，Boss 刀无对应 SE，放不出来；",
+            "默认 [tianshaxing, tiansha_extinction, annihilationblade, annihilationbladeex]：",
+            "  tianshaxing / tiansha_extinction —— 天杀星刀（后者是该模组注册的第二个 namespace）：",
+            "      SA 以 SE 为硬性前提，Boss 刀无对应 SE，放不出来；",
             "  annihilationblade / annihilationbladeex —— 湮灭之刃(含EX)：清除系作弊 SA，",
             "      其 AbsoluteRemovalService / NuclearRemovalService 会强制移除实体（作者备注：放出来出事我管不了）。",
-            "修改后最迟 60 秒生效。")
+            "2026-09-12（SA 名单热配置化）：本键已降级为**回退**，当前生效值优先取热配置",
+            "silent_sun/redios_rules.json 的 boss_sa_excluded_namespaces（改 json + 重载即生效）；",
+            "仅当该热配置键未提供或为空时才使用本值，此时修改 TOML 仍需重启服务器。")
         .defineList("redios.bossSaExcludedNamespaces",
-            List.of("tianshaxing", "annihilationblade", "annihilationbladeex"),
+            List.of("tianshaxing", "tiansha_extinction", "annihilationblade", "annihilationbladeex"),
             o -> o instanceof String);
 
+    // 2026-09-12（SA 名单热配置化）：本键已降级为**回退**——优先读热配置 silent_sun/redios_rules.json
+    // 的 boss_sa_excluded_sa_ids；仅当热配置未提供或为空时才回退读本静态键（改它需重启）。
     /**
      * Boss 随机施放 SA 时的 **SA 级**排除列表（完整 id，形如 {@code foxextra:thrust}）。
      * <p>
@@ -332,7 +344,9 @@ public final class SilentSunConfig {
             "默认 [foxextra:thrust]：其 combo 时间线的第 2 tick 会执行 checkcast Player，Boss 是 Mob，必抛 ClassCastException。",
             "同一 namespace 内其余 SA（foxextra 的 void_slash_plus / sakura_endex）经字节码复核无 Player/SE 硬性前提，保留在池中。",
             "提示：Boss(Mob) 上 combo 时间线不执行（ItemStack.inventoryTick 只对玩家物品栏调用），当前只有 clickAction 生效。",
-            "修改后最迟 60 秒生效。")
+            "2026-09-12（SA 名单热配置化）：本键已降级为**回退**，当前生效值优先取热配置",
+            "silent_sun/redios_rules.json 的 boss_sa_excluded_sa_ids（改 json + 重载即生效）；",
+            "仅当该热配置键未提供或为空时才使用本值，此时修改 TOML 仍需重启服务器。")
         .defineList("redios.bossSaExcludedSaIds",
             List.of("foxextra:thrust"),
             o -> o instanceof String);

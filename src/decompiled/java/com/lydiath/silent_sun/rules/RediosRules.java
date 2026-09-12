@@ -90,6 +90,26 @@ public final class RediosRules {
     private static volatile List<String> restoredBlocksWhitelist = DEFAULT_RESTORED_BLOCKS;
     private static volatile boolean restoreNbt = true;
 
+    // ========== SA 池名单（2026-09-12 热配置化） ==========
+    // 2026-09-12（SA 名单热配置化）：三个名单键由 SilentSunConfig（静态、改完需重启）迁到热配置
+    // redios_rules.json（boss_sa_* 三键），改完重载即生效。下面三个默认常量与 SilentSunConfig 的
+    // BOSS_SA_WHITELIST_NAMESPACES / BOSS_SA_EXCLUDED_NAMESPACES / BOSS_SA_EXCLUDED_SA_IDS
+    // 静态默认值**逐字一致**，且**只在「整份 json 缺失」分支使用**（见 RediosRulesReloadListener）。
+    // 包内可见（无 private）：同包 listener 直接引用，避免默认值出现第四份副本。
+    static final List<String> DEFAULT_BOSS_SA_WHITELIST_NAMESPACES = List.of(
+        "slashblade", "slashblade_addon", "extinction_day_mod_1784441698",
+        "foxextra", "slashbladeamazingshine", "shinkubloodkatana", "feibiblade");
+    static final List<String> DEFAULT_BOSS_SA_EXCLUDED_NAMESPACES = List.of(
+        "tianshaxing", "tiansha_extinction", "annihilationblade", "annihilationbladeex");
+    static final List<String> DEFAULT_BOSS_SA_EXCLUDED_SA_IDS = List.of("foxextra:thrust");
+    // 2026-09-12（SA 名单热配置化）：**三态语义** —— null = 键从未配置（调用方回退 SilentSunConfig 静态键）；
+    // 空列表 = 作者显式全禁（白名单全禁 / 排除项为空 = 不排除）；非空 = 生效值。
+    // 初值特意为 null：「尚未 reload 过」等价于「未配置」⇒ 走静态回退，与迁移前行为一致；
+    // **不能**用 DEFAULT_* 作初值——否则「写 [] 想禁掉全部 SA」会被默认值悄悄吃掉。
+    private static volatile List<String> bossSaWhitelistNamespaces;
+    private static volatile List<String> bossSaExcludedNamespaces;
+    private static volatile List<String> bossSaExcludedSaIds;
+
     // ========== 卡顿保护 ==========
     // N2: 原名 fpsThreshold 实为"低帧率判定用延迟阈值(毫秒)"，更名 latencyThresholdMs
     // M1: 默认 150ms——避免把普通网络玩家（30-80ms）误判为低帧率
@@ -279,6 +299,29 @@ public final class RediosRules {
     }
     public static boolean restoreNbt() { return restoreNbt; }
     public static void setRestoreNbt(boolean v) { restoreNbt = v; }
+
+    // ================================================================
+    // SA Pool Names (2026-09-12 热配置化：JSON 为准，SilentSunConfig 静态键仅作回退)
+    // ================================================================
+    public static List<String> bossSaWhitelistNamespaces() { return bossSaWhitelistNamespaces; }
+    public static void setBossSaWhitelistNamespaces(List<String> v) {
+        // 2026-09-12（SA 名单热配置化）：本 setter **刻意不照抄**文件内其它 setter 的
+        // `v == null || v.isEmpty() ? DEFAULT : ...` 空值兜底 —— 那会把「写 [] 显式全禁」
+        // 静默吃成默认名单，现象是「改了 json + reload 看起来正常、白名单其实没变」。
+        // 这里只区分三态：null（键缺失/整份配置缺失之外未配置）原样保留，其余一律 List.copyOf。
+        bossSaWhitelistNamespaces = v == null ? null : List.copyOf(v);
+    }
+    public static List<String> bossSaExcludedNamespaces() { return bossSaExcludedNamespaces; }
+    public static void setBossSaExcludedNamespaces(List<String> v) {
+        // 2026-09-12（SA 名单热配置化）：同上 —— 不做空表兜底，null 与空表必须可区分
+        // （null=未配置⇒回退静态键；空表=显式「不排除任何 namespace」）。
+        bossSaExcludedNamespaces = v == null ? null : List.copyOf(v);
+    }
+    public static List<String> bossSaExcludedSaIds() { return bossSaExcludedSaIds; }
+    public static void setBossSaExcludedSaIds(List<String> v) {
+        // 2026-09-12（SA 名单热配置化）：同上 —— 不做空表兜底（null=未配置⇒回退静态键；空表=显式「不排除任何 SA id」）。
+        bossSaExcludedSaIds = v == null ? null : List.copyOf(v);
+    }
 
     // ================================================================
     // Lag Protection

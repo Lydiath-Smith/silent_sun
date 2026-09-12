@@ -45,8 +45,9 @@ extends SimpleJsonResourceReloadListener {
     private static final Set<String> KNOWN_KEYS = Set.of(
         "adaptive_block_cooldown_ticks", "adaptive_block_damage_reduction", "adaptive_block_duration_ticks", "adaptive_block_trigger_hits_per_second",
         "battle_expel_timeout_seconds", "battle_radius_blocks", "black_sun_defeat_ratio", "boss_missing_vision_action",
-        "boss_missing_vision_dot_threshold", "boss_missing_vision_enabled", "boss_missing_vision_ticks", "chaos_ruin_incoming_absolute_enabled",
-        "colorless_reflect_ratio", "colorless_weakness_amplifier", "colorless_weakness_duration_ticks", "damage_source_debug",
+        "boss_missing_vision_dot_threshold", "boss_missing_vision_enabled", "boss_missing_vision_ticks", "boss_sa_excluded_namespaces",
+        "boss_sa_excluded_sa_ids", "boss_sa_whitelist_namespaces", "chaos_ruin_incoming_absolute_enabled", "colorless_reflect_ratio",
+        "colorless_weakness_amplifier", "colorless_weakness_duration_ticks", "damage_source_debug",
         "damage_source_debug_cooldown_ticks", "damage_source_debug_only_phase2", "damage_source_debug_only_when_expelled", "height_flight_diff_blocks",
         "height_flight_enabled", "height_flight_vertical_speed", "lag_protection_enabled", "latency_threshold_ms",
         "locate_boss_distance_blocks", "locate_boss_enabled", "locate_boss_notify_interval_ticks", "phase2_vote_no_tokens",
@@ -153,6 +154,12 @@ extends SimpleJsonResourceReloadListener {
             RediosRules.setPushAwayStrength(2.0);
             RediosRules.setPushAwayRange(10.0);
             RediosRules.setRestoredBlocksWhitelist(null);
+            // 2026-09-12（SA 名单热配置化）：**「整份 json 缺失」这一支才给显式默认值**（= SilentSunConfig
+            // 三个静态键的默认值，逐字一致），因为此分支连键存不存在都无从得知；键级缺失不走这里 ——
+            // 那条路径必须传 null，才能保住「未配置 ⇒ 回退静态配置」的三态语义。
+            RediosRules.setBossSaWhitelistNamespaces(RediosRules.DEFAULT_BOSS_SA_WHITELIST_NAMESPACES);
+            RediosRules.setBossSaExcludedNamespaces(RediosRules.DEFAULT_BOSS_SA_EXCLUDED_NAMESPACES);
+            RediosRules.setBossSaExcludedSaIds(RediosRules.DEFAULT_BOSS_SA_EXCLUDED_SA_IDS);
             RediosRules.setRestoreNbt(true);
             RediosRules.setLatencyThresholdMs(150);
             RediosRules.setLagProtectionEnabled(true);
@@ -733,6 +740,16 @@ extends SimpleJsonResourceReloadListener {
                 restoredBlocksWhitelist = list;
             }
         }
+        // 2026-09-12（SA 名单热配置化）：三个 SA 池名单键 —— 数组范式同 restored_blocks_whitelist
+        // （has + isJsonArray → 逐元素校验 → 非法项 warn 跳过），见 tryParseStringList。
+        // 三态：**键缺失 ⇒ null ⇒ 取值端回退静态配置**；键存在且为 [] ⇒ 空表 ⇒ 显式全禁；有内容 ⇒ 该内容。
+        // 注意：键级缺失**不得**在这里填默认值，否则「键存在但为空」与「键缺失」又混成一个语义。
+        ArrayList<String> bossSaWhitelistNamespaces = RediosRulesReloadListener.tryParseStringList(
+                root, "boss_sa_whitelist_namespaces", "需 namespace，如 slashblade");
+        ArrayList<String> bossSaExcludedNamespaces = RediosRulesReloadListener.tryParseStringList(
+                root, "boss_sa_excluded_namespaces", "需 namespace，如 tianshaxing");
+        ArrayList<String> bossSaExcludedSaIds = RediosRulesReloadListener.tryParseStringList(
+                root, "boss_sa_excluded_sa_ids", "需完整 SA id，如 foxextra:thrust");
         boolean restoreNbt = true;
         if (root.has("restore_nbt")) {
             try {
@@ -882,6 +899,11 @@ extends SimpleJsonResourceReloadListener {
         RediosRules.setPushAwayStrength(pushAwayStrength);
         RediosRules.setPushAwayRange(pushAwayRange);
         RediosRules.setRestoredBlocksWhitelist(restoredBlocksWhitelist);
+        // 2026-09-12（SA 名单热配置化）：三键**原样写入** —— null（键缺失）与空表（显式全禁）必须保持可区分，
+        // 故这里既不填默认值、也不能走任何把空表转成默认值的中转。
+        RediosRules.setBossSaWhitelistNamespaces(bossSaWhitelistNamespaces);
+        RediosRules.setBossSaExcludedNamespaces(bossSaExcludedNamespaces);
+        RediosRules.setBossSaExcludedSaIds(bossSaExcludedSaIds);
         RediosRules.setRestoreNbt(restoreNbt);
         RediosRules.setLatencyThresholdMs(latencyThresholdMs);
         RediosRules.setLagProtectionEnabled(lagProtectionEnabled);
@@ -927,5 +949,47 @@ extends SimpleJsonResourceReloadListener {
             return null;
         }
         return e.getAsString();
+    }
+
+    /**
+     * 2026-09-12（SA 名单热配置化）：安全取「字符串数组」键（三个 SA 池名单键共用）。
+     * <p>
+     * 解析范式照抄 {@code restored_blocks_whitelist}：{@code has + isJsonArray} 判类型 →
+     * 逐元素 {@code isJsonPrimitive} 校验 → 非法项 {@code LOG.warn} 后跳过。
+     * 与之的两个区别：
+     * <ol>
+     *   <li>**不做 ResourceLocation 归一化** —— SA 名单里既有 namespace（如 {@code slashblade}，没有冒号）
+     *       也有完整 SA id（如 {@code foxextra:thrust}），{@code ResourceLocation.parse} 会把前者
+     *       误判成 {@code minecraft:slashblade}。条目仅 strip() 去空白，大小写原样保留
+     *       （消费端用 {@code ResourceLocation.toString()} 恒小写比较）。</li>
+     *   <li>**空数组原样返回空表**（不返回 null）—— 三个 SA 名单键是三态语义：
+     *       键缺失 ⇒ null ⇒ 调用方回退静态配置；键存在且为 {@code []} ⇒ 空表 ⇒ 作者显式全禁；
+     *       键存在且有内容 ⇒ 该内容。把 {@code []} 吃成 null/默认值正是「改了没生效且无提示」的根源。</li>
+     * </ol>
+     *
+     * @return 键存在且是数组时返回解析结果（**可能是空表**）；键缺失 / 类型不是数组时返回 {@code null}
+     *         （＝未配置，调用方据此回退静态配置）
+     */
+    private static ArrayList<String> tryParseStringList(JsonObject root, String key, String hint) {
+        if (root == null || !root.has(key)) {
+            return null;
+        }
+        JsonElement raw = root.get(key);
+        if (raw == null || !raw.isJsonArray()) {
+            // 2026-09-12（SA 名单热配置化）：键存在但类型不符 ⇒ 按「未配置」处理（回退静态配置），并明确告警，
+            // 否则写成字符串/对象时现象同样是「改了没生效且无提示」。
+            LOG.warn("silent_sun/redios_rules.json 的键 {} 不是数组（类型不符），已按未配置处理并回退静态配置；期望格式：{}",
+                    key, hint);
+            return null;
+        }
+        ArrayList<String> list = new ArrayList<String>();
+        for (JsonElement e : raw.getAsJsonArray()) {
+            if (!e.isJsonPrimitive() || e.getAsString().isBlank()) {
+                LOG.warn("silent_sun/redios_rules.json 的 {} 条目非法（{}），已跳过：{}", key, hint, e);
+                continue;
+            }
+            list.add(e.getAsString().strip());
+        }
+        return list;
     }
 }

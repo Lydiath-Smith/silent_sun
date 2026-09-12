@@ -36,6 +36,24 @@
   "boss_missing_vision_ticks": 100,
   "boss_missing_vision_dot_threshold": 0.45,
   "boss_missing_vision_action": "waypoint",
+  "boss_sa_whitelist_namespaces": [
+    "slashblade",
+    "slashblade_addon",
+    "extinction_day_mod_1784441698",
+    "foxextra",
+    "slashbladeamazingshine",
+    "shinkubloodkatana",
+    "feibiblade"
+  ],
+  "boss_sa_excluded_namespaces": [
+    "tianshaxing",
+    "tiansha_extinction",
+    "annihilationblade",
+    "annihilationbladeex"
+  ],
+  "boss_sa_excluded_sa_ids": [
+    "foxextra:thrust"
+  ],
   "phase2_vote_yes_tokens": [
     "yes",
     "y",
