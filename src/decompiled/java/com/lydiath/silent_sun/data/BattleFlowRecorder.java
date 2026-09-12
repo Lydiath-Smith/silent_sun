@@ -96,6 +96,36 @@ public final class BattleFlowRecorder {
                                   List<String> namespaces, List<String> saIds) {
     }
 
+    /**
+     * combo / tickAction 探针采样点（2026-09-12 新增，见 {@link #comboProbe}）。
+     * <p>
+     * 只记「变化点」：{@code kind=comboSeqChange}（comboSeq 变了）或
+     * {@code kind=fingerprintFirstNonZero}（tickAction 指纹首次出现非零）。
+     * {@code lastProcessedTick} 是实体 {@code persistentData} 的 lastProcessedTick 键值 —— 它在整个
+     * slashblade 里只有 {@code ComboState$TimeLineTickAction.accept} 一个写入者，故它是否 &gt; 0
+     * 直接回答「{@code ComboState.tickAction} 在 Boss 上到底有没有被调用过」。
+     */
+    private record ComboProbeSample(long t, String kind, String from, String to, boolean selfDriven,
+                                    long lastProcessedTick, long elapsed, int timelineFrames, String lastSaId) {
+    }
+
+    /**
+     * 探针判定「combo 已回到待机」的两个 id（只做字符串比较，不引 slashblade 反射 —— 报告器保持零外部依赖）。
+     * 与 {@code IntegrationContract} 的 {@code SLASH_ARTS_NONE_ID} / {@code SLASH_BLADE_STANDBY_ID} 同值。
+     */
+    private static final String COMBO_NONE = "slashblade:none";
+    private static final String COMBO_STANDBY = "slashblade:standby";
+    /**
+     * verdict 判定「活动 combo 时长足够」的阈值（tick）。
+     * <p>
+     * 60 tick = 3 秒：slashblade 自带 combo_a1..a5 与任何 SA 时间线 combo 都会在这段时间内产生至少一次
+     * 时间线帧命中（TimeLineTickAction 一进 combo 就按 elapsed 逐帧推进）。低于此值不下结论，只报
+     * {@code inconclusive} —— 避免「采样窗口太短」被误读成结论。
+     */
+    private static final long COMBO_ACTIVE_TICKS_THRESHOLD = 60L;
+    /** comboSeqTrace 条数上限：combo 每段一两条，正常一场战斗远低于此；超限只丢条目（防报告膨胀）。 */
+    private static final int COMBO_TRACE_MAX = 2000;
+
     // ── 内存态 ──
 
     /** 战斗开始 gameTime（相对秒基准）；{@code -1} = 未知，退化为「首个事件时刻」。 */
@@ -111,6 +141,35 @@ public final class BattleFlowRecorder {
     /** 各 kind 已记录条数（配合 {@link #ANTI_CHEAT_MAX_PER_KIND} 截断，避免每次都遍历列表计数）。 */
     private final Map<String, Integer> antiCheatCountByKind = new LinkedHashMap<>();
     private SaPoolSnapshot saPool = null;
+
+    // ── 2026-09-12（tickAction 探针）内存态：全部由 RediosEntity 每若干 tick 采一次样喂进来 ──
+
+    private final List<ComboProbeSample> comboSeqTrace = new ArrayList<>();
+    private int comboProbeSamples;
+    /** 采样覆盖的 tick 总数（= 采样次数 × 采样间隔），用于换算「活动 combo 占比」。 */
+    private long comboProbeObservedTicks;
+    /** comboSeq 非 none/standby 的累计 tick 数：判据的「观测窗口足够长」分母。 */
+    private long comboProbeActiveTicks;
+    /** tickAction 指纹的历史最大值（> 0 = 铁证 tickAction 跑过）。 */
+    private long comboFingerprintMax;
+    /** 指纹首次出现非零的相对 tick（未出现为 null）。 */
+    private Long comboFingerprintFirstNonZeroT;
+    /** elapsed 最大值（对照指纹用：elapsed 在涨而指纹不动 = 时间线一帧都没跑）。 */
+    private long comboElapsedMax;
+    /** 观测到的「非空时间线帧数」最大值（> 0 证明该 combo 真的有一份非空时间线）。 */
+    private int comboMaxTimelineFrames = -2;
+    private int comboSeqChangeCount;
+    private int comboSelfDrivenChangeCount;
+    private int comboTraceDropped;
+    private String comboLastSeq;
+    private String comboProbeUnavailable;
+    private String comboFingerprintKey;
+    private boolean comboFingerprintKeyFromReflection;
+    private int comboSampleIntervalTicks;
+    /** 对照：持刀玩家身上的同一指纹最大值 + 玩家名（证明指纹机制在当前 jar 上有效）。 */
+    private long comboControlFingerprintMax = -1L;
+    private String comboControlName;
+    private int comboControlSamples;
 
     /** 战斗起点同步（由 {@code RediosEntity} 在已知 {@code battleStartGameTime} 时调用）；已设过则不再覆盖。 */
     public void setStartGameTime(long gameTime) {
@@ -184,6 +243,122 @@ public final class BattleFlowRecorder {
         }
     }
 
+    // ── 2026-09-12（tickAction 探针）：旁路采样入口 ──
+
+    /**
+     * COMBO_PROBE：一次 combo / tickAction 只读采样。
+     * <p>
+     * 由 {@code RediosEntity} 每 {@code tickSpan} tick 调一次，喂进 {@code IntegrationContract.probeCombo}
+     * 的只读快照。**只在变化点记 trace**（comboSeq 变了 / 指纹首次非零），其余只累加统计 ——
+     * 一场 20 分钟战斗约 12000 次采样，逐条记录只会让报告失去可读性。
+     * <p>
+     * 本方法不参与任何战斗判定，失败只 warn。
+     *
+     * @param tickSpan                    采样间隔（tick），用于把采样数换算成覆盖时长
+     * @param comboSeq                    Boss 主手刀当前 combo（读不到为 null）
+     * @param elapsed                     {@code ComboState.getElapsed(entity)}（读不到为 -1）
+     * @param lastProcessedTick           tickAction 指纹（{@code persistentData} 的 lastProcessedTick）
+     * @param timelineFrames              当前 combo 的 tickAction 时间线帧数（-1 不适用 / -2 读不到）
+     * @param selfDriven                  本窗口内 slashblade 的 comboSeq 是否由 silent_sun 自己写的
+     * @param fingerprintKey              指纹键名（写进报告，便于核对 slashblade 版本）
+     * @param fingerprintKeyFromReflection 键名是否来自反射（false = 字面量兜底）
+     */
+    public void comboProbe(long nowGameTime, int tickSpan, String comboSeq, long elapsed, long lastProcessedTick,
+                           int timelineFrames, boolean selfDriven, String fingerprintKey,
+                           boolean fingerprintKeyFromReflection) {
+        try {
+            long span = Math.max(1L, tickSpan);
+            this.comboProbeSamples++;
+            this.comboProbeObservedTicks += span;
+            if (this.comboSampleIntervalTicks <= 0) {
+                this.comboSampleIntervalTicks = (int) span;
+            }
+            if (fingerprintKey != null) {
+                this.comboFingerprintKey = fingerprintKey;
+                this.comboFingerprintKeyFromReflection = fingerprintKeyFromReflection;
+            }
+            boolean active = comboSeq != null && !COMBO_NONE.equals(comboSeq) && !COMBO_STANDBY.equals(comboSeq);
+            if (active) {
+                this.comboProbeActiveTicks += span;
+            }
+            if (timelineFrames > this.comboMaxTimelineFrames) {
+                this.comboMaxTimelineFrames = timelineFrames;
+            }
+            if (elapsed > this.comboElapsedMax) {
+                this.comboElapsedMax = elapsed;
+            }
+            if (lastProcessedTick > this.comboFingerprintMax) {
+                this.comboFingerprintMax = lastProcessedTick;
+            }
+            String lastSaId = this.lastSuccessfulSaId();
+            // 指纹首次非零 = 铁证（该键唯一写入者是 TimeLineTickAction）—— 单独记一条，便于一眼定位时刻。
+            if (lastProcessedTick > 0L && this.comboFingerprintFirstNonZeroT == null) {
+                long t = this.rel(nowGameTime);
+                this.comboFingerprintFirstNonZeroT = t;
+                this.addComboSample(new ComboProbeSample(t, "fingerprintFirstNonZero", comboSeq, comboSeq,
+                    selfDriven, lastProcessedTick, elapsed, timelineFrames, lastSaId));
+            }
+            if (!java.util.Objects.equals(this.comboLastSeq, comboSeq)) {
+                this.comboSeqChangeCount++;
+                if (selfDriven) {
+                    this.comboSelfDrivenChangeCount++;
+                }
+                this.addComboSample(new ComboProbeSample(this.rel(nowGameTime), "comboSeqChange",
+                    this.comboLastSeq, comboSeq, selfDriven, lastProcessedTick, elapsed, timelineFrames, lastSaId));
+            }
+            this.comboLastSeq = comboSeq;
+        } catch (Throwable t) {
+            LOG.warn("[SilentSun] 战斗流程报告：COMBO_PROBE 记录失败：{}", t.toString());
+        }
+    }
+
+    /**
+     * COMBO_PROBE 对照：持刀玩家身上的同一指纹（{@code Inventory} 每 tick 调 {@code inventoryTick}，
+     * 故玩家的指纹应 &gt; 0）。用途：证明「指纹机制在当前 jar 上确实可读」——若对照也恒 0，
+     * Boss 的 0 就不能当作「tickAction 没被调用」的证据。
+     */
+    public void comboProbeControl(String playerName, long lastProcessedTick) {
+        try {
+            this.comboControlSamples++;
+            if (lastProcessedTick > this.comboControlFingerprintMax) {
+                this.comboControlFingerprintMax = lastProcessedTick;
+                this.comboControlName = playerName;
+            }
+        } catch (Throwable t) {
+            LOG.warn("[SilentSun] 战斗流程报告：COMBO_PROBE 对照记录失败：{}", t.toString());
+        }
+    }
+
+    /** COMBO_PROBE 不可用（理由只记第一条，避免每采样一次刷一条）。 */
+    public void comboProbeUnavailable(String reason) {
+        try {
+            if (this.comboProbeUnavailable == null) {
+                this.comboProbeUnavailable = reason;
+            }
+        } catch (Throwable t) {
+            LOG.warn("[SilentSun] 战斗流程报告：COMBO_PROBE 不可用标记失败：{}", t.toString());
+        }
+    }
+
+    /** 最近一次**成功施放**的 SA id：让 trace 的每条 combo 变化都能对上「哪次 SA 下发的」。 */
+    private String lastSuccessfulSaId() {
+        for (int i = this.saCasts.size() - 1; i >= 0; i--) {
+            SaCastEvent e = this.saCasts.get(i);
+            if (e.ok()) {
+                return e.saId();
+            }
+        }
+        return null;
+    }
+
+    private void addComboSample(ComboProbeSample sample) {
+        if (this.comboSeqTrace.size() >= COMBO_TRACE_MAX) {
+            this.comboTraceDropped++;
+            return;
+        }
+        this.comboSeqTrace.add(sample);
+    }
+
     // ── 导出 ──
 
     /**
@@ -207,8 +382,13 @@ public final class BattleFlowRecorder {
             try (Writer writer = Files.newBufferedWriter(file, StandardCharsets.UTF_8)) {
                 GSON.toJson(root, writer);
             }
-            LOG.info("[SilentSun] 战斗流程报告已导出：{}（头衔 {} / 收尾 {} / 反作弊 {} / SA 施放 {} 条）",
-                file, this.titleFlow.size(), this.phaseSettle.size(), this.antiCheat.size(), this.saCasts.size());
+            LOG.info("[SilentSun] 战斗流程报告已导出：{}（头衔 {} / 收尾 {} / 反作弊 {} / SA 施放 {} / combo 采样 {} 条）",
+                file, this.titleFlow.size(), this.phaseSettle.size(), this.antiCheat.size(), this.saCasts.size(),
+                this.comboProbeSamples);
+            // 2026-09-12（tickAction 探针）：结论也打一行到日志，作者不必打开 JSON 就能看到判据。
+            JsonObject probe = this.buildTickActionProbe();
+            LOG.info("[SilentSun] tickAction 探针结论：{} —— {}", probe.get("verdict").getAsString(),
+                probe.get("verdictBasis").getAsString());
             if (!this.antiCheatDropped.isEmpty()) {
                 LOG.warn("[SilentSun] 战斗流程报告：部分反作弊条目因超过单 kind 上限（{}）被丢弃：{}",
                     ANTI_CHEAT_MAX_PER_KIND, this.antiCheatDropped);
@@ -228,6 +408,7 @@ public final class BattleFlowRecorder {
         this.antiCheatDropped.clear();
         this.antiCheatCountByKind.clear();
         this.saPool = null;
+        this.comboSeqTrace.clear();
     }
 
     /** 输出目录：游戏实例根目录下 {@code logs/silent_sun/}；取不到则退化到系统临时目录并 warn。 */
@@ -261,6 +442,8 @@ public final class BattleFlowRecorder {
         root.add("antiCheat", this.buildAntiCheat());
         root.add("saCasts", this.buildSaCasts());
         root.add("saStats", this.buildSaStats());
+        root.add("tickActionProbe", this.buildTickActionProbe());
+        root.add("comboSeqTrace", this.buildComboSeqTrace());
         if (!this.antiCheatDropped.isEmpty()) {
             JsonObject dropped = new JsonObject();
             for (Map.Entry<String, Integer> e : this.antiCheatDropped.entrySet()) {
@@ -457,6 +640,138 @@ public final class BattleFlowRecorder {
             }
             o.add("phases", phases);
             o.addProperty("failures", a.failures);
+            arr.add(o);
+        }
+        return arr;
+    }
+
+    /**
+     * tickActionProbe：**结论段**（原始序列在 {@code comboSeqTrace}）。
+     * <p>
+     * 回答的问题：持刀 Mob（本模组 Boss）身上，SlashBlade 的 {@code ComboState.tickAction} 到底会不会被调用？
+     * <p>
+     * 判据（按优先级）：
+     * <ol>
+     *   <li>{@code fingerprintMax > 0} ⇒ {@code tickActionDriven}（铁证）。
+     *       指纹键 {@code slashblade.lastProcessedTick} 在整个 slashblade 里只有一个写入者：
+     *       {@code ComboState$TimeLineTickAction.accept}，而它只在 {@code ComboState.tickAction(entity)}
+     *       被调用时才执行；写入发生在**推进一帧之后**。</li>
+     *   <li>{@code fingerprintMax == 0} 且 {@code maxTimelineFrames > 0} 且活动 combo 时长 ≥ 阈值
+     *       ⇒ {@code tickActionNotDriven}：有非空时间线、有活动 combo，但指纹从未被写过
+     *       ⇒ 没有任何驱动者调用 tickAction。</li>
+     *   <li>其余情况一律 {@code inconclusive}，并在 {@code verdictBasis} 里说明差在哪（窗口太短 /
+     *       combo 时间线为空 / 时间线类型不适用 / 反射读不到），避免假阴性被当成结论。</li>
+     * </ol>
+     */
+    private JsonObject buildTickActionProbe() {
+        JsonObject out = new JsonObject();
+        boolean mechanismVerified = this.comboControlFingerprintMax > 0L;
+        String verdict;
+        StringBuilder basis = new StringBuilder();
+        if (this.comboProbeSamples == 0) {
+            verdict = "noData";
+            basis.append("本场未采到任何 combo 样本（记录器随 Boss 创建 ⇒ 只有开关打开后新开战的那一场才采集）。");
+        } else if (this.comboFingerprintMax > 0L) {
+            verdict = "tickActionDriven";
+            basis.append("指纹 ").append(this.comboFingerprintKey).append(" 最大值为 ")
+                .append(this.comboFingerprintMax).append("（> 0）⇒ ComboState.tickAction 在 Boss 上确实被执行过，")
+                .append("时间线确实推进过（第三方 SA 在 Boss 上会真的产生实体）。");
+        } else if (this.comboMaxTimelineFrames > 0) {
+            if (this.comboProbeActiveTicks >= COMBO_ACTIVE_TICKS_THRESHOLD) {
+                verdict = "tickActionNotDriven";
+                basis.append("观测到活动 combo（非 none/standby）累计 ").append(this.comboProbeActiveTicks)
+                    .append(" tick，其中曾出现带 ").append(this.comboMaxTimelineFrames)
+                    .append(" 帧非空时间线的 combo（其 tickAction 就是 TimeLineTickAction），但指纹 ")
+                    .append(this.comboFingerprintKey).append(" 始终为 0（从未被写过）⇒ 没有任何驱动者调用 ")
+                    .append("ComboState.tickAction：第三方 SA 在 Boss 上是**空放**（只跑 clickAction，时间线一帧不跑）。");
+            } else {
+                verdict = "inconclusive";
+                basis.append("时间线存在（最大 ").append(this.comboMaxTimelineFrames).append(" 帧）但活动 combo 仅累计 ")
+                    .append(this.comboProbeActiveTicks).append(" tick（< ").append(COMBO_ACTIVE_TICKS_THRESHOLD)
+                    .append("）⇒ 窗口太短，不下结论。请打一场更长的战斗（多甩几个 SA）后复看。");
+            }
+        } else if (this.comboMaxTimelineFrames == 0) {
+            verdict = "inconclusive";
+            basis.append("Boss 只进过空时间线的 combo（帧数 0，即 ComboState.EMPTY_TICK_ACTION），"
+                + "而空时间线本来就不写指纹 ⇒ 无法区分。请让 Boss 施放一个带时间线的 SA 后再看。");
+        } else if (this.comboMaxTimelineFrames == -1) {
+            verdict = "inconclusive";
+            basis.append("观测到的 combo 其 tickAction 不是 TimeLineTickAction（帧数 -1）⇒ 指纹机制对它不适用，无法判定。");
+        } else {
+            verdict = "inconclusive";
+            basis.append("读不到活动 combo 的帧数信息（-2：探针反射未解析 / comboSeq 不在 combo_state 注册表），"
+                + "且指纹恒 0 ⇒ 无法区分「tickAction 未被调用」与「探针读不到」。请核对日志中的探针降级告警。");
+        }
+        if (mechanismVerified) {
+            basis.append(" 对照：持刀玩家 ")
+                .append(this.comboControlName == null ? "<未知>" : this.comboControlName)
+                .append(" 的同一指纹为 ").append(this.comboControlFingerprintMax)
+                .append("（> 0）⇒ 指纹机制在当前 jar 上确实可读，Boss 的 0 是**真 0**。");
+        } else if (this.comboControlSamples > 0) {
+            basis.append(" 对照：本场持刀玩家的同一指纹也恒为 0（采样 ").append(this.comboControlSamples)
+                .append(" 次）⇒ 指纹机制**未获验证**，Boss 的 0 须存疑（先让玩家持拔刀剑挥几刀后复测）。");
+        } else {
+            basis.append(" 对照：本场无持刀玩家样本 ⇒ 指纹机制未获验证（判据仍成立，但少一层交叉验证）。");
+        }
+        out.addProperty("verdict", verdict);
+        out.addProperty("verdictBasis", basis.toString());
+        // 读法指南（写给作者）：字段多且易误读，故把「看哪三个字段」直接写进报告。
+        out.addProperty("readGuide",
+            "判定只看三处：① fingerprintMax > 0 ⇒ 时间线在跑（tickAction 被调用过）；"
+                + "② fingerprintMax = 0 且 maxTimelineFrames > 0 且 activeComboTicks >= activeComboThresholdTicks "
+                + "⇒ tickAction 从未被调用（第三方 SA 在 Boss 上是空放，只跑 clickAction）；"
+                + "③ control.fingerprintMechanismVerified = true 才代表指纹机制在当前 jar 上有效"
+                + "（对照 = 持刀玩家的同一指纹 > 0，玩家物品栏每 tick 调 inventoryTick）。"
+                + " 注意 elapsedMax 是 combo 已过帧数（= gameTime - lastActionTime，随时间自然增长），"
+                + "**不能**用来判断时间线是否在跑；maxTimelineFrames 的 -1 = 该 combo 的 tickAction 不是 "
+                + "TimeLineTickAction，-2 = 读不到；comboSeqTrace 里 selfDriven = silent_sun 在本 tick（或前一 tick）"
+                + "刚主动写过 comboSeq / 推进过 combo —— 因此**变化本身不能证明时间线在跑**"
+                + "（silent_sun 的 updateComboSeq/progressCombo 与 resolvCurrentComboState 的超时迁移都会改 comboSeq），"
+                + "结论只以 fingerprintMax 为准。");
+        out.addProperty("fingerprintKey", this.comboFingerprintKey);
+        out.addProperty("fingerprintKeyFromReflection", this.comboFingerprintKeyFromReflection);
+        out.addProperty("fingerprintMax", this.comboFingerprintMax);
+        out.addProperty("fingerprintFirstNonZeroT", this.comboFingerprintFirstNonZeroT);
+        out.addProperty("samples", this.comboProbeSamples);
+        out.addProperty("sampleIntervalTicks", this.comboSampleIntervalTicks);
+        out.addProperty("observedTicks", this.comboProbeObservedTicks);
+        out.addProperty("activeComboTicks", this.comboProbeActiveTicks);
+        out.addProperty("activeComboThresholdTicks", COMBO_ACTIVE_TICKS_THRESHOLD);
+        out.addProperty("maxTimelineFrames", this.comboMaxTimelineFrames);
+        out.addProperty("elapsedMax", this.comboElapsedMax);
+        out.addProperty("comboSeqChanges", this.comboSeqChangeCount);
+        out.addProperty("selfDrivenChanges", this.comboSelfDrivenChangeCount);
+        if (this.comboTraceDropped > 0) {
+            out.addProperty("comboSeqTraceDropped", this.comboTraceDropped);
+        }
+        if (this.comboProbeUnavailable != null) {
+            out.addProperty("unavailable", this.comboProbeUnavailable);
+        }
+        JsonObject control = new JsonObject();
+        control.addProperty("samples", this.comboControlSamples);
+        control.addProperty("player", this.comboControlName);
+        control.addProperty("fingerprintMax", this.comboControlFingerprintMax);
+        control.addProperty("fingerprintMechanismVerified", mechanismVerified);
+        out.add("control", control);
+        return out;
+    }
+
+    /** comboSeqTrace：comboSeq 变化序列 + 指纹首次非零（探针的原始证据，结论见 {@code tickActionProbe}）。 */
+    private JsonArray buildComboSeqTrace() {
+        JsonArray arr = new JsonArray();
+        for (ComboProbeSample e : this.comboSeqTrace) {
+            JsonObject o = new JsonObject();
+            o.addProperty("t", ticksToSeconds(e.t()));
+            o.addProperty("event", e.kind());
+            o.addProperty("from", e.from());
+            o.addProperty("to", e.to());
+            o.addProperty("selfDriven", e.selfDriven());
+            o.addProperty("lastProcessedTick", e.lastProcessedTick());
+            o.addProperty("elapsed", e.elapsed());
+            o.addProperty("timelineFrames", e.timelineFrames());
+            if (e.lastSaId() != null) {
+                o.addProperty("lastSaId", e.lastSaId());
+            }
             arr.add(o);
         }
         return arr;

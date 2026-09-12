@@ -779,6 +779,9 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         // 实测崩溃（EntityDrive.onHitEntity:303 nextInt(负)）即落在该空窗内：Boss 与崩溃剑气相距仅约 20 格，
         // 本应被每 tick 的 64 格扫描覆盖。移动到此处的代价只是一次实体 AABB 查询，远低于崩服代价。
         IntegrationContract.sanitizeBossBladeEntities(this);
+        // 2026-09-12（tickAction 探针）：每 2 tick 只读采一次 combo/指纹快照（开关关闭时零开销），
+        // 用于实测「持刀 Mob 上 ComboState.tickAction 是否被调用」。旁路观测，见 tickComboProbe。
+        this.tickComboProbe();
         if (this.isBladeAttackAllowed() && this.isBladeModeActive()) {
             IntegrationContract.tryTickBossBladePlayerHits(this);
             IntegrationContract.tryFireBossPhantomSwords(this);
@@ -3069,6 +3072,79 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             rec.saPool(this.gameTimeNow(), inPool, excluded, whitelistNamespaces, excludedNamespaces, excludedSaIds);
         } catch (Throwable t) {
             SilentSunMod.LOGGER.warn("[SilentSun] 战斗流程报告记录失败（SA 池快照）：{}", t.toString());
+        }
+    }
+
+    // ────────────────────────────────────────────────────────────────────────────
+    // 2026-09-12（tickAction 探针）：实测「持刀 Mob 上 ComboState.tickAction 是否被调用」
+    //
+    // 机制问题：两份独立字节码分析都说「不会」—— ComboState.tickAction 的唯一调用点是
+    // ItemSlashBlade.lambda$inventoryTick$12，而 ItemStack.inventoryTick 的唯一调用点是玩家
+    // 物品栏 Inventory；但源码内旧注释（BladeAttackGoal / tryTickBladeComboStuckGuard）说
+    // 「持刀 Mob 每 tick 被驱动」，作者另有「第三方 SA 能释放」的实战观察。
+    //
+    // 本探针**只读 + 记录**：不改 slashblade 源码、不加 Mixin、不改任何状态。
+    //  ① 主判据 = 实体 persistentData 的 lastProcessedTick 指纹：该键在整个 slashblade 里只有
+    //     ComboState$TimeLineTickAction.accept 一个写入者，而它只在 ComboState.tickAction(entity)
+    //     被调用时才会执行 ⇒ 指纹 > 0 即「tickAction 跑过」，活动 combo 持续数十 tick 而指纹恒 0
+    //     即「没有任何驱动者调用 tickAction」。
+    //  ② 增强信号 = 反射读当前 combo 的 tickAction 类型与其 timeLine 帧数，排除「时间线本来就是空的」。
+    //  ③ 对照 = 持刀玩家身上的同一指纹（玩家有 inventoryTick 驱动者），证明指纹机制本身可读。
+    // ────────────────────────────────────────────────────────────────────────────
+
+    /**
+     * 探针采样间隔（tick）：**每 tick 一次**。
+     * <p>
+     * 取 1 而不是更大值，是为了不漏掉「1 tick 就切走」的 combo 段（第三方 SA 的 combo 可能在
+     * clickAction 里立刻切回 NONE）—— 这种段正是「时间线是否被驱动」的关键观测窗口。
+     * 单次采样 ≈ 3 次只读反射调用 + 1 次 NBT getInt，与 Boss 每 tick 已有的 64 格 AABB 实体扫描相比可忽略。
+     */
+    private static final int COMBO_PROBE_SAMPLE_INTERVAL = 1;
+    /** 对照组（持刀玩家）采样间隔（tick）：1 秒一次，只需证明指纹机制可读。 */
+    private static final int COMBO_PROBE_CONTROL_INTERVAL = 20;
+
+    /**
+     * 每 {@link #COMBO_PROBE_SAMPLE_INTERVAL} tick 采一次 combo / tickAction 只读快照，喂给战斗报告。
+     * <p>
+     * 硬约束与其它 flowXxx 一致：① 开关关闭（{@code flowRecorder == null}）时立即返回 —— 连反射都不进，
+     * 真正零开销；② 全程 try/catch，任何失败只 warn，绝不允许冒泡到战斗路径；③ 纯只读，不写任何状态、
+     * 不参与任何条件与返回值。
+     */
+    private void tickComboProbe() {
+        BattleFlowRecorder rec = this.flowRecorder;
+        if (rec == null) {
+            return;
+        }
+        try {
+            if (this.tickCount % COMBO_PROBE_SAMPLE_INTERVAL != 0) {
+                return;
+            }
+            IntegrationContract.ComboProbeSnapshot snap = IntegrationContract.probeCombo(this);
+            if (snap == null) {
+                return;
+            }
+            if (!snap.ok()) {
+                rec.comboProbeUnavailable(snap.unavailableReason());
+                return;
+            }
+            // selfDriven：本 tick（或前一 tick）silent_sun 是否刚主动动过 combo 状态机
+            // （updateComboSeq / progressCombo）。仅作归因线索：comboSeq 变化本身不能证明时间线在跑
+            //（我方写入与 resolvCurrentComboState 的超时迁移都会改 comboSeq），结论以指纹字段为准。
+            boolean selfDriven = IntegrationContract.isSelfComboWriteRecent(this, COMBO_PROBE_SAMPLE_INTERVAL + 1);
+            rec.comboProbe(this.gameTimeNow(), COMBO_PROBE_SAMPLE_INTERVAL, snap.comboSeq(), snap.elapsed(),
+                snap.lastProcessedTick(), snap.timelineFrames(), selfDriven,
+                IntegrationContract.comboFingerprintKey(), IntegrationContract.isComboFingerprintKeyFromReflection());
+            // 对照组：持刀玩家的同一指纹（玩家物品栏每 tick 调 inventoryTick ⇒ 应 > 0）
+            if (this.tickCount % COMBO_PROBE_CONTROL_INTERVAL == 0 && this.level() instanceof ServerLevel serverLevel) {
+                for (ServerPlayer player : serverLevel.players()) {
+                    long fingerprint = IntegrationContract.readControlComboFingerprint(player);
+                    if (fingerprint >= 0L) {
+                        rec.comboProbeControl(player.getName().getString(), fingerprint);
+                    }
+                }
+            }
+        } catch (Throwable t) {
+            SilentSunMod.LOGGER.warn("[SilentSun] 战斗流程报告记录失败（TICK_ACTION 探针）：{}", t.toString());
         }
     }
 

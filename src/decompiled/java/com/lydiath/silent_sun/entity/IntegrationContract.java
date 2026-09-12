@@ -176,6 +176,36 @@ public final class IntegrationContract {
     /** 灭却之日 triple_whammy SE 的注册 id path（hasSpecialEffect 精确匹配的退化遍历判断） */
     static final String TRIPLE_WHAMMY_SE_PATH = "triple_whammy";
 
+    // ── 2026-09-12（tickAction 运行时探针）：钉死「持刀 Mob 上 ComboState.tickAction 是否被调用」──
+    //
+    // 问题：两份独立字节码分析都指向「不会」—— ComboState.tickAction 的**全局唯一调用点**是
+    // ItemSlashBlade.lambda$inventoryTick$12，而 ItemStack.inventoryTick 在 NeoForge 21.1.235 / MC 1.21.1
+    // 的唯一调用点是玩家物品栏 Inventory（Mob/LivingEntity/Entity 全 0 处）。但本仓库内有互相矛盾的
+    // 旧注释（BladeAttackGoal:103-107 与 tryTickBladeComboStuckGuard 的 javadoc 均称「持刀 Mob 每 tick
+    // 被 slashblade 驱动」），且作者有「第三方 SA 可以释放」的实战观察。本探针用**实测**裁决。
+    //
+    // 做法（**只读 + 记录**，不改 slashblade 源码、不加 Mixin、不改任何行为）：
+    //   ① 指纹（主判据）：{@code ComboState$TimeLineTickAction.accept} 每推进一帧就写
+    //      {@code entity.getPersistentData()} 的 {@link #COMBO_LAST_PROCESSED_TICK_KEY_LITERAL}
+    //      （javap 确证：ldc "slashblade.lastProcessedTick" + CompoundTag.putInt(elapsed+1)）。
+    //      该键**在整个 slashblade 里只有这一个写入者**，故「值 > 0」⇒ tickAction 确实在 Boss 上执行过；
+    //      「活动 combo 持续数十 tick 而键恒 0」⇒ 无任何驱动者调用 tickAction。
+    //   ② 帧数（排除假阴性）：反射读当前 ComboState.tickAction 的运行时类型与其 timeLine Map 的 size，
+    //      证明「这个 combo 真的有一份非空时间线」——排除「时间线本来就是空的，所以不写键」。
+    //   ③ 对照（证明指纹机制本身有效）：持刀玩家（inventoryTick 有驱动者）身上的同一指纹。
+    static final String COMBO_STATE_CLASS = "mods.flammpfeil.slashblade.registry.combo.ComboState";
+    static final String COMBO_STATE_REGISTRY_CLASS = "mods.flammpfeil.slashblade.registry.ComboStateRegistry";
+    static final String COMBO_STATE_REGISTRY_FIELD = "REGISTRY";
+    static final String COMBO_STATE_LAST_PROCESSED_TICK_KEY_FIELD = "LAST_PROCESSED_TICK_KEY";
+    static final String COMBO_STATE_GET_ELAPSED_METHOD = "getElapsed";
+    static final String COMBO_STATE_TICK_ACTION_FIELD = "tickAction";
+    static final String COMBO_STATE_TIME_LINE_FIELD = "timeLine";
+    static final String COMBO_STATE_TIME_LINE_TICK_ACTION_CLASS =
+        "mods.flammpfeil.slashblade.registry.combo.ComboState$TimeLineTickAction";
+    static final String ISLASH_BLADE_STATE_GET_COMBO_SEQ_METHOD = "getComboSeq";
+    /** 指纹键名兜底字面量（javap 确证 {@code ComboState.LAST_PROCESSED_TICK_KEY} 的值即此字符串）。 */
+    static final String COMBO_LAST_PROCESSED_TICK_KEY_LITERAL = "slashblade.lastProcessedTick";
+
     // ── Availability cache ──
 
     private static volatile Boolean cachedAvailable;
@@ -332,6 +362,31 @@ public final class IntegrationContract {
     // 池被滤空是一个**持续状态**，而候选池为空的分支在每次施放尝试时都会走到（约每 80~120 tick），
     // 不节流会一直刷同一条诊断。体检上「池为什么空」不会每 tick 变化，故只报一次。
     private static volatile boolean saPoolEmptyWarned;
+
+    // ── 2026-09-12（tickAction 运行时探针）反射缓存：全部只读，失败只降级该探针 ──
+
+    private static volatile Method getComboSeqMethod;
+    private static volatile Method comboGetElapsedMethod;
+    private static volatile Object comboStateRegistry;
+    private static volatile Method comboStateRegistryGetMethod;
+    private static volatile Field comboStateTickActionField;
+    private static volatile Field comboStateTimeLineField;
+    private static volatile Class<?> timeLineTickActionClass;
+    /** 探针反射解析状态：{@code null} = 尚未解析（每次进入都会重试）。 */
+    private static volatile Boolean comboProbeResolved;
+    /** 探针反射不可用的原因（非 null 时报告的 tickActionProbe 会带上，便于定位是探针坏了还是结论如此）。 */
+    private static volatile String comboProbeUnavailableReason;
+    /** 指纹键名：反射读 {@code ComboState.LAST_PROCESSED_TICK_KEY} 优先，失败回退字面量。 */
+    private static volatile String comboLastProcessedTickKeyInstant;
+    private static volatile boolean comboFingerprintKeyFromReflection;
+    /** 「本 comboSeq 的 tickAction 带几帧时间线」缓存。key=comboSeq 字符串；
+     *  value = 帧数 / -1 = 无时间线（tickAction 非 TimeLineTickAction 或 timeLine 为空）/ -2 = 读不到。
+     *  注册表启动后不变，故可无限期缓存。 */
+    private static final java.util.concurrent.ConcurrentHashMap<String, Integer> COMBO_TIMELINE_FRAMES =
+        new java.util.concurrent.ConcurrentHashMap<>();
+    /** silent_sun 自己写 comboSeq 的最近一次归属（实体 id + 该实体 tickCount），供探针归因「这次变化是谁造成的」。 */
+    private static volatile int selfComboWriteEntityId = Integer.MIN_VALUE;
+    private static volatile int selfComboWriteTick = Integer.MIN_VALUE;
 
     // ── Public API ──
 
@@ -609,6 +664,8 @@ public final class IntegrationContract {
             Object stateOpt = bladeStateAccessOfMethod.invoke(null, blade);
             if (stateOpt instanceof Optional<?> opt && opt.isPresent()) {
                 updateComboSeqMethod.invoke(opt.get(), caster, comboLoc);
+                // 2026-09-12（tickAction 探针）：归因标记（旁路，只影响报告里 selfDriven 一列）
+                markSelfComboWrite(caster);
                 // 2026-09-12（战斗流程报告）：施放成功（combo 已下发给刀状态机）。
                 reportSaCast(flowBoss, flowSaId, true, null, null);
             } else {
@@ -848,6 +905,8 @@ public final class IntegrationContract {
                 } else {
                     progressComboMethod.invoke(state, caster);
                 }
+                // 2026-09-12（tickAction 探针）：归因标记（旁路，只影响报告里 selfDriven 一列）
+                markSelfComboWrite(caster);
             }
         } catch (Exception e) {
             LOG.warn("Failed to progress slash blade combo via reflection: {}", e.toString());
@@ -966,6 +1025,12 @@ public final class IntegrationContract {
      * 反编译确认 slashblade（重锋 2.0.3/2.0.7、Refix 三版一致）的 {@code ItemSlashBlade.inventoryTick}
      * 对持刀 Mob 每 tick 自己驱动同一条链（resolvCurrentComboState 超时迁移 + isInMainhand 时
      * tickAction 执行 TimeLineTickAction）——我们重复驱动 = 刀光翻倍（"刚切刀就有刀光"）。
+     * <p>
+     * <b>2026-09-12 该结论待实测裁决</b>：本条的「每 tick 被驱动」已被两份独立字节码分析质疑 ——
+     * {@code ComboState.tickAction} 的全局唯一调用点是 {@code ItemSlashBlade.lambda$inventoryTick$12}，
+     * 而 {@code ItemStack.inventoryTick} 在 MC 1.21.1 的唯一调用点是玩家物品栏 {@code Inventory}
+     * （反编译源码已复核），Mob/LivingEntity 上无驱动者。裁决手段见 {@link #probeCombo}：
+     * 战斗报告 {@code tickActionProbe} 用实体 persistentData 的 lastProcessedTick 指纹给出实测结论。
      * 故 tickAction 驱动交给 slashblade，这里只保留 combo 卡死守卫：
      * combo 距上次回 NONE/standby 超阈值（400 tick = 20s）视为卡死（重锋版 combo 注册内容重写，
      * 对 Mob 可能卡活跃段回不到 NONE → tickAction 每 tick 刷刀光），强制 updateComboSeq(none)
@@ -999,6 +1064,8 @@ public final class IntegrationContract {
                             LOG.warn("Slash blade combo not returning to NONE for {} ticks (boss={}, combo={}) — forcing reset",
                                 caster.tickCount - st.lastStandbyTick, caster.getName().getString(), rl);
                             updateComboSeqMethod.invoke(state, caster, SLASH_ARTS_NONE_ID);
+                            // 2026-09-12（tickAction 探针）：归因标记（旁路，只影响报告里 selfDriven 一列）
+                            markSelfComboWrite(caster);
                             st.lastStandbyTick = caster.tickCount;
                             return;
                         }
@@ -1007,6 +1074,284 @@ public final class IntegrationContract {
             }
         } catch (Exception e) {
             LOG.warn("Failed to check slash blade combo stuck via reflection: {}", e.toString());
+        }
+    }
+
+    // ── 2026-09-12（tickAction 运行时探针）：只读 API，零行为变更 ──
+
+    /**
+     * combo 探针只读快照。
+     *
+     * @param comboSeq        Boss 主手刀当前的 combo id（读不到为 {@code null}）
+     * @param elapsed         {@code ComboState.getElapsed(entity)}（读不到为 {@code -1}）
+     * @param lastProcessedTick tickAction 指纹（{@code persistentData} 的 lastProcessedTick，读不到为 {@code -1}）
+     * @param timelineFrames  当前 combo 的 tickAction 时间线帧数：{@code >=0} 帧数（0 = 空时间线）、
+     *                        {@code -1} 该 combo 的 tickAction 不是 TimeLineTickAction（指纹对它不适用）、
+     *                        {@code -2} 读不到
+     * @param unavailableReason 非 null = 探针本身不可用（而非「结论如此」）
+     */
+    public record ComboProbeSnapshot(String comboSeq, long elapsed, long lastProcessedTick,
+                                     int timelineFrames, String unavailableReason) {
+        public boolean ok() {
+            return this.unavailableReason == null;
+        }
+    }
+
+    /**
+     * 解析 combo 探针所需的只读反射项。
+     * <p>
+     * <b>必须独立于主反射 try</b>（代码审计 G18 #1 的教训）：探针解析失败只允许降级探针，
+     * 绝不能把 {@code cachedAvailable} 置 false 而连带整段拔刀剑集成失效。故本方法整个包在
+     * 自己的 try 里，且每一项失败都单独记录、不向上抛。
+     */
+    private static void resolveComboProbeReflection() {
+        if (comboProbeResolved != null) {
+            return;
+        }
+        synchronized (IntegrationContract.class) {
+            if (comboProbeResolved != null) {
+                return;
+            }
+            StringBuilder problems = new StringBuilder();
+            String keyName = COMBO_LAST_PROCESSED_TICK_KEY_LITERAL;
+            boolean keyFromReflection = false;
+            // ① 指纹键名：反射读常量（javap 确证其值就是字面量），失败退字面量 —— 主判据永不失效。
+            try {
+                Object key = Class.forName(COMBO_STATE_CLASS)
+                    .getField(COMBO_STATE_LAST_PROCESSED_TICK_KEY_FIELD).get(null);
+                if (key instanceof String s && !s.isEmpty()) {
+                    keyName = s;
+                    keyFromReflection = true;
+                }
+            } catch (Throwable t) {
+                problems.append("ComboState.LAST_PROCESSED_TICK_KEY 反射失败（改用字面量 ").append(keyName)
+                    .append("）：").append(t).append("；");
+            }
+            comboLastProcessedTickKeyInstant = keyName;
+            comboFingerprintKeyFromReflection = keyFromReflection;
+            // ② comboSeq / elapsed：读不到只让报告少两列，不影响指纹主判据。
+            try {
+                getComboSeqMethod = Class.forName(ISLASH_BLADE_STATE_CLASS)
+                    .getMethod(ISLASH_BLADE_STATE_GET_COMBO_SEQ_METHOD);
+            } catch (Throwable t) {
+                getComboSeqMethod = null;
+                problems.append("ISlashBladeState.getComboSeq 反射失败：").append(t).append("；");
+            }
+            try {
+                comboGetElapsedMethod = Class.forName(COMBO_STATE_CLASS)
+                    .getMethod(COMBO_STATE_GET_ELAPSED_METHOD, LivingEntity.class);
+            } catch (Throwable t) {
+                comboGetElapsedMethod = null;
+                problems.append("ComboState.getElapsed 反射失败：").append(t).append("；");
+            }
+            // ③ 时间线帧数（增强信号）：Registry 查询 + 两个 private final 字段的读取权限。
+            try {
+                comboStateRegistry = Class.forName(COMBO_STATE_REGISTRY_CLASS)
+                    .getField(COMBO_STATE_REGISTRY_FIELD).get(null);
+                try {
+                    comboStateRegistryGetMethod = comboStateRegistry.getClass()
+                        .getMethod(SLASH_ARTS_REGISTRY_GET_METHOD, ResourceLocation.class);
+                } catch (Throwable inner) {
+                    // 运行时实现类的可见性因映射而异，回退按 Registry 接口反射（与 SlashArts 同源的坑）。
+                    comboStateRegistryGetMethod = Class.forName("net.minecraft.core.Registry")
+                        .getMethod(SLASH_ARTS_REGISTRY_GET_METHOD, ResourceLocation.class);
+                }
+            } catch (Throwable t) {
+                comboStateRegistryGetMethod = null;
+                problems.append("ComboStateRegistry.REGISTRY 反射失败（帧数信号禁用）：").append(t).append("；");
+            }
+            try {
+                Field tickField = Class.forName(COMBO_STATE_CLASS).getDeclaredField(COMBO_STATE_TICK_ACTION_FIELD);
+                tickField.setAccessible(true);
+                comboStateTickActionField = tickField;
+                Class<?> tla = Class.forName(COMBO_STATE_TIME_LINE_TICK_ACTION_CLASS);
+                Field lineField = tla.getDeclaredField(COMBO_STATE_TIME_LINE_FIELD);
+                lineField.setAccessible(true);
+                comboStateTimeLineField = lineField;
+                timeLineTickActionClass = tla;
+            } catch (Throwable t) {
+                comboStateTickActionField = null;
+                comboStateTimeLineField = null;
+                timeLineTickActionClass = null;
+                problems.append("ComboState.tickAction / timeLine 字段读取失败（帧数信号禁用，指纹主判据不受影响）：")
+                    .append(t).append("；");
+            }
+            comboProbeUnavailableReason = problems.length() == 0 ? null : problems.toString();
+            comboProbeResolved = Boolean.TRUE;
+            if (comboProbeUnavailableReason != null) {
+                LOG.warn("[SilentSun] combo/tickAction 探针部分反射项不可用（探针降级，不影响战斗）：{}",
+                    comboProbeUnavailableReason);
+            }
+        }
+    }
+
+    /** 指纹键名：反射取 {@code ComboState.LAST_PROCESSED_TICK_KEY} 优先，失败回退字面量，永不返回 null。 */
+    public static String comboFingerprintKey() {
+        resolveComboProbeReflection();
+        return comboLastProcessedTickKeyInstant;
+    }
+
+    /** 指纹键名是否来自反射（false = 用了字面量兜底，报告里标注以便察觉 slashblade 版本差异）。 */
+    public static boolean isComboFingerprintKeyFromReflection() {
+        resolveComboProbeReflection();
+        return comboFingerprintKeyFromReflection;
+    }
+
+    /**
+     * 只读读一次 tickAction 指纹（实体 {@code persistentData} 的 lastProcessedTick 键）。{@code <0} = 读不到。
+     * <p>
+     * 语义：该键由 {@code ComboState$TimeLineTickAction.accept} 在**推进一帧时间线后**写入
+     * （{@code putInt(key, elapsed + 1)}）。{@code CompoundTag.getInt} 对缺失键返回 0 且**不写入**，
+     * 故「读到 0」严格等于「时间线从未推进过」；该键只增不减（写入后持久保留）。
+     */
+    public static long readComboFingerprint(LivingEntity entity) {
+        try {
+            if (entity == null) {
+                return -1L;
+            }
+            String key = comboFingerprintKey();
+            CompoundTag data = entity.getPersistentData();
+            return data == null || key == null ? -1L : data.getInt(key);
+        } catch (Throwable t) {
+            return -1L;
+        }
+    }
+
+    /**
+     * 对照指纹：仅当该实体**主手持拔刀剑**时返回其 tickAction 指纹，否则 {@code -1}（不适用）。
+     * <p>
+     * 为什么需要对照：持刀玩家的 {@code inventoryTick} 有驱动者（{@code Inventory} 每 tick 调），
+     * 其指纹应 &gt; 0。若对照也恒为 0，说明「指纹机制在当前 jar 上读不出来」，此时 Boss 的 0 不能作为
+     * 「tickAction 未被调用」的证据 —— 报告用 {@code control.fingerprintMechanismVerified} 标注这一点。
+     */
+    public static long readControlComboFingerprint(LivingEntity entity) {
+        try {
+            if (entity == null || entity.level() == null || entity.level().isClientSide()) {
+                return -1L;
+            }
+            ItemStack blade = entity.getMainHandItem();
+            if (blade.isEmpty() || !ensureReflectionReady() || bladeStateAccessOfMethod == null) {
+                return -1L;
+            }
+            Object stateOpt = bladeStateAccessOfMethod.invoke(null, blade);
+            if (!(stateOpt instanceof Optional<?> opt) || opt.isEmpty()) {
+                return -1L;
+            }
+            return readComboFingerprint(entity);
+        } catch (Throwable t) {
+            return -1L;
+        }
+    }
+
+    /**
+     * combo 探针主入口：一次只读采样，任何失败都降级为「字段读不到」而绝不抛异常。
+     * 全程只调用只读 getter / 只读字段读取，不写任何 slashblade 状态。
+     */
+    public static ComboProbeSnapshot probeCombo(LivingEntity entity) {
+        String unavailable = null;
+        String comboSeq = null;
+        long elapsed = -1L;
+        int frames = -2;
+        try {
+            if (entity == null) {
+                return new ComboProbeSnapshot(null, -1L, -1L, -2, "实体为 null");
+            }
+            resolveComboProbeReflection();
+            if (!isSlashBladeIntegrationAvailable()) {
+                unavailable = "slashblade 集成不可用（前置缺失），comboSeq 无法读取";
+            } else if (ensureReflectionReady()) {
+                ItemStack blade = entity.getMainHandItem();
+                if (!blade.isEmpty() && bladeStateAccessOfMethod != null) {
+                    Object stateOpt = bladeStateAccessOfMethod.invoke(null, blade);
+                    if (stateOpt instanceof Optional<?> opt && opt.isPresent() && getComboSeqMethod != null) {
+                        Object loc = getComboSeqMethod.invoke(opt.get());
+                        comboSeq = loc == null ? null : loc.toString();
+                    }
+                }
+                if (comboGetElapsedMethod != null) {
+                    Object value = comboGetElapsedMethod.invoke(null, entity);
+                    if (value instanceof Number n) {
+                        elapsed = n.longValue();
+                    }
+                }
+                frames = timelineFrameCount(comboSeq);
+            } else {
+                unavailable = "slashblade 反射缓存未就绪，comboSeq 无法读取";
+            }
+        } catch (Throwable t) {
+            unavailable = "探针采样异常：" + t;
+        }
+        long fingerprint = readComboFingerprint(entity);
+        if (fingerprint < 0L && unavailable == null) {
+            unavailable = "tickAction 指纹读取失败（persistentData 不可用）";
+        }
+        return new ComboProbeSnapshot(comboSeq, elapsed, fingerprint, frames, unavailable);
+    }
+
+    /**
+     * 当前 combo 的 tickAction 时间线帧数（只读）。
+     *
+     * @return {@code >=0} 帧数（0 = 空时间线，即 {@code ComboState.EMPTY_TICK_ACTION}）；
+     *         {@code -1} 该 combo 的 tickAction 不是 TimeLineTickAction（指纹机制对它不适用）；
+     *         {@code -2} 读不到（反射不可用 / comboSeq 不在 combo_state 注册表里）
+     */
+    private static int timelineFrameCount(String comboSeq) {
+        if (comboSeq == null || comboStateRegistry == null || comboStateRegistryGetMethod == null
+            || comboStateTickActionField == null) {
+            return -2;
+        }
+        Integer cached = COMBO_TIMELINE_FRAMES.get(comboSeq);
+        if (cached != null) {
+            return cached;
+        }
+        int frames = -2;
+        try {
+            Object state = comboStateRegistryGetMethod.invoke(comboStateRegistry, ResourceLocation.parse(comboSeq));
+            if (state != null) {
+                Object tickAction = comboStateTickActionField.get(state);
+                if (tickAction == null) {
+                    frames = -1;
+                } else if (timeLineTickActionClass != null && timeLineTickActionClass.isInstance(tickAction)) {
+                    Object line = comboStateTimeLineField == null ? null : comboStateTimeLineField.get(tickAction);
+                    frames = line instanceof java.util.Map<?, ?> map ? map.size() : -1;
+                } else {
+                    // 自定义 tickAction（非时间线）：它是否有副作用与指纹无关，标记为不适用。
+                    frames = -1;
+                }
+            }
+        } catch (Throwable t) {
+            frames = -2;
+        }
+        COMBO_TIMELINE_FRAMES.put(comboSeq, frames);
+        return frames;
+    }
+
+    /**
+     * 标记「silent_sun 刚主动写了 comboSeq」（探针归因用）：
+     * 由 {@link #tryProgressCombo} / {@link #tryInvokeRandomSA} / 卡死守卫在 updateComboSeq 成功后调用。
+     * 仅写两个 volatile 字段，失败只影响报告里 selfDriven 一列，不参与任何战斗判定。
+     */
+    static void markSelfComboWrite(LivingEntity entity) {
+        try {
+            if (entity != null) {
+                selfComboWriteEntityId = entity.getId();
+                selfComboWriteTick = entity.tickCount;
+            }
+        } catch (Throwable ignored) {
+            // 归因标记失败无害
+        }
+    }
+
+    /** 最近一次「我方主动写 comboSeq」是否落在窗口内（同实体 + tickCount 差 ≤ windowTicks）。 */
+    public static boolean isSelfComboWriteRecent(LivingEntity entity, int windowTicks) {
+        try {
+            if (entity == null || entity.getId() != selfComboWriteEntityId) {
+                return false;
+            }
+            int delta = entity.tickCount - selfComboWriteTick;
+            return delta >= 0 && delta <= windowTicks;
+        } catch (Throwable t) {
+            return false;
         }
     }
 

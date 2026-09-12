@@ -107,6 +107,13 @@ public class BladeAttackGoal extends Goal {
         // 双重驱动 → tickAction 每 tick 两次 → 刀光翻倍（"刚切刀准备攻击就有刀光"）。
         // 这里只保留 combo 卡死守卫：combo 距上次回 NONE/standby 超阈值（400 tick）强制重置，
         // 防重锋版 combo 卡活跃段无限刷刀光。近身普攻频率仍由 comboCooldown = 10 + rand(8) 控制。
+        //
+        // ⚠ 2026-09-12（tickAction 探针）：上面「持刀 Mob 每 tick 被 slashblade 驱动」是**未经实测**的
+        //   旧结论，且已被两份独立字节码分析质疑 —— ComboState.tickAction 的唯一调用点是
+        //   ItemSlashBlade.lambda$inventoryTick$12，而 ItemStack.inventoryTick 在 MC 1.21.1 的唯一调用点
+        //   是玩家物品栏 Inventory（反编译源码复核：Inventory.java:235）。裁决方式：
+        //   /silent_sun battle_report on 后打一场，报告 JSON 的 tickActionProbe.verdict 给出实测结论
+        //   （指纹机制见 IntegrationContract.probeCombo / BattleFlowRecorder）。
         IntegrationContract.tryTickBladeComboStuckGuard(boss);
 
         boss.getLookControl().setLookAt(target);
