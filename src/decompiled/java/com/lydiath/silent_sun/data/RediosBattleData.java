@@ -6,6 +6,7 @@ package com.lydiath.silent_sun.data;
 import com.lydiath.silent_sun.SilentSunMod;
 import com.lydiath.silent_sun.entity.BossState;
 import com.lydiath.silent_sun.entity.RediosEntity;
+import com.lydiath.silent_sun.rules.RediosRules;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
@@ -21,6 +22,7 @@ import net.minecraft.resources.ResourceKey;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.util.datafix.DataFixTypes;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.ChunkPos;
@@ -330,6 +332,51 @@ extends SavedData {
                 continue;
             }
             // ② 未加载 / 未到实体 tick 距离。
+            //    2026-09-12（用户裁决：「AI 停止时距离外也需要离场」）：
+            //    在此之前，这一分支**只看区块加载状态、完全不看玩家距离**，于是：
+            //      · 外部性能模组（AllTheLeaks / Adaptive Performance Tweaks 等）强保区块加载时，
+            //        区块永不卸载 ⇒ 5s 离场永不触发；
+            //      · 唯一按距离退场的 RediosEntity.tickChunkRetention（>128 格）**依赖实体 tick**，
+            //        实体不 tick 时根本不执行。
+            //    两者叠加 ⇒ 玩家站在几百格外、Boss 已停止 tick 时，战斗可以无限悬挂。
+            //    现补一条与实体是否 tick 完全无关的距离判据：活跃参战者**全部**超出
+            //    RediosRules.battleRadiusBlocks()（水平 XZ，与通用脱战半径同源）⇒ 判走远离场。
+            //    阈值口径按用户裁决取 battleRadiusBlocks（非 tickChunkRetention 的 128 格），
+            //    属有意为之：AI 停止时从严，避免战斗悬挂。
+            //    安全阀：**必须有活跃参战者**（active > 0）才判离场 —— 崩服/重启后玩家尚未登录时
+            //    active == 0，不判，保住 2026-09-10「重启后 Boss 无奖励消失」那次实测修复。
+            int active = 0;
+            int nearby = 0;
+            double radius = Math.max(1.0, RediosRules.battleRadiusBlocks());
+            double radiusSqr = radius * radius;
+            for (UUID pid : r.participants) {
+                ServerPlayer sp = server.getPlayerList().getPlayer(pid);
+                if (sp == null || sp.isSpectator() || sp.isCreative() || !sp.isAlive()) {
+                    continue;
+                }
+                if (sp.level() != level) {
+                    continue;
+                }
+                ++active;
+                double dx = sp.getX() - (double)r.pos.getX();
+                double dz = sp.getZ() - (double)r.pos.getZ();
+                if (dx * dx + dz * dz <= radiusSqr) {
+                    ++nearby;
+                }
+            }
+            if (active > 0 && nearby == 0) {
+                SilentSunMod.LOGGER.warn(
+                    "[Redios] 走远离场（AI 停止 / 未 tick 时的距离判定）：boss={} pos={} since={} 半径={} 活跃参战={}",
+                    r.bossId, r.pos, since, (int)radius, active);
+                level.getChunkAt(r.pos);
+                Entity nearbyEntity = level.getEntity(r.bossId);
+                if (nearbyEntity instanceof RediosEntity) {
+                    RediosEntity redios = (RediosEntity)nearbyEntity;
+                    redios.settleByUnloadTimeout(level);
+                }
+                this.remove(r.bossId);
+                continue;
+            }
             //    ⚠️ 2026-09-10 实测修复：**必须先确认本次启动后见过实体 tick**，否则不能按"走远"判离场。
             //    服务器崩服/重启后，Boss 所在区块通常还没加载；若直接走下面的 5s 离场，
             //    就会出现「刚重启，Boss 无奖励消失，玩家不知道为什么离场」——这正是实测遇到的现象。

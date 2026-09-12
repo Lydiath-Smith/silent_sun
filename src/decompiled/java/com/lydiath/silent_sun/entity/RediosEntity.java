@@ -5616,6 +5616,14 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         boolean crossDim = !hereDim.equals(this.battleAnchorDim);
         boolean voided = !crossDim && this.getY() < (double)serverLevel.getMinBuildHeight() - 8.0;
         boolean exiled = false;
+        // 2026-09-12（用户裁决：口径统一）：下面「是否还有人靠近」的半径原为裸写 16384.0（= 128²），
+        // 与 tickChunkRetention / checkBattleAreaUnloaded / 账本侧同义却各自取值 —— 统一取
+        // RediosRules.battleRadiusBlocks()（默认 72）。
+        // ⚠️ 属**行为变更**：反流放触发更早（原先有人退到 72~128 格之间仍算「有人靠近」）。
+        // 注：上方 65536.0（= 256²，锚点偏离阈值）**刻意保留** —— 它判的是「Boss 离战斗锚点多远」，
+        // 与「玩家离场半径」不是同一维度，不参与本次统一。
+        double battleRadius = Math.max(1.0, RediosRules.battleRadiusBlocks());
+        double battleRadiusSqr = battleRadius * battleRadius;
         if (!crossDim && !voided) {
             double dz;
             double dy;
@@ -5623,12 +5631,12 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             if (dx * dx + (dy = this.getY() - (double)this.battleAnchorPos.getY()) * dy + (dz = this.getZ() - ((double)this.battleAnchorPos.getZ() + 0.5)) * dz > 65536.0) {
                 boolean anyNear = false;
                 LivingEntity target = this.getTarget();
-                if (target != null && target.isAlive() && target.level() == serverLevel && target.distanceToSqr(this) <= 16384.0) {
+                if (target != null && target.isAlive() && target.level() == serverLevel && target.distanceToSqr(this) <= battleRadiusSqr) {
                     anyNear = true;
                 }
                 for (UUID id : this.battleParticipants) {
                     ServerPlayer p = this.getServerPlayer(id);
-                    if (p == null || !p.isAlive() || p.level() != serverLevel || !(p.distanceToSqr(this) <= 16384.0)) continue;
+                    if (p == null || !p.isAlive() || p.level() != serverLevel || !(p.distanceToSqr(this) <= battleRadiusSqr)) continue;
                     anyNear = true;
                     break;
                 }
@@ -5636,7 +5644,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
                     for (UUID id : this.mobParticipants) {
                         LivingEntity mob;
                         Entity e = serverLevel.getEntity(id);
-                        if (!(e instanceof LivingEntity) || !(mob = (LivingEntity)e).isAlive() || !(mob.distanceToSqr(this) <= 16384.0)) continue;
+                        if (!(e instanceof LivingEntity) || !(mob = (LivingEntity)e).isAlive() || !(mob.distanceToSqr(this) <= battleRadiusSqr)) continue;
                         anyNear = true;
                         break;
                     }
@@ -6049,6 +6057,12 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         // 强保区块加载会让 checkBattleAreaUnloaded 永不触发，这里改用「最近玩家距离」兜底退场。
         int active = 0;
         boolean anyClose = false;
+        // 2026-09-12（用户裁决：口径统一）：退场半径不再硬编码 128 格，统一取
+        // RediosRules.battleRadiusBlocks()（默认 72），与 checkBattleAreaUnloaded 的创造豁免半径、
+        // RediosBattleData 账本侧的走远判据同源 —— 原先三处各自裸写 128 / 4096.0(64²) / 72。
+        // ⚠️ 属**行为变更**：原来 72~128 格之间不断战，现在会断（退场更早）。
+        double retentionRadius = Math.max(1.0, RediosRules.battleRadiusBlocks());
+        double retentionRadiusSqr = retentionRadius * retentionRadius;
         for (UUID id : this.battleParticipants) {
             ServerPlayer player = this.getServerPlayer(id);
             if (this.expelledPlayers.contains(id) || player == null || player.isSpectator()
@@ -6060,7 +6074,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             // 否则 Boss 高度飞行（飞上去追人）时地面玩家会被垂直差误判 >128 格。
             double dx = player.getX() - this.getX();
             double dz = player.getZ() - this.getZ();
-            if (dx * dx + dz * dz <= 128.0 * 128.0) {
+            if (dx * dx + dz * dz <= retentionRadiusSqr) {
                 anyClose = true;
                 break;
             }
@@ -6193,10 +6207,17 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             return false;
         }
         boolean anyTicking = false;
+        // 2026-09-12（用户裁决：口径统一，原 G17 #8）：创造模式的「仍在场」豁免半径原为裸写
+        // 4096.0（= 64²），与 RediosRules.battleRadiusBlocks()（默认 72）分裂 —— 现统一取后者。
+        // ⚠️ 属**行为变更**：创造玩家豁免范围由 64 格放宽到 72 格。
+        // 注意：本方法下方那条 isPositionEntityTicking 判据**刻意保留不动** ——
+        // 它判的是「该位置是否在实体 tick 范围」（区块系统决定），与「玩家离场半径」是两个维度，
+        // 合并成格数会改变语义。
+        double battleRadius = Math.max(1.0, RediosRules.battleRadiusBlocks());
+        double battleRadiusSqr = battleRadius * battleRadius;
         for (UUID id : this.battleParticipants) {
             ServerPlayer player = this.getServerPlayer(id);
-            // TODO(审计清理 G17 #8)：区块保留判定裸写 4096.0（=64²），与 RediosRules.battleRadiusBlocks()（默认 72）口径分裂 —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
-            if (player == null || this.expelledPlayers.contains(id) || player.isSpectator() || !player.isAlive() || player.level() != this.level() || !serverLevel.isPositionEntityTicking(player.blockPosition()) || player.isCreative() && !(player.distanceToSqr(this) <= 4096.0)) continue;
+            if (player == null || this.expelledPlayers.contains(id) || player.isSpectator() || !player.isAlive() || player.level() != this.level() || !serverLevel.isPositionEntityTicking(player.blockPosition()) || player.isCreative() && !(player.distanceToSqr(this) <= battleRadiusSqr)) continue;
             anyTicking = true;
             break;
         }
