@@ -512,6 +512,15 @@ public final class IntegrationContract {
                 slashArts = raw;
             }
             if (slashArts == null) return;
+            // 2026-09-12（作者需求：完善 SA 黑名单）：施放留痕。
+            // 黑名单按 **namespace** 排除（config redios.bossSaExcludedNamespaces，默认
+            // foxextra / tianshaxing），但此前成功施放**完全静默** —— 整个方法只有「注册表为空」
+            // 一条 warn，于是「该往黑名单里再加什么」无据可依：log 里搜到的全是注册表/mixin 元数据，
+            // 没有任何一次实际施放的 SA id。
+            // 这里记录**完整 id**（形如 slashblade:judgement_cut），便于按 namespace 归类统计。
+            // 频率 = BladeAttackGoal 的中距离分支 80~120 tick 一次，量级可接受；
+            // 若嫌吵，把下面这行调成 LOG.debug 即可（不影响黑名单逻辑）。
+            LOG.info("[SilentSun] Boss 随机施放 SA：{}（候选池 {} 个）", key, keyList.size());
             Object combo = slashArtsDoArtsMethod.invoke(slashArts, artsTypeSuccess, caster);
             if (!(combo instanceof ResourceLocation comboLoc)) return;
             ItemStack blade = caster.getMainHandItem();
