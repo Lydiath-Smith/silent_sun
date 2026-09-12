@@ -4,6 +4,7 @@
 package com.lydiath.silent_sun.event;
 
 import com.lydiath.silent_sun.SilentSunMod;
+import com.lydiath.silent_sun.data.BattleFlowRecorder;
 import com.lydiath.silent_sun.data.RediosBattleData;
 import com.lydiath.silent_sun.data.RediosCooldownData;
 import com.lydiath.silent_sun.data.RediosCooldownData;
@@ -36,6 +37,7 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.neoforged.neoforge.event.entity.player.PlayerEvent;
+import net.neoforged.fml.loading.FMLPaths;
 import net.minecraft.server.packs.resources.PreparableReloadListener;
 import net.minecraft.util.Mth;
 import net.minecraft.world.damagesource.DamageSource;
@@ -207,7 +209,7 @@ public final class CommonEvents {
 
     @SubscribeEvent
     public static void onRegisterCommands(RegisterCommandsEvent event) {
-        event.getDispatcher().register((LiteralArgumentBuilder)((LiteralArgumentBuilder)((LiteralArgumentBuilder)((LiteralArgumentBuilder)Commands.literal("silent_sun").requires(source -> source.hasPermission(2))).then(Commands.literal("redios").then(Commands.literal("reload_configs").executes(CommonEvents::runRediosReloadConfigs)).then(Commands.literal("reset_summon_cd").executes(CommonEvents::runRediosResetSummonCd)))).then(Commands.literal("reload_redios_configs").executes(CommonEvents::runRediosReloadConfigs))).then(Commands.literal("reload_all").executes(CommonEvents::runReloadAll)));
+        event.getDispatcher().register((LiteralArgumentBuilder)((LiteralArgumentBuilder)((LiteralArgumentBuilder)((LiteralArgumentBuilder)Commands.literal("silent_sun").requires(source -> source.hasPermission(2))).then(Commands.literal("redios").then(Commands.literal("reload_configs").executes(CommonEvents::runRediosReloadConfigs)).then(Commands.literal("reset_summon_cd").executes(CommonEvents::runRediosResetSummonCd)))).then(Commands.literal("reload_redios_configs").executes(CommonEvents::runRediosReloadConfigs))).then(Commands.literal("reload_all").executes(CommonEvents::runReloadAll)).then(Commands.literal("battle_report").then(Commands.literal("on").executes(CommonEvents::runBattleReportOn)).then(Commands.literal("off").executes(CommonEvents::runBattleReportOff)).then(Commands.literal("status").executes(CommonEvents::runBattleReportStatus))));
     }
 
     private static int runRediosReloadConfigs(CommandContext<CommandSourceStack> ctx) {
@@ -231,6 +233,40 @@ public final class CommonEvents {
         RediosBattleData.get(overworld).clearAllRecords();
         ctx.getSource().sendSuccess(() -> Component.translatable("command.silent_sun.redios.reset_summon_cd.success"), true);
         return 1;
+    }
+
+    /**
+     * 战斗流程报告开关（2026-09-12，beta1 发布前的流程分析用）。
+     * <p>
+     * 默认关闭；开启后**新开战**的场次开始采集（SA 施放 / 头衔转变 / 双阶段收尾 / 反作弊触发），
+     * 退场时导出 JSON 到 {@code <实例根目录>/logs/silent_sun/}。
+     * 采集是纯旁路观测，关闭时不建记录器、零开销。
+     */
+    private static int runBattleReportOn(CommandContext<CommandSourceStack> ctx) {
+        BattleFlowRecorder.setEnabled(true);
+        ctx.getSource().sendSuccess(() -> Component.translatable("command.silent_sun.battle_report.on"), true);
+        return 1;
+    }
+
+    private static int runBattleReportOff(CommandContext<CommandSourceStack> ctx) {
+        BattleFlowRecorder.setEnabled(false);
+        ctx.getSource().sendSuccess(() -> Component.translatable("command.silent_sun.battle_report.off"), true);
+        return 1;
+    }
+
+    /** 查询开关与输出目录；0 表示当前关闭。 */
+    private static int runBattleReportStatus(CommandContext<CommandSourceStack> ctx) {
+        boolean on = BattleFlowRecorder.isEnabled();
+        String dir;
+        try {
+            dir = FMLPaths.GAMEDIR.get().resolve("logs").resolve("silent_sun").toString();
+        } catch (Throwable t) {
+            dir = "<实例根目录>/logs/silent_sun";
+        }
+        final String shown = dir;
+        ctx.getSource().sendSuccess(() -> Component.translatable("command.silent_sun.battle_report.status",
+            on ? "ON" : "OFF", shown), true);
+        return on ? 1 : 0;
     }
 
     private static int runReloadAll(CommandContext<CommandSourceStack> ctx) {

@@ -476,6 +476,11 @@ public final class IntegrationContract {
         // 会生成 isCritical=true 的 EntityDrive，负伤害命中触发与剑气相同的
         // "Bound must be positive" 崩服。
         if (caster.getAttributeValue(Attributes.ATTACK_DAMAGE) <= 0.0) return;
+        // 2026-09-12（战斗流程报告）：SA_CAST 采集上下文（旁路，不参与任何判定）。
+        // 注：反射未就绪 / 攻击力 ≤0 的提前返回**没有已选定的 SA**，故不记事件；
+        // 选定 SA 之后的每一条 return 都会记一条（ok=false = 未能施放），抛异常记 error 类名。
+        final RediosEntity flowBoss = caster instanceof RediosEntity r ? r : null;
+        String flowSaId = null;
         try {
             // 缓存 SA 注册表键集：slash_arts 启动注册完成后基本不变，避免每次施放
             // 随机 SA 都反射 keySet + 拷贝 HashSet/ArrayList；TTL 过期重新 keySet，
@@ -486,6 +491,13 @@ public final class IntegrationContract {
                 Object registry = slashArtsRegistry;
                 @SuppressWarnings("unchecked")
                 Set<Object> keys = new java.util.HashSet<>((Set<Object>) slashArtsRegistryKeySetMethod.invoke(registry));
+                // 2026-09-12（战斗流程报告）：过滤前留一份全量 id（供池快照算「排掉了哪些」）。
+                List<String> flowAllIds = new ArrayList<>();
+                for (Object flowKey : keys) {
+                    if (flowKey instanceof ResourceLocation flowRl) {
+                        flowAllIds.add(flowRl.toString());
+                    }
+                }
                 // NeoForge 1.21.1：Registry.keySet() 返回 ResourceLocation（非 ResourceKey）。
                 // 2026-09-01：随机池黑名单过滤，2026-09-12 扩展为 namespace + SA id 双粒度。
                 // 注：原注释把排除 foxextra 的理由写成「其 SA 有 SE 前提 + 时间线每帧多实体是洪峰源」，
@@ -497,12 +509,25 @@ public final class IntegrationContract {
                 keyList = new ArrayList<>(keys);
                 cachedSlashArtsKeys = keyList;
                 cachedSlashArtsKeysAt = now;
+                // 2026-09-12（战斗流程报告）：SA 池快照——只在本分支（60s TTL 到期、真正重建池缓存）
+                // 采集，不额外开销。全量 id 需在 removeIf 之前留一份，才能算出「排掉了哪些」。
+                List<String> flowInPool = new ArrayList<>();
+                for (Object flowKey : keyList) {
+                    flowInPool.add(String.valueOf(flowKey));
+                }
+                List<String> flowExcluded = new ArrayList<>(flowAllIds);
+                flowExcluded.removeAll(flowInPool);
+                reportSaPool(flowBoss, flowInPool, flowExcluded);
             }
             if (keyList.isEmpty()) {
                 LOG.warn("slash_arts registry is empty, cannot invoke random SA.");
+                // 2026-09-12（战斗流程报告）：候选池为空 = 一次「未能施放」。
+                reportSaCast(flowBoss, null, false, null, "候选池为空（slash_arts 注册表无可用条目）");
                 return;
             }
             Object key = keyList.get(caster.getRandom().nextInt(keyList.size()));
+            // 2026-09-12（战斗流程报告）：选定即记下 id，供后续失败/异常留痕使用。
+            flowSaId = String.valueOf(key);
             Object raw = slashArtsRegistryGetMethod.invoke(slashArtsRegistry, key);
             Object slashArts;
             if (raw instanceof Optional<?> opt && opt.isPresent()) {
@@ -513,7 +538,11 @@ public final class IntegrationContract {
             } else {
                 slashArts = raw;
             }
-            if (slashArts == null) return;
+            if (slashArts == null) {
+                // 2026-09-12（战斗流程报告）：未能施放（注册表返回的 SA 为 null）。
+                reportSaCast(flowBoss, flowSaId, false, null, "注册表返回的 SA 为 null");
+                return;
+            }
             // 2026-09-12（作者需求：完善 SA 黑名单）：施放留痕。
             // 黑名单按 **namespace** 排除（config redios.bossSaExcludedNamespaces，默认
             // foxextra / tianshaxing），但此前成功施放**完全静默** —— 整个方法只有「注册表为空」
@@ -524,15 +553,55 @@ public final class IntegrationContract {
             // 若嫌吵，把下面这行调成 LOG.debug 即可（不影响黑名单逻辑）。
             LOG.info("[SilentSun] Boss 随机施放 SA：{}（候选池 {} 个）", key, keyList.size());
             Object combo = slashArtsDoArtsMethod.invoke(slashArts, artsTypeSuccess, caster);
-            if (!(combo instanceof ResourceLocation comboLoc)) return;
+            if (!(combo instanceof ResourceLocation comboLoc)) {
+                // 2026-09-12（战斗流程报告）：未能施放（doArts 没解析出 combo id）。
+                reportSaCast(flowBoss, flowSaId, false, null, "doArts 未返回 combo id（该 SA 对 Mob 无有效 clickAction）");
+                return;
+            }
             ItemStack blade = caster.getMainHandItem();
-            if (blade.isEmpty()) return;
+            if (blade.isEmpty()) {
+                // 2026-09-12（战斗流程报告）：未能施放（主手非刀）。
+                reportSaCast(flowBoss, flowSaId, false, null, "主手非刀，BladeStateAccess 取不到状态");
+                return;
+            }
             Object stateOpt = bladeStateAccessOfMethod.invoke(null, blade);
             if (stateOpt instanceof Optional<?> opt && opt.isPresent()) {
                 updateComboSeqMethod.invoke(opt.get(), caster, comboLoc);
+                // 2026-09-12（战斗流程报告）：施放成功（combo 已下发给刀状态机）。
+                reportSaCast(flowBoss, flowSaId, true, null, null);
+            } else {
+                // 2026-09-12（战斗流程报告）：未能施放（BladeStateAccess.of 返回空）。
+                reportSaCast(flowBoss, flowSaId, false, null, "BladeStateAccess.of 返回空");
             }
         } catch (Exception e) {
             LOG.warn("Failed to invoke random slash art via reflection: {}", e.toString());
+            // 2026-09-12（战斗流程报告）：抛异常 = 黑名单首要判据（saStats.failures > 0 的 error 来源）。
+            reportSaCast(flowBoss, flowSaId, false, e.getClass().getName(),
+                flowSaId == null ? "异常发生在选定 SA 之前" : "反射调用抛异常");
+        }
+    }
+
+    // ── 2026-09-12（战斗流程报告）：SA 相关留痕（旁路；开关关闭时零开销） ──
+
+    /** SA_CAST 留痕：施放者不是 Boss（或开关关闭）时无操作；失败不影响施放链路。 */
+    private static void reportSaCast(RediosEntity boss, String saId, boolean ok, String error, String note) {
+        if (boss == null) {
+            return;
+        }
+        boss.flowSaCast(saId, ok, error, note);
+    }
+
+    /** SA 池快照留痕：入池 / 被排除 id 列表 + 当时的排除规则（namespace 列表、SA id 列表）。 */
+    private static void reportSaPool(RediosEntity boss, List<String> inPool, List<String> excluded) {
+        if (boss == null) {
+            return;
+        }
+        try {
+            boss.flowSaPool(inPool, excluded,
+                new ArrayList<>(SilentSunConfig.BOSS_SA_EXCLUDED_NAMESPACES.get()),
+                new ArrayList<>(SilentSunConfig.BOSS_SA_EXCLUDED_SA_IDS.get()));
+        } catch (Throwable t) {
+            LOG.warn("Failed to report SA pool snapshot: {}", t.toString());
         }
     }
 

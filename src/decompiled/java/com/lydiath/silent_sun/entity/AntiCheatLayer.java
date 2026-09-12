@@ -110,6 +110,32 @@ final class AntiCheatLayer {
 
     // ── declarative legal-change channel（声明式合法通道）──
 
+    // ── 2026-09-12（战斗流程报告）：反作弊留痕（旁路观测，零行为变更） ──
+
+    /**
+     * 记录一次反作弊事件。整个链路自带 null 判定与 try/catch（见 {@code RediosEntity.flowAntiCheat}），
+     * 记录失败只 warn，绝不影响战斗；开关关闭时 {@code boss} 侧记录器为 null ⇒ 零开销。
+     */
+    private void reportAntiCheat(String kind, Entity offender, String punish, boolean gated, String note) {
+        this.boss.flowAntiCheat(kind, describeOffender(offender), punish, gated, note);
+    }
+
+    /** 涉事实体描述：玩家记 UUID，其余记「实体类型#UUID」（与设计 §2.2 的 offender 口径一致）。 */
+    static String describeOffender(Entity entity) {
+        if (entity == null) {
+            return null;
+        }
+        if (entity instanceof Player player) {
+            return "player:" + player.getUUID();
+        }
+        return entity.getType() + "#" + entity.getUUID();
+    }
+
+    /** 全局 30s 惩罚门是否处于压制状态（只读；供 DamagePipeline 判定 gatedBy30s）。 */
+    boolean isPunishGateClosed() {
+        return this.antiCheatPunishGlobalCooldownTicks > 0;
+    }
+
     /**
      * 声明式合法血量变更通道：Boss 因内部机制（锁血/阶段切换/恢复/重建）合法改变血量后，
      * 调用本方法同步反作弊基线并清零合法伤害累计，避免 tickHealthCheatCheck 误判为篡改。
@@ -241,6 +267,9 @@ final class AntiCheatLayer {
         // **不要**改成按比例伤害或击退警告。
         float damage = (float) boss.getAttributeValue(Attributes.ATTACK_DAMAGE);
         for (LivingEntity offender : offenders) {
+            // 2026-09-12（战斗流程报告）：骑乘惩罚留痕（一击必杀为作者确认的有意设计，报告仅用于说明时间线）。
+            this.reportAntiCheat("RIDE_PUNISH", offender, "absoluteDamage(" + damage + ")+soulSever",
+                false, "有实体骑乘 Boss（一击必杀，作者确认为有意设计）");
             boss.addSoulSeverY(50L);
             offender.hurtTime = 0;
             offender.hurtDuration = 0;
@@ -271,7 +300,7 @@ final class AntiCheatLayer {
                 boss.broadcastToParticipants(boss.rediosSigned(msg));
                 this.tamperBroadcastCooldownTicks = 600;
             }
-            respondToTamper();
+            respondToTamper("MAX_HEALTH_TAMPER");
             return;
         }
         if (this.lastObservedMaxHealth <= 0.0) {
@@ -297,7 +326,7 @@ final class AntiCheatLayer {
         boss.restoreExpectedMaxHealth();
         // 重响应动作（音效/清效果/重挂 Buff）纳入全局 30s 惩罚门：
         // 连续篡改（如每 tick 写血量上限）时仅恢复与计数每 tick 执行，其余每 30s 一次。
-        respondToTamper();
+        respondToTamper("MAX_HEALTH_TAMPER");
         // 全盛状态暂时无途径触发：血量上限篡改仅警告，不再解锁全盛
     }
 
@@ -320,7 +349,7 @@ final class AntiCheatLayer {
                 boss.broadcastToParticipants(boss.rediosSigned(msg));
                 this.tamperBroadcastCooldownTicks = 600;
             }
-            respondToTamper();
+            respondToTamper("HEALTH_TAMPER");
             return;
         }
         if (this.expectedHealth < 0.0f) {
@@ -363,7 +392,7 @@ final class AntiCheatLayer {
         boss.restoreExpectedMaxHealth();
         // 重响应动作（音效/清效果/重挂 Buff）纳入全局 30s 惩罚门：
         // 连续篡改（如每 tick 写血量）时仅恢复与计数每 tick 执行，其余每 30s 一次。
-        respondToTamper();
+        respondToTamper("HEALTH_TAMPER");
         // 全盛状态暂时无途径触发：血量篡改仅警告，不再解锁全盛
     }
 
@@ -376,7 +405,12 @@ final class AntiCheatLayer {
      * 高频篡改（如客户端每 tick 写血量/上限）时，恢复与计数每 tick 执行，
      * 本方法最多每 30s 触发一次，避免反复重复极高频率触发导致的表现抖动与刷屏。
      */
-    private void respondToTamper() {
+    private void respondToTamper(String tamperKind) {
+        // 2026-09-12（战斗流程报告）：篡改响应留痕——统一出口记一条即可覆盖血量/血量上限两类
+        // （kind 由调用方带入）；gatedBy30s=true 表示本条被全局 30s 惩罚门压制、实际未执行惩罚。
+        this.reportAntiCheat(tamperKind, null,
+            this.antiCheatPunishGlobalCooldownTicks > 0 ? "none" : "wardenSound+clearExternalEffects+reapplySelfBuffs",
+            this.antiCheatPunishGlobalCooldownTicks > 0, "血量 / 血量上限被外部改写");
         if (this.antiCheatPunishGlobalCooldownTicks > 0) {
             return;
         }
@@ -662,6 +696,11 @@ final class AntiCheatLayer {
         if (BossTargeting.isCheatImmune(attacker)) {
             return; // 数据包黑名单：此类实体不触发反作弊惩罚
         }
+        // 2026-09-12（战斗流程报告）：惩罚落地留痕（gatedBy30s=true ⇒ 被全局门压制、实际未处罚）。
+        boolean gated = this.antiCheatPunishGlobalCooldownTicks > 0;
+        this.reportAntiCheat("TAMPER_PUNISH", attacker,
+            gated ? "none" : (attacker instanceof Player ? "itemCooldown(40)+warn" : "none"), gated,
+            "单点作弊者反制（创造模式攻击者 / 死亡作弊）");
         if (this.antiCheatPunishGlobalCooldownTicks > 0) {
             return; // 全局 30s 惩罚门：窗口内不再重复惩罚
         }
@@ -686,6 +725,12 @@ final class AntiCheatLayer {
     }
 
     void counterAllCheatAttackers(ServerLevel serverLevel, boolean applyCooldowns) {
+        // 2026-09-12（战斗流程报告）：全体连坐降级留痕（单参版本转调本方法，故只在此处记一条；
+        // gatedBy30s=true ⇒ 被全局门压制、实际未警告/未冷却）。
+        boolean gated = this.antiCheatPunishGlobalCooldownTicks > 0;
+        this.reportAntiCheat("TAMPER_PUNISH", null,
+            gated ? "none" : (applyCooldowns ? "broadcast+全员itemCooldown(40)" : "broadcast"), gated,
+            "全体连坐降级（applyCooldowns=" + applyCooldowns + "）");
         if (this.antiCheatPunishGlobalCooldownTicks > 0) {
             return; // 全局 30s 惩罚门：窗口内不再重复警告
         }

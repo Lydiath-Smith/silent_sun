@@ -652,6 +652,12 @@ public final class DamagePipeline {
 
         boss.anticheat.deathCheatStrikeCount++;
         if (boss.anticheat.deathCheatStrikeCount > 9999) boss.anticheat.deathCheatStrikeCount = 9999;
+        // 2026-09-12（战斗流程报告）：死亡作弊留痕（非战斗态血量 ≤0 被拦下）。本条按作者裁决
+        // 「保持不恢复可达性」，但一旦触发仍如实入报告，便于把反作弊并进同一条时间线。
+        boss.flowAntiCheat("DEATH_CHEAT",
+            AntiCheatLayer.describeOffender(ctx.source.getEntity()), "lockHealth(1)+warn",
+            boss.anticheat.isPunishGateClosed(),
+            "非战斗态血量 ≤0（含 /kill），第 " + boss.anticheat.deathCheatStrikeCount + " 次");
         // 锁血恢复：仅在血量偏离 1 时写入，避免冻结期每 tick 冗余 setHealth 触发属性同步
         if (boss.getHealth() != 1.0f) {
             boss.setHealth(1.0f);

@@ -5,6 +5,7 @@ package com.lydiath.silent_sun.entity;
 
 import com.lydiath.silent_sun.SilentSunMod;
 import com.lydiath.silent_sun.config.SilentSunConfig;
+import com.lydiath.silent_sun.data.BattleFlowRecorder;
 import com.lydiath.silent_sun.data.RediosBattleData;
 import com.lydiath.silent_sun.data.RediosCooldownData;
 import com.lydiath.silent_sun.effect.EnrageEffect;
@@ -395,6 +396,24 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     private boolean failsafeActive = false;
     private int failsafeCountdownTicks = 0;
     final AntiCheatLayer anticheat = new AntiCheatLayer(this);
+    /**
+     * 2026-09-12（战斗流程报告）：Boss 战斗流程报告记录器（旁路观测，纯内存，见
+     * {@link BattleFlowRecorder} 与 {@code docs/实现计划-2026-09-12-战斗流程日志报告.md} §2）。
+     * <p>
+     * <b>只在开关打开时创建</b>——关闭时为 {@code null}，所有记录点先判 null ⇒ 不建对象、不采集、零开销。
+     * 记录器不参与任何战斗判定：所有插桩都是附加语句，不改条件/返回值/时序；记录与写文件失败只 warn。
+     * <p>
+     * 导出点两处（幂等，只写一次文件）：{@link #safeDiscard()}（全部结算/离场路径的共同终点）
+     * 与 {@link #remove(Entity.RemovalReason)}（die() 的正常击杀走 vanilla 的
+     * {@code LivingEntity.tickDeath → remove(KILLED)}，不经过 safeDiscard，必须在此收口）。
+     */
+    private BattleFlowRecorder flowRecorder = BattleFlowRecorder.isEnabled() ? new BattleFlowRecorder() : null;
+    /**
+     * 2026-09-12（战斗流程报告）：本次头衔推进是否由「强制推进」路径发起（旁路标记，仅记录器读取）。
+     * 置位点：{@link #forceAdvanceToNextTitle()} / {@link #tryForceAdvanceOnLockEnd()}；
+     * 读取并复位点：{@link #onTitleChanged(int, int, int, int)}。
+     */
+    private transient boolean flowForcedAdvance = false;
     final WeaponManager weapons = new WeaponManager(this);
     final CombatStatModulator stats = new CombatStatModulator(this);
     private int wishRepairTicker = 0;
@@ -2658,6 +2677,8 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     void enterPendingState() {
         this.pendingLockReleased = false;
         this.titleLockTicks = this.titleLockDurationTicks();
+        // 2026-09-12（战斗流程报告）：双阶段收尾——进入濒死锁血（P1 的 1.9 / P2 的 2.9）。
+        this.flowPhaseSettle("pending", "濒死锁血开始（state=" + this.bossState + "，锁血 " + this.titleLockTicks + " tick）");
     }
 
     /**
@@ -2700,6 +2721,9 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     }
 
     void bossLeaveNoLoot() {
+        // 2026-09-12（战斗流程报告）：双阶段收尾——无掉落离场（leaveReason / 参战人数由导出时
+        // 附加到最后一条收尾事件上，见 BattleFlowRecorder#export）。
+        this.flowPhaseSettle("noLootLeave", "无掉落离场（leaveReason=" + this.leaveReason + "）");
         ServerLevel serverLevel = (ServerLevel)this.level();
         this.leaveBattle(serverLevel, Component.translatable("message.silent_sun.redios.no_loot_farewell").withStyle(ChatFormatting.GOLD), false);
     }
@@ -2900,6 +2924,10 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             }
             return;
         }
+        // 2026-09-12（战斗流程报告）：第二条导出路径——die() 的正常击杀走 vanilla 的
+        // LivingEntity.tickDeath → remove(KILLED)，不经过 safeDiscard；在此收口保证击杀场次也能导出
+        //（幂等：与 safeDiscard 同场只写一次文件；失败只 warn）。
+        this.exportBattleFlowReport();
         super.remove(reason);
     }
 
@@ -2926,6 +2954,9 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     }
 
     private void safeDiscard() {
+        // 2026-09-12（战斗流程报告）：统一导出点——safeDiscard 是全部结算/离场路径的共同终点，
+        // 在此收口可一次覆盖所有出口（写文件失败只 warn；幂等，见 BattleFlowRecorder#export）。
+        this.exportBattleFlowReport();
         this.legitRemoval = true;
         if (this.leaveReason != LeaveReason.NONE) {
             SilentSunMod.LOGGER.warn("Redios leaving (leaveReason={}) at {}", this.leaveReason, this.blockPosition());
@@ -2941,6 +2972,124 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             this.restoreDarkStarSpecialBlocks(sl);
         }
         this.discard();
+    }
+
+    // ────────────────────────────────────────────────────────────────────────────
+    // 2026-09-12（战斗流程报告）：记录与导出（旁路观测，零行为变更）
+    //
+    // 所有 flowXxx 包装方法都满足两条硬约束：
+    //   ① 开关关闭（flowRecorder == null）时立即返回 ⇒ 不采集、零开销；
+    //   ② 全过程 try/catch —— 记录失败只 warn，绝不让异常冒泡到战斗路径。
+    // 插桩点只调这些包装方法一条语句，不参与任何条件/返回值/时序。
+    // ────────────────────────────────────────────────────────────────────────────
+
+    /** 相对秒基准同步：战斗起点已知时同步给记录器（幂等，不覆盖已有值）。 */
+    private void syncFlowRecorderStart() {
+        BattleFlowRecorder rec = this.flowRecorder;
+        if (rec != null && this.battleStartGameTime >= 0L) {
+            rec.setStartGameTime(this.battleStartGameTime);
+        }
+    }
+
+    /** TITLE：头衔推进（唯一入口 {@link #onTitleChanged(int, int, int, int)}）。 */
+    void flowTitle(int fromPhase, int fromIndex, int toPhase, int toIndex, boolean forced) {
+        try {
+            BattleFlowRecorder rec = this.flowRecorder;
+            if (rec == null || this.level() == null || this.level().isClientSide) {
+                return;
+            }
+            this.syncFlowRecorderStart();
+            rec.title(this.gameTimeNow(), fromPhase, fromIndex, toPhase, toIndex, forced);
+        } catch (Throwable t) {
+            SilentSunMod.LOGGER.warn("[SilentSun] 战斗流程报告记录失败（TITLE）：{}", t.toString());
+        }
+    }
+
+    /**
+     * PHASE_SETTLE：双阶段收尾。
+     * kind：{@code vote}（P1 投票结果）/ {@code transition}（P1 转场）/ {@code pending}（濒死锁血开始）
+     * / {@code defeat}（被击杀或最终结算）/ {@code noLootLeave}（无掉落离场）。
+     * 导出时**最后一条**会自动补 {@code leaveReason} 与 {@code participants}（见 BattleFlowRecorder#export）。
+     */
+    void flowPhaseSettle(String kind, String note) {
+        try {
+            BattleFlowRecorder rec = this.flowRecorder;
+            if (rec == null || this.level() == null || this.level().isClientSide) {
+                return;
+            }
+            this.syncFlowRecorderStart();
+            rec.phaseSettle(this.gameTimeNow(), this.phase, this.titleIndex, kind, note);
+        } catch (Throwable t) {
+            SilentSunMod.LOGGER.warn("[SilentSun] 战斗流程报告记录失败（PHASE_SETTLE/{}）：{}", kind, t.toString());
+        }
+    }
+
+    /** ANTICHEAT：反作弊惩罚路径（篡改 / 死亡作弊 / 骑乘 / 重建回场 / 惩罚落地）。 */
+    void flowAntiCheat(String kind, String offender, String punish, boolean gatedBy30s, String note) {
+        try {
+            BattleFlowRecorder rec = this.flowRecorder;
+            if (rec == null || this.level() == null || this.level().isClientSide) {
+                return;
+            }
+            this.syncFlowRecorderStart();
+            rec.antiCheat(this.gameTimeNow(), kind, this.phase, this.titleIndex, offender, punish, gatedBy30s, note);
+        } catch (Throwable t) {
+            SilentSunMod.LOGGER.warn("[SilentSun] 战斗流程报告记录失败（ANTICHEAT/{}）：{}", kind, t.toString());
+        }
+    }
+
+    /** SA_CAST：随机 SA 施放结果（含「未能施放」——此时 error 为 null，原因见 note）。 */
+    void flowSaCast(String saId, boolean ok, String error, String note) {
+        try {
+            BattleFlowRecorder rec = this.flowRecorder;
+            if (rec == null || this.level() == null || this.level().isClientSide) {
+                return;
+            }
+            this.syncFlowRecorderStart();
+            rec.saCast(this.gameTimeNow(), saId, this.phase, this.titleIndex, ok, error, note);
+        } catch (Throwable t) {
+            SilentSunMod.LOGGER.warn("[SilentSun] 战斗流程报告记录失败（SA_CAST）：{}", t.toString());
+        }
+    }
+
+    /** SA 池快照：只在 {@code IntegrationContract.tryInvokeRandomSA} 真正重建池缓存（60s TTL 到期）时抓一次。 */
+    void flowSaPool(List<String> inPool, List<String> excluded,
+                    List<String> excludedNamespaces, List<String> excludedSaIds) {
+        try {
+            BattleFlowRecorder rec = this.flowRecorder;
+            if (rec == null || this.level() == null || this.level().isClientSide) {
+                return;
+            }
+            this.syncFlowRecorderStart();
+            rec.saPool(this.gameTimeNow(), inPool, excluded, excludedNamespaces, excludedSaIds);
+        } catch (Throwable t) {
+            SilentSunMod.LOGGER.warn("[SilentSun] 战斗流程报告记录失败（SA 池快照）：{}", t.toString());
+        }
+    }
+
+    /**
+     * 2026-09-12（战斗流程报告）：导出报告并清空记录器。两条调用路径（safeDiscard / remove）
+     * 共用，靠 {@link BattleFlowRecorder#export} 的幂等标记保证只写一次文件；任何失败只 warn，
+     * 之后无论成败都把记录器摘掉（不再重复尝试）。
+     */
+    private void exportBattleFlowReport() {
+        try {
+            BattleFlowRecorder rec = this.flowRecorder;
+            if (rec == null || this.level() == null || this.level().isClientSide) {
+                return;
+            }
+            List<String> participants = new ArrayList<>();
+            for (UUID id : this.battleParticipants) {
+                participants.add(id.toString());
+            }
+            rec.export(this.getUUID(), this.gameTimeNow(),
+                this.leaveReason == null ? "NONE" : this.leaveReason.name(), participants,
+                BossTargeting.playerOnlyMode());
+        } catch (Throwable t) {
+            SilentSunMod.LOGGER.warn("[SilentSun] 战斗流程报告导出失败（不影响战斗）：{}", t.toString());
+        } finally {
+            this.flowRecorder = null;
+        }
     }
 
     /** 召唤前暴力清除残留 Boss 的静默剔除：绕过反作弊拦截，不结算、不设 CD、不广播。
@@ -3047,6 +3196,11 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             this.phase, this.titleIndex, this.hasClearedPhase1ForLoot(), this.anticheat.antiCheatNoLoot,
             damageSource == null ? "null" : damageSource.getMsgId(), this.battleParticipants.size(),
             this.blockPosition());
+        // 2026-09-12（战斗流程报告）：双阶段收尾——被击杀（P1 未通关被打死 / P2 击杀都走这条路径，
+        // 且不经 settleBattle，故必须在此留痕）。
+        this.flowPhaseSettle("defeat", "被击杀（一阶段已清=" + this.hasClearedPhase1ForLoot()
+            + "，无掉落标记=" + this.anticheat.antiCheatNoLoot + "，伤害源="
+            + (damageSource == null ? "null" : damageSource.getMsgId()) + "）");
         // 退场秩序化（M5）：先清账本再执行可能抛异常的清理/掉落，防幽灵重建
         this.clearBattleRecord(serverLevel);
         // 2026-09-11（代码审计 G15 #4 修复）：暗星方块还原**提到无掉落分支之前**。
@@ -3626,6 +3780,9 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         this.titleLockTicks = this.titleLockDurationTicks();
         this.setHealth(trigger - epsilon);
         this.broadcastForceAdvanceCountdown();
+        // 2026-09-12（战斗流程报告）：标记本次为强制推进（旁路标记，仅记录器读取；TITLE 事件统一记在
+        // onTitleChanged 里，此处只置位以免同一次推进产出两条记录）。
+        this.flowForcedAdvance = true;
         this.onTitleChanged(oldPhase, oldTitleIndex, this.phase, this.titleIndex);
     }
 
@@ -3638,6 +3795,8 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         List<Component> list = titles = this.phase == 1 ? PHASE1_TITLES : PHASE2_TITLES;
         if (this.titleIndex < titles.size()) {
             Component nextTitle = titles.get(this.titleIndex);
+            // 2026-09-12（战斗流程报告）：强制推进的 TITLE 事件由 onTitleChanged 统一记录
+            //（本方法内只置 flowForcedAdvance 标记，避免同一跳记录两次）。
             SilentSunMod.LOGGER.info("Redios force-advance to next title phase={} titleIndex={} title={}", new Object[]{Integer.valueOf(this.phase), Integer.valueOf(this.titleIndex), nextTitle.getString()});
         }
     }
@@ -4900,6 +5059,8 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     private void startTransition() {
         int ticks;
         this.transitionTo(BossState.PHASE1_TRANSITION);
+        // 2026-09-12（战斗流程报告）：双阶段收尾——P1 收尾（转场开始，进二阶段演出）。
+        this.flowPhaseSettle("transition", "P1 收尾：开始转场（进二阶段）");
         // 2026-09-11（代码审计 G02 #5 修复）：补 Math.max(1, …)，与同键的另外 4 处消费点统一。
         // 该键（PHASE_TRANSITION_SECONDS）原先共 5 处消费：L892 / L898 / L2395 / RediosRenderer:95
         // 都有 Math.max(1,…)，只有这里没有 ⇒ phaseTransitionSeconds=0 时本处得 0，转场会在
@@ -5076,6 +5237,9 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         float epsilon = 0.001f;
         this.setHealth(trigger - epsilon);
         this.broadcastForceAdvanceCountdown();
+        // 2026-09-12（战斗流程报告）：标记本次为强制推进（旁路标记，仅记录器读取；TITLE 事件统一记在
+        // onTitleChanged 里，此处只置位以免同一次推进产出两条记录）。
+        this.flowForcedAdvance = true;
         this.onTitleChanged(oldPhase, oldTitleIndex, this.phase, this.titleIndex);
     }
 
@@ -5790,6 +5954,11 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         SilentSunMod.LOGGER.warn("[Redios] 结算离场：原因={} 阶段={} 头衔={} 发一阶段奖励={} 冷却tick={} 结局书={} 参战={} 位置={}",
             this.leaveReason, this.phase, this.titleIndex, dropPhase1Reward, cooldownTicks, includeDefeatBook,
             this.battleParticipants.size(), this.blockPosition());
+        // 2026-09-12（战斗流程报告）：双阶段收尾——最终结算（leaveReason 与参战人数由导出时
+        // 附加到最后一条收尾事件上）。
+        this.flowPhaseSettle("defeat", "最终结算（发一阶段奖励=" + dropPhase1Reward + "，冷却tick=" + cooldownTicks
+            + "，结局书=" + includeDefeatBook + "，强制一阶段奖励=" + this.forcePhase1Reward
+            + "，重建自账本=" + this.rebuiltAsSettled + "）");
         // 退场秩序化（2026-08-30）：先标记账本「已合法离场」再执行掉落等可能抛异常的步骤。
         // 顺序颠倒（先 clearBattleRecord 再掉落）能保证：即使掉落/音效/清理中抛异常中断，
         // 账本记录也已移除——这是「终态闸门」的实现基础：记录存在 ⟺ 未结算，已结算场次
@@ -6107,6 +6276,11 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         // applyCooldowns=true = 物品栏 **与 Curios 饰品栏** 每件 2 秒（40 tick）强制冷却
         //（实现见 AntiCheatLayer.counterAllCheatAttackers:653-677；全局 30 秒惩罚门自带防刷屏）。
         // 因此 stageDeathCheat 的惩罚分支无需恢复可达——它的判据已被"六态全放行"覆盖成不可达。
+        // 2026-09-12（战斗流程报告）：重建回场 = 明确的作弊场景（外部清除 Boss），单独留痕；
+        // 紧随其后的 counterAllCheatAttackers 自身还会记一条 TAMPER_PUNISH（惩罚落地），两条 t 相同。
+        boss.flowAntiCheat("REBUILD_COUNTER", null, "broadcast+全员物品/Curios冷却(40)",
+            boss.anticheat.isPunishGateClosed(), "外部清除 Boss 后按账本重建回场（参战 "
+                + boss.battleParticipants.size() + " 人）");
         boss.anticheat.counterAllCheatAttackers(level, true);
         SilentSunMod.LOGGER.warn("Redios rebuilt from battle record at {} (externally removed, phase={}, leaveReason={})", new Object[]{record.pos, record.phase, boss.leaveReason});
         boss.leaveReason = LeaveReason.NONE;
@@ -7038,6 +7212,15 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     }
 
     private void onTitleChanged(int oldPhase, int oldTitleIndex, int newPhase, int newTitleIndex) {
+        // 2026-09-12（战斗流程报告）：TITLE 留痕（onTitleChanged 是唯一头衔切换入口）。
+        // forced 由两条强制推进路径置位的旁路标记给出；读取即复位（除记录器外无人读取该字段）。
+        try {
+            boolean flowForced = this.flowForcedAdvance;
+            this.flowForcedAdvance = false;
+            this.flowTitle(oldPhase, oldTitleIndex, newPhase, newTitleIndex, flowForced);
+        } catch (Throwable ignored) {
+            // 记录失败绝不阻断头衔推进
+        }
         // B-7（2026-09-11 依设计 T-v3-9「一阶段仅以 log 记录阶段流程」补齐）：此前 onTitleChanged 内
         // 一条日志都没有，头衔推进出问题时无法回溯；一阶段只记录、不打扰玩家（二阶段有 BossBar/广播）。
         if (newPhase == 1) {
@@ -7408,6 +7591,9 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         }
         int total = this.phase2Choices.size();
         long yesVotes = this.phase2Choices.values().stream().filter(Boolean.TRUE::equals).count();
+        // 2026-09-12（战斗流程报告）：双阶段收尾——P1 收尾（投票结果）。此处只记票数，
+        // 后续去向由紧随其后的收尾/头衔事件体现（进二阶段→TITLE phase=2；否决→endBattleHalfDayCooldown 结算）。
+        this.flowPhaseSettle("vote", "P1 收尾：投票结果 总票=" + total + " 赞成=" + yesVotes + "（通过需 > 半数）");
         for (UUID id : this.phase2Choices.keySet()) {
             player = this.getServerPlayer(id);
             if (player == null) continue;
