@@ -3,6 +3,7 @@
  */
 package com.lydiath.silent_sun.event;
 
+import com.lydiath.silent_sun.SilentSunMod;
 import com.lydiath.silent_sun.data.RediosBattleData;
 import com.lydiath.silent_sun.data.RediosCooldownData;
 import com.lydiath.silent_sun.data.RediosCooldownData;
@@ -82,6 +83,17 @@ public final class CommonEvents {
     private static final ResourceLocation MIRROR_FACE_ATTACK_DAMAGE_ID = ResourceLocation.fromNamespaceAndPath("silent_sun", "mirror_face_attack_damage");
     /** 拔刀剑全局兜底清扫的 tick 计数器（每 20 tick 跨维度清扫一次危险暴击剑气） */
     private static int bladeGlobalSweepTick = 0;
+    /** 诊断统计周期（100 tick = 5 秒）。洪峰时单体维度实体数量大，遍历开销不能按每 tick 计。 */
+    private static final int SA_FLOOD_DIAG_INTERVAL_TICKS = 100;
+    /** 诊断告警阈值：SlashBlade 系实体总数低于此值不打日志，避免正常战斗刷屏。 */
+    private static final int SA_FLOOD_DIAG_WARN_THRESHOLD = 50;
+    /**
+     * 2026-09-12（作者需求：运行时定位「刀光洪峰」）SA 实体分类计数诊断的 tick 计数器。
+     * <p>
+     * 放在全局 {@code ServerTickEvent} 而非 Boss 自己的 tick 里：洪峰本身可能把 Boss 卡到不 tick，
+     * 那样挂在实体上的统计就失效了 —— 而洪峰恰恰最可能在那种状态下持续。
+     */
+    private static int saFloodDiagTick = 0;
 
     // ── K1: 断魂不可被牛奶清除（1.21.1 替代实现） ──
     // 1.21.1 移除了 MobEffect.isCurativeItem，牛奶改为 finishUsingItem 内
@@ -577,6 +589,67 @@ public final class CommonEvents {
             bladeGlobalSweepTick = 0;
             IntegrationContract.globalSanitizeBladeDrives(server);
         }
+        // 2026-09-12（作者需求：运行时定位「刀光洪峰」）：SA 实体分类计数诊断，与上面的清扫同款节流。
+        if (++saFloodDiagTick >= SA_FLOOD_DIAG_INTERVAL_TICKS) {
+            saFloodDiagTick = 0;
+            diagnoseSlashBladeEntityFlood(server);
+        }
+    }
+
+    /**
+     * 2026-09-12（作者需求：运行时定位「刀光洪峰」）：把 SlashBlade 系实体按**产出链**分类计数。
+     * <p>
+     * 背景：历史记录里的「刀光洪峰（成千实体/秒）」目前**与全部静态证据矛盾** —— 源码 + javap 已确认
+     * Boss(Mob) 上 combo 时间线不执行（{@code ItemStack.inventoryTick} 只对玩家物品栏调用），
+     * 而时间线正是 {@code EntityDrive} / {@code EntityJudgementCut} 的唯一产地；宿主自己的
+     * {@code tickAction} 驱动也已在 G18 #1 那批删除。故必须靠运行时把“谁在产实体”定死。
+     * <p>
+     * <b>判读方式</b>：
+     * <ul>
+     *   <li>几乎全是 {@code EntityDrive}（剑气）⇒ 存在 combo 时间线驱动者（静态分析漏掉了它），
+     *       需要把驱动者揪出来；</li>
+     *   <li>几乎全是 {@code EntitySlashEffect}（刀光）⇒ 走的是 {@code clickAction}，
+     *       即 combo 段被反复 {@code updateComboSeq} 重放 —— 对应「活跃 SA 段内不再重设 combo」那条修法；</li>
+     *   <li>几乎全是剑雨系（{@code AbstractSummonedSword} / {@code HeavyRain|Storm|Spiral|Blistering}Swords）
+     *       ⇒ 是 SE 侧放大器（如 foxextra 的 {@code SummonSword} 每次 DoSlashEvent +5 实体），
+     *       需查 Boss 刀运行时实际带有哪些 specialEffects。</li>
+     * </ul>
+     * 用**类名字符串**分类而不直接引用类型：SlashBlade 是反射软依赖，编译期不可引用其类。
+     * 仅在总数超过 {@link #SA_FLOOD_DIAG_WARN_THRESHOLD} 时输出一条 warn，正常战斗不会刷屏。
+     */
+    private static void diagnoseSlashBladeEntityFlood(MinecraftServer server) {
+        int slashEffect = 0;
+        int drive = 0;
+        int judgementCut = 0;
+        int swordRain = 0;
+        int other = 0;
+        for (ServerLevel level : server.getAllLevels()) {
+            for (Entity e : level.getEntities().getAll()) {
+                String cls = e.getClass().getName();
+                if (!cls.startsWith("mods.flammpfeil.slashblade") && !cls.contains("legendreliclib")) {
+                    continue;
+                }
+                String simple = e.getClass().getSimpleName();
+                if (simple.startsWith("EntitySlashEffect")) {
+                    ++slashEffect;
+                } else if (simple.startsWith("EntityDrive")) {
+                    ++drive;
+                } else if (simple.startsWith("EntityJudgementCut")) {
+                    ++judgementCut;
+                } else if (simple.contains("Sword")) {
+                    ++swordRain;
+                } else {
+                    ++other;
+                }
+            }
+        }
+        int total = slashEffect + drive + judgementCut + swordRain + other;
+        if (total < SA_FLOOD_DIAG_WARN_THRESHOLD) {
+            return;
+        }
+        SilentSunMod.LOGGER.warn(
+            "[诊断] SlashBlade 系实体洪峰 total={} | 刀光={} 剑气={} 次元斩={} 剑雨={} 其它={} —— 判读：全是剑气⇒combo 时间线正被驱动；全是刀光⇒clickAction 被反复重放；全是剑雨⇒SE 侧放大器",
+            total, slashEffect, drive, judgementCut, swordRain, other);
     }
 
     public static void markPhase2ChoicePending(ServerPlayer player, UUID bossId) {
