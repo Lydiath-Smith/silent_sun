@@ -6234,7 +6234,11 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             return false;
         }
         ++this.battleAreaUnloadedTicks;
-        if (this.battleAreaUnloadedTicks < 200) {
+        // 2026-09-12（用户裁决：时间口径统一）：等待窗口原为裸值 200（10 秒），与账本侧
+        // RediosBattleData 的「区块未加载 5s」判的是同一件事（玩家离开导致区块不 tick），
+        // 差一倍会让同一次走远在两条路径上 5 秒 / 10 秒结论不一。现统一取 WALK_AWAY_SETTLE_TICKS。
+        // ⚠️ 属**行为变更**：本路径由 10 秒缩短到 5 秒，退场更早。
+        if (this.battleAreaUnloadedTicks < RediosBattleData.WALK_AWAY_SETTLE_TICKS) {
             return false;
         }
         this.battleAreaUnloadedTicks = 0;

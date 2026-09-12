@@ -52,6 +52,21 @@ extends SavedData {
      * 防止"重建出的 Boss 没能站住"时每 tick 重建一次（实测出现过聊天栏被刷爆的风暴）。
      */
     private static final int REBUILD_RETRY_COOLDOWN_TICKS = 100;
+    /**
+     * {@code 2026-09-12（用户裁决：时间口径统一）}「玩家走远」类离场的**统一等待窗口**（5 秒 = 100 tick）。
+     * <p>
+     * 归并前同一件事有两套：本类下方的「区块未加载 5s」用裸值 {@code 100L}，
+     * 而 {@code RediosEntity.checkBattleAreaUnloaded} 的「玩家不在实体 tick 距离」用裸值 {@code 200}
+     * —— 两者判的都是「玩家离开导致区块不 tick」，只是入口不同（一个从账本侧看区块、一个从实体侧看玩家），
+     * 差一倍会让同一个走远在不同路径上 5 秒 / 10 秒结论不一。
+     * <p>
+     * 取值 {@code 100}：采用原账本侧的 5 秒（较原 10 秒更早），与「AI 停止时距离外也要尽快离场」的诉求一致。
+     * <p>
+     * 注：**不**并入手册中另外两条时间判据 —— {@code allParticipantsDeadTicks}（全员死亡/创造/旁观/离开维度
+     * 的 200 tick）判的是**玩家状态**而非距离；{@code battleExpelTimeoutSeconds}（默认 60s，可配）判的是
+     * 「出战斗半径但区块仍在加载」的通用脱战。三者语义不同，刻意保留各自取值。
+     */
+    public static final int WALK_AWAY_SETTLE_TICKS = 100;
     private final Map<UUID, BattleRecord> records = new HashMap<UUID, BattleRecord>();
 
     public static RediosBattleData get(ServerLevel level) {
@@ -395,7 +410,9 @@ extends SavedData {
                 continue;
             }
             // 走远 / 区块卸载：5s（100 tick）内区块未重新加载（实体未恢复）即合法离场结算。
-            if (since >= 100L) {
+            // 2026-09-12（用户裁决）：原裸值 100L 改用共享常量 WALK_AWAY_SETTLE_TICKS，
+            // 与 RediosEntity.checkBattleAreaUnloaded 的等待窗口同源。
+            if (since >= (long)WALK_AWAY_SETTLE_TICKS) {
                 SilentSunMod.LOGGER.warn(
                     "[Redios] 走远/卸载离场结算：boss={} pos={} since={} tick(加载={} 实体tick={}) 参战={}",
                     r.bossId, r.pos, since, level.isLoaded(r.pos), level.isPositionEntityTicking(r.pos),
