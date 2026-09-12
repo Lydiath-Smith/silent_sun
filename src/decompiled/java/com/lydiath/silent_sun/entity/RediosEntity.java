@@ -1239,6 +1239,11 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     }
 
     private void updateBossEvent() {
+        // 2026-09-12（作者确认：有意设计，勿当缺陷改）：投票期**完全冻结血条** ——
+        // 血量、名字、进度条一律不更新。理由是投票期 Boss 坐地候票、不参与战斗数值变化，
+        // 且血条名对 VOTE 本就省略计时（见 getBossBarName 的 isVoteOrTransition 分支）。
+        // 【注意】与之相邻的 PENDING 分支语义**相反**：濒死锁血期必须刷新，否则金色锁血倒计时
+        // 会冻结在进入 PENDING 时的数值（2026-09-12 已修，见 tickServer 的 PENDING 分支）。
         if (this.bossState == BossState.PHASE1_VOTE) {
             return;
         }
