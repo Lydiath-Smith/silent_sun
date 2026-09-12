@@ -591,13 +591,19 @@ public final class IntegrationContract {
         boss.flowSaCast(saId, ok, error, note);
     }
 
-    /** SA 池快照留痕：入池 / 被排除 id 列表 + 当时的排除规则（namespace 列表、SA id 列表）。 */
+    /**
+     * SA 池快照留痕：入池 / 被排除 id 列表 + 当时的**全部规则**。
+     * <p>
+     * 2026-09-12（白名单化）：规则由「黑名单」改为「白名单 + 两层二次排除」，故快照也一并记录
+     * 白名单 —— 不记的话报告答不了「池为什么是这些」（验收第 5 条）。
+     */
     private static void reportSaPool(RediosEntity boss, List<String> inPool, List<String> excluded) {
         if (boss == null) {
             return;
         }
         try {
             boss.flowSaPool(inPool, excluded,
+                new ArrayList<>(SilentSunConfig.BOSS_SA_WHITELIST_NAMESPACES.get()),
                 new ArrayList<>(SilentSunConfig.BOSS_SA_EXCLUDED_NAMESPACES.get()),
                 new ArrayList<>(SilentSunConfig.BOSS_SA_EXCLUDED_SA_IDS.get()));
         } catch (Throwable t) {
@@ -606,27 +612,25 @@ public final class IntegrationContract {
     }
 
     /**
-     * SA 随机池 namespace 过滤（2026-09-01，黑名单模式）：默认全放行，仅排除配置列出的
-     * namespace（config redios.bossSaExcludedNamespaces，默认 foxextra/tianshaxing）。
+     * SA 随机池过滤（**白名单模式** + 两层二次排除；2026-09-01 引入黑名单，2026-09-12 用户裁决改为白名单）。
      * <p>
-     * 狐月刀（foxextra）与天杀星刀（tianshaxing）的 SA 有 SE 前提（Boss 刀 miedao_duan 无对应
-     * SE 会放不出/异常）；且 foxextra 的 VoidSlashPlus 时间线（TimeLineTickAction）每帧调
-     * Drive.doSlash + AttackManager.doSlash 生成多条剑气+刀光，Boss 驱动时 combo 卡活跃段
-     * 回不到 NONE → tickAction 每 tick 刷实体 → 刀光洪峰（实测成千/秒）。其余第三方
-     * （amazingshine/shinkubloodkatana 等）无 SE 前提，保留进池，维持全随机。
-     */
-    /**
-     * SA 随机池过滤（黑名单模式；2026-09-01 引入，2026-09-12 扩展为 namespace + SA id 双粒度）。
+     * 放行条件（三者**全部**满足）：
+     * <ol>
+     *   <li>namespace ∈ {@code redios.bossSaWhitelistNamespaces}（默认 7 个已分析过的模组）；</li>
+     *   <li>namespace ∉ {@code redios.bossSaExcludedNamespaces}
+     *       （默认 {@code tianshaxing} 天杀星刀 —— SA 以 SE 为硬性前提，Boss 刀无对应 SE；
+     *        以及 {@code annihilationblade} / {@code annihilationbladeex} 湮灭之刃 —— 清除系作弊 SA）；</li>
+     *   <li>完整 id ∉ {@code redios.bossSaExcludedSaIds}
+     *       （默认 {@code foxextra:thrust} —— 其 combo {@code foxextra:thrust_ex} 的时间线
+     *        {@code put(2, …)} 调 {@code Thrust.doSlash}，源码即 {@code (Player) playerIn} 硬转，
+     *        施放者为 Mob 时必抛 {@code ClassCastException}）。</li>
+     * </ol>
      * <p>
-     * 默认全放行，排除两类，二者**并行**判断：
-     * <ul>
-     *   <li>{@code redios.bossSaExcludedNamespaces} 整包排除（默认 {@code tianshaxing}
-     *       —— 天杀星刀的 SA 以 SE 为硬性前提，Boss 刀无对应 SE，放不出来）；</li>
-     *   <li>{@code redios.bossSaExcludedSaIds} 精确排除单个 SA（默认 {@code foxextra:thrust}
-     *       —— 其 combo {@code foxextra:thrust_ex} 的时间线 {@code put(2, …)} 调
-     *       {@code Thrust.doSlash}，源码即 {@code (Player) playerIn} 硬转，
-     *       施放者为 Mob 时必抛 {@code ClassCastException}）。</li>
-     * </ul>
+     * <b>为什么从黑名单改成白名单</b>：黑名单是「默认信任、事后拉黑」—— 新装模组的 SA 会自动进池，
+     * 要等它出问题才发现（{@code foxextra:thrust} 就是典型：它的 {@code checkcast Player} 只是因为
+     * Mob 上 combo 时间线不跑才暂时没炸，一旦 combo 驱动恢复就是当场崩）。白名单是 fail-safe：
+     * 新模组默认不进池，必须针对性测过才放行。配合 {@code /silent_sun battle_report on} 的战斗报告，
+     * 「针对性测试」有现成手段（看 {@code saCasts} 的 ok / error / note 决定去留）。
      * <p>
      * <b>2026-09-12 归因订正</b>（本条原先把「整包排除 foxextra」的理由写为「其 SA 有 SE 前提 +
      * 时间线每帧多实体 = 刀光洪峰源」，经 <b>foxextra 源码 + javap 字节码双重验证，两条均不成立</b>）：
@@ -640,13 +644,23 @@ public final class IntegrationContract {
      */
     static boolean isSaAllowed(ResourceLocation rl) {
         try {
+            // ① 白名单：不在名单里的 namespace 一律不进池（fail-safe —— 新装模组默认不放行）
+            if (!SilentSunConfig.BOSS_SA_WHITELIST_NAMESPACES.get().contains(rl.getNamespace())) {
+                return false;
+            }
+            // ② 白名单内部的 namespace 二次排除
             if (SilentSunConfig.BOSS_SA_EXCLUDED_NAMESPACES.get().contains(rl.getNamespace())) {
                 return false;
             }
+            // ③ 白名单内部的 SA id 二次排除
             return !SilentSunConfig.BOSS_SA_EXCLUDED_SA_IDS.get().contains(rl.toString());
         } catch (Exception e) {
-            // 配置读取失败兜底：全放行
-            return true;
+            // 2026-09-12（白名单化）：兜底方向**翻转** —— 配置读取失败时**拒绝**放行，而非全放行。
+            // 白名单模式里「放行」才是危险方向：若此处仍 return true，配置一损坏就退化成全放行，
+            // 恰好把白名单要防的事（未测过的第三方 SA 进池）重新引进来。
+            // 补一条 warn：否则「SA 池莫名变空」将无从定位。
+            LOG.warn("[SilentSun] SA 白名单配置读取失败，本次不放行任何 SA：{}", rl, e);
+            return false;
         }
     }
 

@@ -3052,8 +3052,13 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         }
     }
 
-    /** SA 池快照：只在 {@code IntegrationContract.tryInvokeRandomSA} 真正重建池缓存（60s TTL 到期）时抓一次。 */
-    void flowSaPool(List<String> inPool, List<String> excluded,
+    /**
+     * SA 池快照：只在 {@code IntegrationContract.tryInvokeRandomSA} 真正重建池缓存（60s TTL 到期）时抓一次。
+     * <p>
+     * 2026-09-12（白名单化）：新增 {@code whitelistNamespaces} —— 规则改成「白名单 + 两层二次排除」后，
+     * 白名单是主规则，报告必须记它才能回答「池为什么是这些」。
+     */
+    void flowSaPool(List<String> inPool, List<String> excluded, List<String> whitelistNamespaces,
                     List<String> excludedNamespaces, List<String> excludedSaIds) {
         try {
             BattleFlowRecorder rec = this.flowRecorder;
@@ -3061,7 +3066,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
                 return;
             }
             this.syncFlowRecorderStart();
-            rec.saPool(this.gameTimeNow(), inPool, excluded, excludedNamespaces, excludedSaIds);
+            rec.saPool(this.gameTimeNow(), inPool, excluded, whitelistNamespaces, excludedNamespaces, excludedSaIds);
         } catch (Throwable t) {
             SilentSunMod.LOGGER.warn("[SilentSun] 战斗流程报告记录失败（SA 池快照）：{}", t.toString());
         }

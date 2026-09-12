@@ -241,14 +241,69 @@ public final class SilentSunConfig {
     // 「刀光洪峰」的真实驱动源仍未知，已另立运行时排查项，**不要再归因到 foxextra 时间线**。
     // 默认值由 ["foxextra","tianshaxing"] 改为 ["tianshaxing"]：foxextra 改用下面更精确的 SA id 列表，
     // 其 SA 中 void_slash_plus 当前为空放、sakura_endex 是本环境唯一真有输出者，均无 Player/SE 硬前提。
+    /**
+     * Boss 随机施放 SA 的 **namespace 白名单**（2026-09-12 用户裁决：由黑名单改为白名单）。
+     * <p>
+     * 动因：黑名单是「默认信任、事后拉黑」—— 新装模组的 SA 会自动进池，要等出问题才发现
+     * （{@code foxextra:thrust} 就是典型：它挂的 {@code checkcast Player} 仅因 Mob 上 combo 时间线
+     * 不跑才暂时没炸）。白名单是 fail-safe：**新模组默认不进池**，必须针对性测过才放行。
+     * <p>
+     * 放行条件（三重判定，见 {@code IntegrationContract.isSaAllowed}）：
+     * <pre>
+     *   namespace ∈ 本白名单 ∧ namespace ∉ BOSS_SA_EXCLUDED_NAMESPACES ∧ id ∉ BOSS_SA_EXCLUDED_SA_IDS
+     * </pre>
+     * <p>
+     * 默认值 = 本实例实装且已分析过的 7 个 namespace（各模组的 SA 注册表实测得出；SlashBlade 的
+     * SA id 恒为 {@code <modid>:<sa_name>}，所以 namespace 就是 mod id）：
+     * <ul>
+     *   <li>{@code slashblade} —— 重锋本体（judgement_cut / sakura_end / piercing / circle_slash / drive_* / void_slash / wave_edge）；</li>
+     *   <li>{@code slashblade_addon} —— SJAP 日系附属包（fire_spiral / gale_swords / lighting_swords / rapid_blistering_swords / spiral_edge / water_drive）；</li>
+     *   <li>{@code extinction_day_mod_1784441698} —— 灭却之日（Boss 刀本体，含 life_severing_slash 等）；</li>
+     *   <li>{@code foxextra} —— 狐月刀改·重生（其 thrust 已由 SA id 黑名单单独排除）；</li>
+     *   <li>{@code slashbladeamazingshine} —— 荧光惊异（gold_shine）；</li>
+     *   <li>{@code shinkubloodkatana} —— 炼狱真红之刃（heart_slash / heart_slashc）；</li>
+     *   <li>{@code feibiblade} —— 飞比刀（jiubi 等；静态分析未覆盖，按用户裁决先放行，待实机针对性测试）。</li>
+     * </ul>
+     * <b>新模组接入流程</b>：装上后其 namespace 默认不在名单 ⇒ Boss 不会放它的 SA（零风险跑着）；
+     * 想看能不能用，就临时加进本名单 + {@code /silent_sun battle_report on}，打一场后看报告里的
+     * {@code saCasts}（ok / error / note）决定去留。
+     */
+    public static final ModConfigSpec.ConfigValue<List<? extends String>> BOSS_SA_WHITELIST_NAMESPACES = BUILDER
+        .comment("Boss 随机施放 SA 的 **namespace 白名单**：不在名单里的 namespace 一律不进池。",
+            "默认 7 个：slashblade / slashblade_addon / extinction_day_mod_1784441698 / foxextra /",
+            "           slashbladeamazingshine / shinkubloodkatana / feibiblade",
+            "新装模组的 SA 默认**不**进池（fail-safe）；要启用需针对性测试后把其 namespace 加进本列表。",
+            "白名单之下还有两层二次排除：bossSaExcludedNamespaces 与 bossSaExcludedSaIds。",
+            "修改后最迟 60 秒生效。")
+        .defineList("redios.bossSaWhitelistNamespaces",
+            List.of("slashblade", "slashblade_addon", "extinction_day_mod_1784441698",
+                    "foxextra", "slashbladeamazingshine", "shinkubloodkatana", "feibiblade"),
+            o -> o instanceof String);
+
+    /**
+     * 白名单**内部**的 namespace 二次排除（2026-09-12 语义变更：原先它是全局黑名单，现在只在白名单内生效）。
+     * <p>
+     * 默认三项及理由：
+     * <ul>
+     *   <li>{@code tianshaxing} —— 天杀星刀：其 SA 以 **SE 为硬性前提**，Boss 刀无对应 SE，根本放不出来。
+     *       （实际 mod id 为 {@code tianshaxing}，佐证：实例 {@code config/tianshaxing-common.toml} 存在，
+     *       NeoForge 配置文件名规则是 {@code <modid>-<type>.toml}。）</li>
+     *   <li>{@code annihilationblade} —— 湮灭之刃（Arcsea/AnnihilationBlade）：**清除系作弊 SA**，
+     *       其 {@code AbsoluteRemovalService} / {@code NuclearRemovalService} 会强制移除/终止实体。
+     *       作者备注：「放出来出事我管不了」。详见 {@code docs/项目彻查报告-2026-09-10.md} §4.7。</li>
+     *   <li>{@code annihilationbladeex} —— 湮灭之刃 EX（RLlufee）：同上；当前因缺 {@code jupiter} 前置装不上，
+     *       但装上即会向 {@code slashblade:slash_arts} 注册 SA，故预先排除。</li>
+     * </ul>
+     */
     public static final ModConfigSpec.ConfigValue<List<? extends String>> BOSS_SA_EXCLUDED_NAMESPACES = BUILDER
-        .comment("Boss 随机施放 SA 时排除的注册表 namespace 列表（黑名单模式，其余全进池）。",
-            "默认 [tianshaxing]：天杀星刀的 SA 以 SE 为硬性前提，Boss 刀无对应 SE，放不出来。",
-            "注：2026-09-12 起 foxextra 不再整包排除——其 3 个 SA 中只有 thrust 有问题，已由下面的",
-            "redios.bossSaExcludedSaIds 精确排除；同一 namespace 里其余 SA 保留在池中。",
-            "如需排除更多 namespace，把 namespace 加入此列表。修改后最迟 60 秒生效。")
+        .comment("白名单内部的 namespace 二次排除（不在白名单里的 namespace 本来就不进池）。",
+            "默认 [tianshaxing, annihilationblade, annihilationbladeex]：",
+            "  tianshaxing      —— 天杀星刀：SA 以 SE 为硬性前提，Boss 刀无对应 SE，放不出来；",
+            "  annihilationblade / annihilationbladeex —— 湮灭之刃(含EX)：清除系作弊 SA，",
+            "      其 AbsoluteRemovalService / NuclearRemovalService 会强制移除实体（作者备注：放出来出事我管不了）。",
+            "修改后最迟 60 秒生效。")
         .defineList("redios.bossSaExcludedNamespaces",
-            List.of("tianshaxing"),
+            List.of("tianshaxing", "annihilationblade", "annihilationbladeex"),
             o -> o instanceof String);
 
     /**

@@ -86,9 +86,14 @@ public final class BattleFlowRecorder {
     private record SaCastEvent(long t, String saId, int phase, int titleIndex, boolean ok, String error, String note) {
     }
 
-    /** SA 池快照：只在 {@code IntegrationContract.tryInvokeRandomSA} 真正重建池缓存（60s TTL 到期）时抓一次。 */
-    private record SaPoolSnapshot(long t, List<String> inPool, List<String> excluded, List<String> namespaces,
-                                  List<String> saIds) {
+    /**
+     * SA 池快照：只在 {@code IntegrationContract.tryInvokeRandomSA} 真正重建池缓存（60s TTL 到期）时抓一次。
+     * <p>
+     * 2026-09-12（白名单化）：新增 {@code whitelist} —— 池规则由「黑名单」改为「白名单 + 两层二次排除」后，
+     * 白名单是**主规则**；不记它，报告就无法回答「按什么规则排的」（验收第 5 条）。
+     */
+    private record SaPoolSnapshot(long t, List<String> inPool, List<String> excluded, List<String> whitelist,
+                                  List<String> namespaces, List<String> saIds) {
     }
 
     // ── 内存态 ──
@@ -144,11 +149,11 @@ public final class BattleFlowRecorder {
         }
     }
 
-    public void saPool(long nowGameTime, List<String> inPool, List<String> excluded, List<String> namespaces,
-                       List<String> saIds) {
+    public void saPool(long nowGameTime, List<String> inPool, List<String> excluded, List<String> whitelist,
+                       List<String> namespaces, List<String> saIds) {
         try {
             this.saPool = new SaPoolSnapshot(this.rel(nowGameTime), copy(inPool), copy(excluded),
-                copy(namespaces), copy(saIds));
+                copy(whitelist), copy(namespaces), copy(saIds));
         } catch (Throwable t) {
             LOG.warn("[SilentSun] 战斗流程报告：SA 池快照记录失败：{}", t.toString());
         }
@@ -331,6 +336,8 @@ public final class BattleFlowRecorder {
         }
         out.addProperty("capturedAt", ticksToSeconds(snap.t()));
         JsonObject rule = new JsonObject();
+        // 2026-09-12（白名单化）：whitelist 是主规则，必须记 —— 报告靠它回答「池为什么是这些」。
+        rule.add("whitelistNamespaces", toArray(snap.whitelist()));
         rule.add("excludedNamespaces", toArray(snap.namespaces()));
         rule.add("excludedSaIds", toArray(snap.saIds()));
         out.add("rule", rule);
