@@ -796,6 +796,14 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             if (this.titleLockTicks <= 0) {
                 this.onPendingLockExpired();
             }
+            // 2026-09-12（用户反馈「Boss GUI 的计时有时候会停」）：
+            // 本分支原先直接 return，**从不调用 updateBossEvent()** —— 而血条上的金色倒计时
+            // （bossbar.silent_sun.redios.transition_time）读的正是 titleLockTicks，
+            // 于是整个锁血期血条**冻结在进入 PENDING 时的数值**：计数在减、显示不动。
+            // 而锁血期恰恰是唯一需要看这个倒计时的阶段（归零瞬间 = 5s 真输出窗口开启）。
+            // getBossBarName() 只对 isVoteOrTransition() 省略计时，PENDING 不在其中，
+            // 故这里补一次刷新即可让倒计时正常走动。
+            this.updateBossEvent();
             return;
         }
         if (this.weaponWeakpointSlowTicks > 0) {
