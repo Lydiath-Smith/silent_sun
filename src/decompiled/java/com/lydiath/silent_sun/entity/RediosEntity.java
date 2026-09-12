@@ -903,6 +903,18 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
                 this.spawnTransitionImpact(serverLevel);
             }
         } else {
+            // 2026-09-12（作者实测反馈：「Boss 明明不在转场，镜头却一直震」）：
+            // **归零非转场态下的转场计时**。`transitionTicks` 只在上面那个 `PHASE1_TRANSITION` 分支里递减，
+            // 一旦状态先离开了 TRANSITION 而该值仍 > 0（读档恢复出的组合、或某条改状态却没清计时的路径），
+            // 它就**永远不会归零**；而客户端震屏判据只看 `CLIENT_TRANSITION_TICKS > 0`
+            // （见 client/CameraShakeEvents.findTransitioningBoss）⇒ 玩家在 96 格内**持续震动**。
+            // 这与本文件 L896-899 记录的那次「读回 0 → 自减成 -1 → 永久停在转场态」是**同一处的反向残留**，
+            // 一个是"该停没停"、一个是"该走没走"，故在同一层级对称地补上保护。
+            // 同步链：syncClientRenderData() 每 tick 把 transitionTicks 同步给 CLIENT_TRANSITION_TICKS，
+            // 归零后客户端下一帧即停止震屏。
+            if (this.transitionTicks > 0) {
+                this.transitionTicks = 0;
+            }
             this.updateTitle();
             this.weapons.tickStageAbilities(serverLevel);
             this.tickSeaSkyGap(serverLevel);
