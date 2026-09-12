@@ -154,12 +154,14 @@ extends SimpleJsonResourceReloadListener {
             RediosRules.setPushAwayStrength(2.0);
             RediosRules.setPushAwayRange(10.0);
             RediosRules.setRestoredBlocksWhitelist(null);
-            // 2026-09-12（SA 名单热配置化）：**「整份 json 缺失」这一支才给显式默认值**（= SilentSunConfig
-            // 三个静态键的默认值，逐字一致），因为此分支连键存不存在都无从得知；键级缺失不走这里 ——
-            // 那条路径必须传 null，才能保住「未配置 ⇒ 回退静态配置」的三态语义。
-            RediosRules.setBossSaWhitelistNamespaces(RediosRules.DEFAULT_BOSS_SA_WHITELIST_NAMESPACES);
-            RediosRules.setBossSaExcludedNamespaces(RediosRules.DEFAULT_BOSS_SA_EXCLUDED_NAMESPACES);
-            RediosRules.setBossSaExcludedSaIds(RediosRules.DEFAULT_BOSS_SA_EXCLUDED_SA_IDS);
+            // 2026-09-12（SA 名单热配置化）：**传 null ⇒ 交给静态配置回退**，不写死代码默认值。
+            // 理由：本设计里「静态配置是回退层」，整份 json 缺失时更应回退到作者的 toml 自定义值
+            //（toml 是独立文件，不因 json 丢失而失效）。若这里写死 DEFAULT_BOSS_SA_*，
+            // 「作者改过 toml + json 丢失」这个组合会静默丢弃他的配置。
+            // 键级缺失同样传 null —— 两条路径统一为同一语义，三态表随之简化为「非 null 用它，null 回退」。
+            RediosRules.setBossSaWhitelistNamespaces(null);
+            RediosRules.setBossSaExcludedNamespaces(null);
+            RediosRules.setBossSaExcludedSaIds(null);
             RediosRules.setRestoreNbt(true);
             RediosRules.setLatencyThresholdMs(150);
             RediosRules.setLagProtectionEnabled(true);

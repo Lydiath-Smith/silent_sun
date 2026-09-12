@@ -328,6 +328,10 @@ public final class IntegrationContract {
     // 也是作者唯一能发现「namespace 拼错 / 模组没装 / 白名单写空」的地方）。
     private static volatile int cachedSlashArtsRawCount = -1;
     private static volatile List<String> cachedSlashArtsExcludedSample = List.of();
+    // 2026-09-12（SA 名单热配置化）：**池为空告警的节流标记**（池恢复非空时复位）。
+    // 池被滤空是一个**持续状态**，而候选池为空的分支在每次施放尝试时都会走到（约每 80~120 tick），
+    // 不节流会一直刷同一条诊断。体检上「池为什么空」不会每 tick 变化，故只报一次。
+    private static volatile boolean saPoolEmptyWarned;
 
     // ── Public API ──
 
@@ -540,21 +544,29 @@ public final class IntegrationContract {
                 // 「注册表真的空」与「注册表非空但被三份名单滤空」混为一谈 —— 后者才是常见情况，且是
                 // 作者唯一能发现「白名单配错（namespace 拼错 / 模组装错 / 写成 []）」的地方。
                 // 故分成两种措辞：滤空时打出原始条目数、滤后池大小、当前生效的三条规则与被滤掉的 id 采样。
-                if (cachedSlashArtsRawCount > 0) {
-                    LOG.warn("[SilentSun] SA 候选池被名单滤空：slash_arts 注册表共 {} 条，滤后 0 条。"
-                            + "当前生效规则 —— 白名单 namespace={}，排除 namespace={}，排除 SA id={}；"
-                            + "被滤掉的 id 采样（最多 5 个）：{}。"
-                            + "若这不是本意，请检查 silent_sun/redios_rules.json 的 boss_sa_whitelist_namespaces"
-                            + "（写 [] = 显式全禁；namespace 拼错或模组未装都会导致池为空）。",
-                        cachedSlashArtsRawCount, saWhitelistNamespaces(), saExcludedNamespaces(),
-                        saExcludedSaIds(), cachedSlashArtsExcludedSample);
-                } else {
-                    LOG.warn("slash_arts registry is empty, cannot invoke random SA.");
+                // 2026-09-12（节流）：本分支在**每次施放尝试**时都会走到，而池为空是持续状态 ⇒
+                // 用 saPoolEmptyWarned 只报一次；池恢复非空时在下方复位，保证「再次被滤空」仍能告警。
+                if (!saPoolEmptyWarned) {
+                    saPoolEmptyWarned = true;
+                    if (cachedSlashArtsRawCount > 0) {
+                        LOG.warn("[SilentSun] SA 候选池被名单滤空：slash_arts 注册表共 {} 条，滤后 0 条。"
+                                + "当前生效规则 —— 白名单 namespace={}，排除 namespace={}，排除 SA id={}；"
+                                + "被滤掉的 id 采样（最多 5 个）：{}。"
+                                + "若这不是本意，请检查 silent_sun/redios_rules.json 的 boss_sa_whitelist_namespaces"
+                                + "（写 [] = 显式全禁；namespace 拼错或模组未装都会导致池为空）。"
+                                + "本告警每次「滤空 → 恢复」只报一次。",
+                            cachedSlashArtsRawCount, saWhitelistNamespaces(), saExcludedNamespaces(),
+                            saExcludedSaIds(), cachedSlashArtsExcludedSample);
+                    } else {
+                        LOG.warn("slash_arts registry is empty, cannot invoke random SA.");
+                    }
                 }
                 // 2026-09-12（战斗流程报告）：候选池为空 = 一次「未能施放」。
                 reportSaCast(flowBoss, null, false, null, "候选池为空（slash_arts 注册表无可用条目）");
                 return;
             }
+            // 2026-09-12（SA 名单热配置化）：池非空 ⇒ 复位告警标记，使「再次被滤空」能再次告警。
+            saPoolEmptyWarned = false;
             Object key = keyList.get(caster.getRandom().nextInt(keyList.size()));
             // 2026-09-12（战斗流程报告）：选定即记下 id，供后续失败/异常留痕使用。
             flowSaId = String.valueOf(key);

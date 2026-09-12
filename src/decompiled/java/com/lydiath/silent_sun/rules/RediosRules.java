@@ -92,20 +92,20 @@ public final class RediosRules {
 
     // ========== SA 池名单（2026-09-12 热配置化） ==========
     // 2026-09-12（SA 名单热配置化）：三个名单键由 SilentSunConfig（静态、改完需重启）迁到热配置
-    // redios_rules.json（boss_sa_* 三键），改完重载即生效。下面三个默认常量与 SilentSunConfig 的
-    // BOSS_SA_WHITELIST_NAMESPACES / BOSS_SA_EXCLUDED_NAMESPACES / BOSS_SA_EXCLUDED_SA_IDS
-    // 静态默认值**逐字一致**，且**只在「整份 json 缺失」分支使用**（见 RediosRulesReloadListener）。
-    // 包内可见（无 private）：同包 listener 直接引用，避免默认值出现第四份副本。
-    static final List<String> DEFAULT_BOSS_SA_WHITELIST_NAMESPACES = List.of(
-        "slashblade", "slashblade_addon", "extinction_day_mod_1784441698",
-        "foxextra", "slashbladeamazingshine", "shinkubloodkatana", "feibiblade");
-    static final List<String> DEFAULT_BOSS_SA_EXCLUDED_NAMESPACES = List.of(
-        "tianshaxing", "tiansha_extinction", "annihilationblade", "annihilationbladeex");
-    static final List<String> DEFAULT_BOSS_SA_EXCLUDED_SA_IDS = List.of("foxextra:thrust");
+    // redios_rules.json（boss_sa_* 三键），改完重载即生效。
+    //
+    // 【本处原有三个 DEFAULT_BOSS_SA_* 常量，已删除】—— 删除经过与理由：
+    //   初版实现让「整份 json 缺失」分支引用它们写死默认值，于是它们有了唯一引用点；
+    //   但随后确认为更一致的做法是**该分支也传 null、交给静态配置回退**（toml 是独立文件，
+    //   不因 json 丢失而失效；写死默认值会让「作者改过 toml + json 丢失」这个组合静默丢弃他的配置）。
+    //   改成 null 后三个常量即成零引用死代码 —— 默认值本身没有丢失，它们已完整存在于
+    //   SilentSunConfig 的 BOSS_SA_WHITELIST_NAMESPACES / BOSS_SA_EXCLUDED_NAMESPACES /
+    //   BOSS_SA_EXCLUDED_SA_IDS（那才是回退层，也是唯一真源）。
+    //   ⇒ 默认值只有一个来源：静态配置键。热配置只表达「覆盖」或「显式全禁」，不再持有第三份副本。
     // 2026-09-12（SA 名单热配置化）：**三态语义** —— null = 键从未配置（调用方回退 SilentSunConfig 静态键）；
     // 空列表 = 作者显式全禁（白名单全禁 / 排除项为空 = 不排除）；非空 = 生效值。
     // 初值特意为 null：「尚未 reload 过」等价于「未配置」⇒ 走静态回退，与迁移前行为一致；
-    // **不能**用 DEFAULT_* 作初值——否则「写 [] 想禁掉全部 SA」会被默认值悄悄吃掉。
+    // **不能**用任何默认清单作初值——否则「写 [] 想禁掉全部 SA」会被默认值悄悄吃掉。
     private static volatile List<String> bossSaWhitelistNamespaces;
     private static volatile List<String> bossSaExcludedNamespaces;
     private static volatile List<String> bossSaExcludedSaIds;
