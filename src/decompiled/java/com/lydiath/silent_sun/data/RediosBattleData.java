@@ -346,12 +346,15 @@ extends SavedData {
             //    在此之前，这一分支**只看区块加载状态、完全不看玩家距离**，于是：
             //      · 外部性能模组（AllTheLeaks / Adaptive Performance Tweaks 等）强保区块加载时，
             //        区块永不卸载 ⇒ 5s 离场永不触发；
-            //      · 唯一按距离退场的 RediosEntity.tickChunkRetention（>128 格）**依赖实体 tick**，
-            //        实体不 tick 时根本不执行。
+            //      · 唯一按距离退场的 RediosEntity.tickChunkRetention（>HARD_FLEE_RADIUS_BLOCKS = 84 格）
+            //        **依赖实体 tick**，实体不 tick 时根本不执行。
             //    两者叠加 ⇒ 玩家站在几百格外、Boss 已停止 tick 时，战斗可以无限悬挂。
             //    现补一条与实体是否 tick 完全无关的距离判据：活跃参战者**全部**超出
             //    RediosRules.battleRadiusBlocks()（水平 XZ，与通用脱战半径同源）⇒ 判走远离场。
-            //    阈值口径按用户裁决取 battleRadiusBlocks（非 tickChunkRetention 的 128 格），
+            //    阈值口径按用户裁决取 battleRadiusBlocks（非 tickChunkRetention 的 84 格极端逃离档），
+            //    且两者**不冲突**：本分支入口已被上方两重门限排除（实体存在即 continue / 在实体 tick
+            //    距离即 continue），只在实体**不 tick**（getEntity 返回 null）时才走到这里 ——
+            //    即「实体 tick 时归 84 格即时档 / 实体不 tick 时归本 72 格 + 5s 档」，互补而非叠加。
             //    属有意为之：AI 停止时从严，避免战斗悬挂。
             //    安全阀：**必须有活跃参战者**（active > 0）才判离场 —— 崩服/重启后玩家尚未登录时
             //    active == 0，不判，保住 2026-09-10「重启后 Boss 无奖励消失」那次实测修复。

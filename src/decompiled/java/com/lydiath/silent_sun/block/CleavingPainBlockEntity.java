@@ -298,7 +298,11 @@ public class CleavingPainBlockEntity extends BlockEntity {
         // 而材料（水 + 钻石）在序列启动时就已经消耗 → 重启后 10 分钟内（记录最长留 12000 tick）
         // 玩家敲完钟、看完动画，得到的是"材料没了、Boss 没来、也没有任何提示"的静默吞掉。
         // 现在：账本有记录且场上无 Boss（= 远处还有一场没打完）→ 明确提示 + 不消耗材料 + 不启动序列。
-        if (findExistingRedios(serverLevel) == null && RediosBattleData.get(serverLevel).hasAnyRecord()) {
+        // 2026-09-14（体检 P1-1 同源化）：改调 RediosEntity 的**唯一来源**。
+        // ⚠️ 这条预检的判据必须与 P0-2 一致（含 settlementDone）——否则 Boss 正在离场结算时
+        //    会被误判为「场上已有 Boss」⇒ 预检放行、材料照常消耗，而序列结束后的 L333 又判
+        //    「Boss 已存在」⇒ 走追击分支 ⇒ **材料被吞、Boss 没来、零提示**（正是 L296-300 那条裁决要消灭的形态）。
+        if (RediosEntity.findExisting(serverLevel, null) == null && RediosBattleData.get(serverLevel).hasAnyRecord()) {
             player.sendSystemMessage(Component.translatable("message.silent_sun.redios_sigil.battle_pending")
                 .withStyle(ChatFormatting.GOLD));
             return ItemInteractionResult.SUCCESS;
@@ -330,7 +334,7 @@ public class CleavingPainBlockEntity extends BlockEntity {
             return;
         }
         Player player = summoningPlayerUuid != null ? serverLevel.getPlayerByUUID(summoningPlayerUuid) : null;
-        RediosEntity boss = findExistingRedios(serverLevel);
+        RediosEntity boss = RediosEntity.findExisting(serverLevel, null);
         boolean newlySummoned = false;
         if (boss == null) {
             // M21：账本有记录 → Boss 存在但区块未加载，阻止重复召唤
@@ -357,7 +361,9 @@ public class CleavingPainBlockEntity extends BlockEntity {
         }
         // 2026-09-08 用户裁决：召唤完 Boss 不传送玩家；仅「追击」（Boss 已存在）时传送
         if (boss != null && player != null && !newlySummoned) {
-            teleportPlayerNearBoss(player, serverLevel, boss);
+            // 2026-09-14（体检 P1-1 同源化）：改调唯一来源；**目标维度取 Boss 所在维度**
+            //（原实现传祭坛所在维度，而 Boss 是跨维度查得的 ⇒ 跨维度追击会传到错误位置）。
+            RediosEntity.teleportPlayerNearBoss(player, boss);
         }
         summoningPlayerUuid = null;
     }
@@ -372,43 +378,4 @@ public class CleavingPainBlockEntity extends BlockEntity {
         }
     }
 
-    // TODO(审计清理 G10 #8)：本方法 findExistingRedios 与 item/RediosSigilItem.java 同名方法各实现一遍 —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
-    /** 全维度查找存活且未移除的 RediosEntity。 */
-    private static RediosEntity findExistingRedios(ServerLevel serverLevel) {
-        MinecraftServer server = serverLevel.getServer();
-        if (server == null) {
-            return null;
-        }
-        for (ServerLevel lvl : server.getAllLevels()) {
-            for (Entity e : lvl.getEntities().getAll()) {
-                if (e instanceof RediosEntity redios && redios.isAlive() && !redios.isRemoved()) {
-                    return redios;
-                }
-            }
-        }
-        return null;
-    }
-
-    // TODO(审计清理 G10 #8)：本方法 teleportPlayerNearBoss 与 item/RediosSigilItem.java 同名方法各实现一遍 —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
-    /** 把玩家传送到 Boss 附近（距离 3~5 格的随机方位），用于追击。 */
-    private static void teleportPlayerNearBoss(Player player, ServerLevel bossLevel, RediosEntity boss) {
-        // M22：随机尝试多个方位找安全落点（脚下有方块、身位是空气），找不到才退回 Boss 高度
-        for (int i = 0; i < 12; i++) {
-            double angle = bossLevel.getRandom().nextDouble() * Math.PI * 2.0;
-            double dist = 3.0 + bossLevel.getRandom().nextDouble() * 2.0;
-            double x = boss.getX() + Math.cos(angle) * dist;
-            double z = boss.getZ() + Math.sin(angle) * dist;
-            double y = boss.getY() + 0.5;
-            BlockPos feet = BlockPos.containing(x, y, z);
-            if (bossLevel.getBlockState(feet).isAir()
-                && bossLevel.getBlockState(feet.above()).isAir()
-                && !bossLevel.getBlockState(feet.below()).isAir()) {
-                player.teleportTo(bossLevel, x, y, z, Set.of(), player.getYRot(), player.getXRot());
-                return;
-            }
-        }
-        double angle = bossLevel.getRandom().nextDouble() * Math.PI * 2.0;
-        double dist = 3.0 + bossLevel.getRandom().nextDouble() * 2.0;
-        player.teleportTo(bossLevel, boss.getX() + Math.cos(angle) * dist, boss.getY() + 0.5, boss.getZ() + Math.sin(angle) * dist, Set.of(), player.getYRot(), player.getXRot());
-    }
 }

@@ -53,25 +53,40 @@ public final class RediosRules {
 
     // ========== 投票系统 ==========
     private static volatile boolean phase2VoteRequired = true;
-    private static volatile int voteTimeoutSeconds = 30;
-    private static volatile boolean voteTieAsYes = false;
+    // 2026-09-18：voteTimeoutSeconds / voteTieAsYes 两字段删除——行为早已硬编码
+    // （投票时长固定 600t、平局按否决，见 RediosEntity 的投票流程），配置键零消费。
     private static volatile List<String> phase2VoteYesTokens = List.of("yes", "y", "1", "继续", "是");
     private static volatile List<String> phase2VoteNoTokens = List.of("no", "n", "2", "下次", "否");
 
     // ========== 自适应格挡 ==========
-    // TODO(审计清理 G02 #3)：本套默认值在字段初值 / setter null 回退 / reload 重置块三处各写一遍 —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
+    // 2026-09-14（体检 P1-2 核实，**结论更正**）：本套默认值确实在「字段初值 / setter 回退 / reload 缺失块」
+    // 三处各写一遍（实测 70 / 19 / 62 项），但**对账结果为 0 漂移** —— 即"漂移风险"当前不成立
+    //（历史漂移过一次，证据是 RediosRulesReloadListener 的「N3」注释，已修）。
+    // ⇒ 作者裁决**不做** 230 处常量抽取（纯机械改动，收益只是"防未来漂移"），改为**机械化对账**兜底：
+    //     powershell -ExecutionPolicy Bypass -File _规则\rules_defaults_check.ps1
+    //   改配置键后跑一次，三处不一致即报（退出码 1）。详见 docs\实现计划-P1-2默认值同源-2026-09-14.md
+    // 原 TODO(审计清理 G02 #3) 已由本次核实闭环 —— **不要再重做一遍核实**，直接跑上面这条命令。
     private static volatile int adaptiveBlockTriggerHitsPerSecond = 6;
     private static volatile int adaptiveBlockDurationTicks = 20;
-    /** 2026-09-10（用户裁决）：「格挡就全免」——该键**已不再被 DamagePipeline 消费**，
-     *  保留只是让旧配置文件仍能读入而不报错（1.0 = 旧语义下的"全额免除"）。 */
-    private static volatile double adaptiveBlockDamageReduction = 1.0;
+    // 2026-09-18：adaptiveBlockDamageReduction 字段删除——2026-09-10 裁决「格挡就全免」后
+    // 该键再无消费者（DamagePipeline.stageAdaptiveGuardBlock 直接 cancel），旧配置兼容读取也一并移除。
     private static volatile int adaptiveBlockCooldownTicks = 40;
 
     // ========== 战斗区域 ==========
     /** 通用脱战半径（格）：超出后开始计时，持续 {@link #battleExpelTimeoutSeconds} 未返回即判定脱战。
      *  2026-09-10（用户裁决）：默认 32 → **72**，以作者攻略「玩家以脱战方式离场，判定 72 格」为准。
-     *  注意与 2.9 的即时逐出半径 {@code RediosEntity.VOID_BATTLE_RANGE_BLOCKS}（64，无宽限）是两个口径：
-     *  2.9 期间更严，超出 64 格立即逐出；本值是通用口徑（带 60 秒宽限）。 */
+     *  <p>2026-09-12（用户裁决「**以不误踢为主**」）：**取消 2.9 的专属即时逐出档**
+     *  （原 {@code RediosEntity.VOID_BATTLE_RANGE_BLOCKS} = 64，超出即逐出、无宽限）——
+     *  它是 {@code tickBattleAreaCheck} 的重复实现，而后者在 {@code tick()} 里无条件执行、本已覆盖 2.9；
+     *  该档的存在前提（用 Boss 实时坐标判定 ⇒ 因传送误判 ⇒ 需更近半径补偿）在原点改为战斗锚点后消失。
+     *  取消依据还包括原始设计（也许.txt §5 对 2.10）原文「脱战判定**同第三章 3.6**」。
+     *  <p>现行**两档**（刻意不同值 —— 同值会让即时档抢先执行、把本档宽限变成死代码）：
+     *   · 本值（默认 72）+ {@link #battleExpelTimeoutSeconds} 宽限：**所有阶段含 2.9**
+     *     （tickBattleAreaCheck 单人逐出 / checkAllParticipantsDisengaged 全员脱战）；
+     *   · {@code RediosEntity.HARD_FLEE_RADIUS_BLOCKS}（84）：极端逃离，超出即无奖励退场、无宽限
+     *     （tickChunkRetention / tickAntiExile）。
+     *  <p>2026-09-12 教训：把 84 那条即时档误并到本值（72）后，即时退场因先执行而抢先，本值的
+     *  60 秒宽限、tickBattleAreaCheck 的逐出超时、VOTE 期 600 tick 投票倒计时全部沦为死代码。 */
     private static volatile int battleRadiusBlocks = 72;
     private static volatile int battleExpelTimeoutSeconds = 60;
 
@@ -122,10 +137,8 @@ public final class RediosRules {
     //（及 getter/setter、json 键 redios_defeat_book_title / redios_victory_book_title）——
     // 它们唯一的读取点是 RediosEntity 的两个无调用者方法 createDefeatBookAndQuill / createVictoryBook，
     // 两者已删除；成品书标题改用常量 OUTCOME_BOOK_TITLE。依据：docs\_审计-2026-09-11\G17.md §5。
-    private static volatile String rediosNotePhase1WinPhase2Lose = "干的很好了，想与整个世界为敌，光是让世界看你是不行的。\n\n[战斗记录]\n维度: {dimension}\n坐标: {x} {y} {z}\n参战者: {participants}\n用时: {duration_seconds}s";
-    private static volatile ResourceLocation rediosOutcomeTextPhase1WinOnlyFile = ResourceLocation.fromNamespaceAndPath("silent_sun", "books/redios/outcome_phase1_win_only.txt");
-    private static volatile ResourceLocation rediosOutcomeTextPhase1WinPhase2LoseFile = ResourceLocation.fromNamespaceAndPath("silent_sun", "books/redios/outcome_phase1_win_phase2_lose.txt");
-    private static volatile ResourceLocation rediosOutcomeTextPhase2WinFile = ResourceLocation.fromNamespaceAndPath("silent_sun", "books/redios/outcome_phase2_win.txt");
+    // 2026-09-18（多语言接线）：原 rediosNotePhase1WinPhase2Lose / 三个 rediosOutcomeText*File
+    // 字段已删除——结局书正文改走 lang 键（book.silent_sun.*）随客户端语言解析，不再读数据包 txt。
 
     // ========== 战斗音乐 ==========
     private static volatile boolean rediosBattleMusicEnabled = true;
@@ -149,6 +162,24 @@ public final class RediosRules {
     private static volatile double weaponWeakpointDamageMultiplier = 1.5;
     // 振刀弱点窗口期间的护甲穿透比例（0~1）：1.0 表示完全无视 Boss 护甲。
     private static volatile double weaponWeakpointArmorPierce = 0.5;
+
+    // ========== 真伤光环参数（2026-09-14 · 步骤 3 配置化） ==========
+    // 两个真伤光环原先 10 个数值全部**硬编码**在 RediosEntity 的 tickSorrowToilAura / tickChaosRuinAura
+    // 内部（伤害、伤害判定半径、伤害间隔、粒子环半径、粒子间隔），现抽为热配置键。
+    // 默认值与原硬编码**逐位相同** ⇒ 不改配置时行为零变化。
+    // ⚠️ 粒子参数（particle_*）是**纯视觉**，与伤害参数同组仅为便于集中维护。
+    // 悲愿辛劳光环（RediosEntity.tickSorrowToilAura）
+    private static volatile double sorrowToilAuraDamage = 1.0;
+    private static volatile double sorrowToilAuraRadius = 5.0;
+    private static volatile int sorrowToilAuraIntervalTicks = 4;
+    private static volatile double sorrowToilAuraParticleRadius = 5.0;
+    private static volatile int sorrowToilAuraParticleIntervalTicks = 2;
+    // 混沌废墟光环（RediosEntity.tickChaosRuinAura）
+    private static volatile double chaosRuinAuraDamage = 3.0;
+    private static volatile double chaosRuinAuraRadius = 5.0;
+    private static volatile int chaosRuinAuraIntervalTicks = 20;
+    private static volatile double chaosRuinAuraParticleRadius = 5.0;
+    private static volatile int chaosRuinAuraParticleIntervalTicks = 5;
 
     // ================================================================
     // Twilight Moment
@@ -242,10 +273,6 @@ public final class RediosRules {
     // ================================================================
     public static boolean phase2VoteRequired() { return phase2VoteRequired; }
     public static void setPhase2VoteRequired(boolean v) { phase2VoteRequired = v; }
-    public static int voteTimeoutSeconds() { return voteTimeoutSeconds; }
-    public static void setVoteTimeoutSeconds(int v) { voteTimeoutSeconds = Math.max(1, v); }
-    public static boolean voteTieAsYes() { return voteTieAsYes; }
-    public static void setVoteTieAsYes(boolean v) { voteTieAsYes = v; }
     public static List<String> phase2VoteYesTokens() { return phase2VoteYesTokens; }
     public static void setPhase2VoteYesTokens(List<String> tokens) {
         // N3: null 回退值与静态默认保持一致（多语言 token 不丢失）
@@ -266,8 +293,6 @@ public final class RediosRules {
     public static void setAdaptiveBlockTriggerHitsPerSecond(int v) { adaptiveBlockTriggerHitsPerSecond = Math.max(0, v); }
     public static int adaptiveBlockDurationTicks() { return adaptiveBlockDurationTicks; }
     public static void setAdaptiveBlockDurationTicks(int v) { adaptiveBlockDurationTicks = Math.max(0, v); }
-    public static double adaptiveBlockDamageReduction() { return adaptiveBlockDamageReduction; }
-    public static void setAdaptiveBlockDamageReduction(double v) { adaptiveBlockDamageReduction = Double.isFinite(v) ? Math.max(0.0, Math.min(1.0, v)) : 1.0; }
     public static int adaptiveBlockCooldownTicks() { return adaptiveBlockCooldownTicks; }
     public static void setAdaptiveBlockCooldownTicks(int v) { adaptiveBlockCooldownTicks = Math.max(0, v); }
 
@@ -338,19 +363,6 @@ public final class RediosRules {
     public static void setRediosBookAuthor(String v) { rediosBookAuthor = v == null || v.isBlank() ? "Redios" : v.strip(); }
     // 2026-09-12（审计清理 G17 #5）：原 rediosDefeatBookTitle() / setRediosDefeatBookTitle() /
     // rediosVictoryBookTitle() / setRediosVictoryBookTitle() 四个访问器已删除（零消费者，见上方字段处说明）。
-    public static String rediosNotePhase1WinPhase2Lose() { return rediosNotePhase1WinPhase2Lose; }
-    public static void setRediosNotePhase1WinPhase2Lose(String v) {
-        // N3: null 回退值与静态默认保持一致（完整版含战斗记录占位符）
-        rediosNotePhase1WinPhase2Lose = v == null || v.isBlank()
-            ? "干的很好了，想与整个世界为敌，光是让世界看你是不行的。\n\n[战斗记录]\n维度: {dimension}\n坐标: {x} {y} {z}\n参战者: {participants}\n用时: {duration_seconds}s"
-            : v;
-    }
-    public static ResourceLocation rediosOutcomeTextPhase1WinOnlyFile() { return rediosOutcomeTextPhase1WinOnlyFile; }
-    public static void setRediosOutcomeTextPhase1WinOnlyFile(ResourceLocation id) { rediosOutcomeTextPhase1WinOnlyFile = id == null ? ResourceLocation.fromNamespaceAndPath("silent_sun", "books/redios/outcome_phase1_win_only.txt") : id; }
-    public static ResourceLocation rediosOutcomeTextPhase1WinPhase2LoseFile() { return rediosOutcomeTextPhase1WinPhase2LoseFile; }
-    public static void setRediosOutcomeTextPhase1WinPhase2LoseFile(ResourceLocation id) { rediosOutcomeTextPhase1WinPhase2LoseFile = id == null ? ResourceLocation.fromNamespaceAndPath("silent_sun", "books/redios/outcome_phase1_win_phase2_lose.txt") : id; }
-    public static ResourceLocation rediosOutcomeTextPhase2WinFile() { return rediosOutcomeTextPhase2WinFile; }
-    public static void setRediosOutcomeTextPhase2WinFile(ResourceLocation id) { rediosOutcomeTextPhase2WinFile = id == null ? ResourceLocation.fromNamespaceAndPath("silent_sun", "books/redios/outcome_phase2_win.txt") : id; }
 
     // ================================================================
     // Battle Music
@@ -385,6 +397,33 @@ public final class RediosRules {
     public static void setWeaponWeakpointDamageMultiplier(double v) { weaponWeakpointDamageMultiplier = Double.isFinite(v) ? Math.max(1.0, Math.min(10.0, v)) : 1.5; }
     public static double weaponWeakpointArmorPierce() { return weaponWeakpointArmorPierce; }
     public static void setWeaponWeakpointArmorPierce(double v) { weaponWeakpointArmorPierce = Double.isFinite(v) ? Math.max(0.0, Math.min(1.0, v)) : 0.5; }
+
+    // ================================================================
+    // 真伤光环参数（2026-09-14 · 步骤 3 配置化）
+    // ================================================================
+    // ⚠️ 回退默认值与字段初值**各写一遍** —— 这是本项目既定模式（见 P1-2 结论：保持现状 + 脚本对账）。
+    //    改动后请跑 `_规则\rules_defaults_check.ps1`，**不要手工逐项核对**。
+    // ⚠️ 间隔类一律 `Math.max(1, v)`：它们在 `tickCount % N` 里当除数，N=0 会抛除零。
+    public static double sorrowToilAuraDamage() { return sorrowToilAuraDamage; }
+    public static void setSorrowToilAuraDamage(double v) { sorrowToilAuraDamage = Double.isFinite(v) ? Math.max(0.0, v) : 1.0; }
+    public static double sorrowToilAuraRadius() { return sorrowToilAuraRadius; }
+    public static void setSorrowToilAuraRadius(double v) { sorrowToilAuraRadius = Double.isFinite(v) ? Math.max(0.0, v) : 5.0; }
+    public static int sorrowToilAuraIntervalTicks() { return sorrowToilAuraIntervalTicks; }
+    public static void setSorrowToilAuraIntervalTicks(int v) { sorrowToilAuraIntervalTicks = Math.max(1, v); }
+    public static double sorrowToilAuraParticleRadius() { return sorrowToilAuraParticleRadius; }
+    public static void setSorrowToilAuraParticleRadius(double v) { sorrowToilAuraParticleRadius = Double.isFinite(v) ? Math.max(0.0, v) : 5.0; }
+    public static int sorrowToilAuraParticleIntervalTicks() { return sorrowToilAuraParticleIntervalTicks; }
+    public static void setSorrowToilAuraParticleIntervalTicks(int v) { sorrowToilAuraParticleIntervalTicks = Math.max(1, v); }
+    public static double chaosRuinAuraDamage() { return chaosRuinAuraDamage; }
+    public static void setChaosRuinAuraDamage(double v) { chaosRuinAuraDamage = Double.isFinite(v) ? Math.max(0.0, v) : 3.0; }
+    public static double chaosRuinAuraRadius() { return chaosRuinAuraRadius; }
+    public static void setChaosRuinAuraRadius(double v) { chaosRuinAuraRadius = Double.isFinite(v) ? Math.max(0.0, v) : 5.0; }
+    public static int chaosRuinAuraIntervalTicks() { return chaosRuinAuraIntervalTicks; }
+    public static void setChaosRuinAuraIntervalTicks(int v) { chaosRuinAuraIntervalTicks = Math.max(1, v); }
+    public static double chaosRuinAuraParticleRadius() { return chaosRuinAuraParticleRadius; }
+    public static void setChaosRuinAuraParticleRadius(double v) { chaosRuinAuraParticleRadius = Double.isFinite(v) ? Math.max(0.0, v) : 5.0; }
+    public static int chaosRuinAuraParticleIntervalTicks() { return chaosRuinAuraParticleIntervalTicks; }
+    public static void setChaosRuinAuraParticleIntervalTicks(int v) { chaosRuinAuraParticleIntervalTicks = Math.max(1, v); }
 
     private RediosRules() {}
 

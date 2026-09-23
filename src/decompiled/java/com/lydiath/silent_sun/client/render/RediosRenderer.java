@@ -39,10 +39,12 @@ extends HumanoidMobRenderer<RediosEntity, HumanoidModel<RediosEntity>> {
     private static final Map<UUID, Integer> LAST_TRANSITION_IMPACT_TICK = new HashMap<UUID, Integer>();
 
     public RediosRenderer(EntityRendererProvider.Context context) {
-        super(context, new HumanoidModel(context.bakeLayer(ModelLayers.PLAYER)), 0.65f);
+        super(context, new HumanoidModel<>(context.bakeLayer(ModelLayers.PLAYER)), 0.65f);
         // 手持物品渲染层：HumanoidMobRenderer 不会自动添加，
         // 缺此层时 Boss 主手武器（三叉戟替换模型 / 拔刀剑命名刀）不会渲染
         this.addLayer(new ItemInHandLayer<>(this, context.getItemInHandRenderer()));
+        // 添加我们的自定义披风外观层
+        this.addLayer(new RediosApparelLayer(this));
         tryAttachMainBladeLayer();
     }
 

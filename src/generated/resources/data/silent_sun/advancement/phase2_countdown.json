@@ -1,20 +1,27 @@
 {
-  "display": {
-    "title": {
-      "translate": "advancement.silent_sun.phase2_countdown.title"
-    },
-    "description": {
-      "translate": "advancement.silent_sun.phase2_countdown.desc"
-    },
-    "icon": {
-      "id": "minecraft:clock"
-    },
-    "frame": "goal"
-  },
-  "parent": "silent_sun:root",
+  "parent": "extinction_day_mod_1784441698:miedao_duan",
   "criteria": {
     "trigger": {
       "trigger": "minecraft:impossible"
     }
-  }
+  },
+  "display": {
+    "description": {
+      "translate": "advancement.silent_sun.phase2_countdown.desc"
+    },
+    "frame": "goal",
+    "icon": {
+      "count": 1,
+      "id": "minecraft:clock"
+    },
+    "title": {
+      "translate": "advancement.silent_sun.phase2_countdown.title"
+    }
+  },
+  "requirements": [
+    [
+      "trigger"
+    ]
+  ],
+  "sends_telemetry_event": true
 }

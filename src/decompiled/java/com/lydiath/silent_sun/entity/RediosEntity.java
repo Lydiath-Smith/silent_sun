@@ -35,7 +35,6 @@ import com.lydiath.silent_sun.rules.RediosRules;
 import com.lydiath.silent_sun.security.RuntimeInjectionGuard;
 import com.lydiath.silent_sun.util.AbsoluteDamageUtil;
 import com.lydiath.silent_sun.util.IAbsoluteDamageImmune;
-import com.lydiath.silent_sun.util.BookTextCache;
 import com.lydiath.silent_sun.util.ShulkerBoxUtil;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
@@ -164,17 +163,41 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     // 2026-09-11（代码审计 G13 #7 修复）：原 EXPEL_REPEL_RADIUS / EXPEL_REPEL_RADIUS_SQR /
     // INITIAL_PARTICIPANT_CAPTURE_TICKS / DARK_STAR_RADIUS 四个常量全库**零消费**
     //（消费点写的是同义字面量；且排斥半径口径现由 RediosRules.pushAwayRange() 承载）—— 已删除。
+    // 2026-09-20（多语言接线·收尾）：结局书的**显示名**改走语言文件（ITEM_NAME + lang 键），
+    // 下面两个标题常量降级为「**存档身份标识 + 兼容识别**」，不再充当显示文本：
+    //   · 原版 WrittenBookContent 的 title 类型是 Filterable<String>（纯字符串、不吃语言文件），
+    //     故显示名只能由 ItemStack 的 ITEM_NAME 组件承载（见 applyOutcomeBookContent）。
+    //   · 识别「这是本模组的结局书」一律读**存储内的 title**（语言无关）；旧存档里已有的书
+    //     存的正是这两个字面量 ⇒ 常量必须保留，**勿当死代码删除**。
+    private static final String OUTCOME_BOOK_NAME_KEY = "book.silent_sun.redios.outcome_title";
     private static final String OUTCOME_BOOK_TITLE = "\u7559\u8a00\u4e00\u5219";
     private static final String OUTCOME_BOOK_LEGACY_TITLE = "\u6210\u4e66";
     private static final String DROP_LIST_BOOK_TITLE = "\u5217\u8868";
     private static final String DROP_STATS_BOOK_TITLE = "\u7edf\u8ba1\u7269\u54c1";
     // 战斗区域统一 64 格（2026-09-08 用户裁决：整合包优化状况下够大）
-    // 2.9「空无万象」专属的**即时逐出**半径（无 60 秒宽限，见 checkVoidBattleRange，只被 tickVoidAllThings 调用）。
-    // 与通用脱战口径的关系（2026-09-10 明确，见 RediosRules.battleRadiusBlocks 注释）：
-    //   · 通用脱战 = RediosRules.battleRadiusBlocks（默认 72）+ 60 秒宽限（tickBattleAreaCheck）；
-    //   · 2.9 专属 = 本常量 64，超出即逐出、不给宽限 → 2.9 期间更严，两者刻意不同值。
-    private static final int VOID_BATTLE_RANGE_BLOCKS = 64;
-    private static final int VOID_BATTLE_RANGE_BLOCKS_SQR = 4096;
+    // ────────────────────────────────────────────────────────────────────────────
+    // 2026-09-12（用户裁决「**以不误踢为主**」）：**取消 2.9「空无万象」的专属即时逐出档**。
+    //   原第三档（`VOID_BATTLE_RANGE_BLOCKS = 64`、超出即逐出、无宽限）连同两个常量已删除 ——
+    //   它是 `tickBattleAreaCheck`（72 格 + 逐出超时、单人出圈逐出）的**重复实现**，
+    //   而后者在 `tick()` 里**无条件执行**，本来就已覆盖 2.9 阶段。
+    //   取消依据：
+    //     ① 原始设计（也许.txt §5 对 2.10）原文即「**脱战判定同第三章 3.6**」⇒ 取消是**回归设计**；
+    //     ② 该档的存在前提是「用 Boss 实时坐标判定 ⇒ 因 2.9 传送而误判 ⇒ 只能用更近半径 + 即时补偿」——
+    //        原点改为战斗锚点后该前提消失；
+    //     ③ 实测事故：玩家站在原处被判超距并即时逐出（收到「回去休息吧」）。
+    // ────────────────────────────────────────────────────────────────────────────
+    // 现行**两档**口径（刻意不同值 —— 同值会让即时档抢先执行，把带宽限那档变成死代码，
+    // 2026-09-12 已实测踩过）：
+    //   · 通用脱战 = RediosRules.battleRadiusBlocks（默认 72）+ 逐出超时 / 60 秒宽限
+    //     （tickBattleAreaCheck 单人逐出 / checkAllParticipantsDisengaged 全员脱战）—— **含 2.9**；
+    //   · 极端逃离 = HARD_FLEE_RADIUS_BLOCKS 84，即时退场无宽限（tickChunkRetention / tickAntiExile）。
+    // 2026-09-12（用户裁决）：tickChunkRetention 的**极端逃离**即时退场半径（保持无时间宽限）。
+    // 与 battleRadiusBlocks（默认 72，配 60 秒宽限 / 逐出超时）是**两个不同判据**，刻意不同值 ——
+    //   同值时本条即时退场会抢先执行（tick() 顶层 L769，早于所有 checkXxx，且退场即 safeDiscard
+    //   并在 L770 立即 return），使 72 格那一档的宽限机制（tickBattleAreaCheck 逐出超时 /
+    //   checkAllParticipantsDisengaged 60 秒宽限 / VOTE 期 600 tick 投票倒计时）全部沦为死代码。
+    // 取 84：≤72 正常战斗，72~84 交给宽限机制，>84 才即时逃离退场。
+    private static final int HARD_FLEE_RADIUS_BLOCKS = 84;
     /** Boss 数据版本：NBT 结构变更时 +1，用于 EntityJoinLevelEvent 剔除旧版本残留 Boss。 */
     private static final int BOSS_DATA_VERSION = 1;
     // ────────────────────────────────────────────────────────────────────────────
@@ -188,11 +211,14 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     //   FAILSAFE_HIGH_MEMORY_RATIO      → `ratio >= FAILSAFE_HIGH_MEMORY_RATIO`
     //   FAILSAFE_HIGH_MEMORY_TICKS      → `highMemoryTicks >= …` / `highMemoryTicks < …`
     //   FAILSAFE_DISCARD_DELAY_TICKS    → 触发清场的那一处 `this.failsafeCountdownTicks = FAILSAFE_DISCARD_DELAY_TICKS`
+    // 2026-09-12（修复交接单 §6「孤立严重卡顿对 failsafe 无反应」）：本组新增第 6 项
+    //   FAILSAFE_TICK_SPIKE_DECAY_TICKS → `tickSpikeDecayCooldown >= …`（尖峰计数的衰减间隔）
     private static final long FAILSAFE_TICK_SPIKE_NANOS = 2000000000L;
     private static final int FAILSAFE_TICK_SPIKES_TO_TRIGGER = 2;
     private static final double FAILSAFE_HIGH_MEMORY_RATIO = 0.95;
     private static final int FAILSAFE_HIGH_MEMORY_TICKS = 40;
     private static final int FAILSAFE_DISCARD_DELAY_TICKS = 100;
+    private static final int FAILSAFE_TICK_SPIKE_DECAY_TICKS = 20;
     //
     // 【G13 #6 战斗数值常量群：11 项 = 10 项本类内消费 + 1 项 AntiCheatLayer 跨类消费】
     //   RIDE_PUNISH_COOLDOWN_TICKS       → AntiCheatLayer.tickRidePunish 的 `this.ridePunishCooldownTicks = …`
@@ -261,6 +287,18 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     private static final EntityDataAccessor<Integer> CLIENT_TWILIGHT_ACTIVE = SynchedEntityData.defineId(RediosEntity.class, EntityDataSerializers.INT);
     private static final EntityDataAccessor<Integer> CLIENT_INTRO_ACTIVE = SynchedEntityData.defineId(RediosEntity.class, EntityDataSerializers.INT);
     private static final EntityDataAccessor<Integer> CLIENT_SUMMON_INTRO_TICKS = SynchedEntityData.defineId(RediosEntity.class, EntityDataSerializers.INT);
+    /**
+     * 断魂值（{@code SOUL_SEVER_BASE_X + soulSeverY}）的**客户端镜像** —— 2026-09-14 恢复。
+     * <p>⚠️ 本同步位曾于 2026-09-11「审计清理 G13 #8」连同 getter 一并**删除**（当时理由：
+     * 全库零读取方、每 tick 白付同步开销）。**现在它有读取方了**：客户端渲染器
+     * {@code PortalBladeCondition.isActive} 要判断「断魂值是否达标」以决定是否叠加传送门刀身残影，
+     * 而 {@code soulSeverY} 是服务端内存字段（仅 NBT / 账本落盘），**从不同步** ⇒ 客户端读不到。
+     * <p>⇒ 教训与台账 §四「为整洁删看似冗余的实现」同类：**「零引用」可能是「尚未接线」**，
+     * 删除前应先确认它是否为某个未完成功能预留。
+     * <p>类型用 {@code INT}：断魂值量级 10³~10⁴（残影阈值 3000 / 警告阈值 5000），int 足够；
+     * 写入处对 {@code Integer.MAX_VALUE} 截断（{@code long} 精度由服务端保留）。
+     */
+    private static final EntityDataAccessor<Integer> CLIENT_SOUL_SEVER_Y = SynchedEntityData.defineId(RediosEntity.class, EntityDataSerializers.INT);
     private static final int INTRO_TOTAL_TICKS = 80;
     private static final int INTRO_STAR_COUNT = 6;
     private static final RawAnimation TRANSITION_ANIM = RawAnimation.begin().thenPlay("transition");
@@ -392,6 +430,8 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     private boolean allowSelfTeleport = false;
     private long lastServerTickNanos = -1L;
     private int tickSpikeCount = 0;
+    /** 尖峰计数的衰减节流计时（2026-09-12 修复：原实现「一好一坏即时抵消」，见 tickFailsafe 注释）。 */
+    private int tickSpikeDecayCooldown = 0;
     private int highMemoryTicks = 0;
     private boolean failsafeActive = false;
     private int failsafeCountdownTicks = 0;
@@ -502,8 +542,10 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     private int summonIntroTicks = 0;
     /** 召唤演出已释放散射爆闪标记（防收缩帧多 tick 重复触发）。 */
     private boolean summonScatterFired = false;
-    /** 重建自战斗账本记录的标记：仅作语义区分，不影响结算 CD（照常设 CD）。 */
-    private boolean rebuiltAsSettled = false;
+    // 2026-09-13（N2 方案 b）：原 `private boolean rebuiltAsSettled` 已删除 —— 它与
+    // `leaveReason = LeaveReason.ANOMALY` 是同一类问题：**布尔字段的唯一用途是给日志加一个词**。
+    // 现统一为 `BattleFlowRecorder.isRebuiltFromRecord()`，随战斗记录 session.rebuiltFromRecord
+    // 落盘 ⇒ 既可检索（原先查不到"这场发生过重建"），又不再占实体字段。
     /** 2026-09-10（用户裁决 D5）：强制本次结算发放「一阶段奖励」。
      *  用于 2.5 断光之刻全体被传送导致战斗终止的场景——设计 §2.5 要求发一阶段奖励，
      *  而该路径处于 phase==2，settleBattle 默认会走 dropPhase2Reward。 */
@@ -515,6 +557,17 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
      *  进入二阶段时复位（二阶段断魂由 2.0「海天之隙」独立授予）。 */
     private boolean soulSeverRetiredInPhase1 = false;
     private LeaveReason leaveReason = LeaveReason.NONE;
+    // 2026-09-13（段底守卫日志限频）：灭却之日断魂靠 `LAST_SETTLE_TICK` 做**每 tick 一次**结算，
+    // 且它按「实际掉血」算差额（已核其源码 SoulSeverMobEffect:520-536）⇒ 我们钳回段底会让它的
+    // `deficit` 被**放大同样的量**（dealt 变小 ⇒ amount-dealt 变大）⇒ 断魂激活期间**每个 tick**
+    // 都会调一次 die()。若不加限频，本守卫会每 tick 打一行 warn（20 行/秒）。
+    // 改为「首次必记 + 其后每 200 次记一次」：既不漏首次发生，也不刷屏。
+    // 仅用于日志限频，不落盘、不参与任何判定（不影响力/无掉落等其他逻辑）。
+    private int segmentFloorGuardCount = 0;
+    // 2026-09-13（段底每 tick 保底留痕）：仅统计「非冻结态下血量被第三方绕过 setHealth 直写到段底以下」
+    // 的次数。冻结态那一支是旧实现本来就有的每 tick 路径，不计数也不打日志（否则会刷屏）。
+    // 仅用于日志限频，不落盘、不参与任何判定。
+    private int segmentFloorKeepCount = 0;
     private BlockPos battleAnchorPos = null;
     private ResourceLocation battleAnchorDim = null;
     // 2026-09-11（代码审计 G13 #7 修复）：原 ANTI_EXILE_RANGE(256.0) / ANTI_EXILE_VOID_MARGIN(8.0)
@@ -554,10 +607,19 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         builder.define(CLIENT_TWILIGHT_ACTIVE, 0);
         builder.define(CLIENT_INTRO_ACTIVE, 0);
         builder.define(CLIENT_SUMMON_INTRO_TICKS, 0);
+        builder.define(CLIENT_SOUL_SEVER_Y, 0);
     }
 
     public int getClientSummonIntroTicks() {
         return this.entityData.get(CLIENT_SUMMON_INTRO_TICKS);
+    }
+
+    /**
+     * 客户端断魂值镜像（语义见 {@code CLIENT_SOUL_SEVER_Y} 字段注释）。
+     * <p>⚠️ 只供**客户端渲染 / HUD** 使用；服务端内部判断请用服务端的精确 {@code long} 值。
+     */
+    public int getClientSoulSeverValue() {
+        return this.entityData.get(CLIENT_SOUL_SEVER_Y);
     }
 
     public int getClientTransitionTicks() {
@@ -587,6 +649,9 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         this.entityData.set(CLIENT_TWILIGHT_ACTIVE, this.isTwilightMomentActive() ? 1 : 0);
         this.entityData.set(CLIENT_INTRO_ACTIVE, this.introTicks > 0 ? 1 : 0);
         this.entityData.set(CLIENT_SUMMON_INTRO_TICKS, this.summonIntroTicks);
+        // 2026-09-14：断魂值同步（供客户端残影判据）。int 截断保护 —— soulSeverY 是 long 且带溢出
+        // 保护（可达 Long.MAX_VALUE），截断后客户端只会"居高不下"，不会翻转成负数而误关残影。
+        this.entityData.set(CLIENT_SOUL_SEVER_Y, (int) Math.min(Integer.MAX_VALUE, this.getSoulSeverValue()));
     }
 
     protected void registerGoals() {
@@ -697,6 +762,12 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             // 原实现走 bossLeaveFriendly（= leaveBattle(..., setCooldown=true)）→ 无掉落 + 3 天冷却，
             // 与设计 §2.4（0 冷却 + 已清 P1 发奖励）和 §3.5（一小时）三处矛盾。
             if (this.hasClearedPhase1ForLoot()) {
+                // 2026-09-13 作者裁决：**只发一阶段棕盒**（与 2.7 同一处置）。
+                // 原因（设计漏洞，审查报告 01-D-04）：`hasClearedPhase1ForLoot()` 成立即表明已打到二阶段
+                // ⇒ `this.phase == 2` ⇒ `settleBattle` 内部走 `dropPhase2Reward` ⇒ 实际发**白盒（P1+P2 全套）
+                // + 0 冷却**，构成「打一下 → 等 10 分钟 → 白拿白盒 → 立即重召」的循环。
+                // 置 `forcePhase1Reward` 后 `settleBattle` 改走 `dropPhase1Reward`（棕盒）。
+                this.forcePhase1Reward = true;
                 this.settleBattle(serverLevel, 0L, true, this.phase == 2);
             } else {
                 this.leaveBattle(serverLevel, leaveMsg, false);
@@ -707,9 +778,39 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             // 2026-09-10（用户裁决）：计时只在「真正能打」的时间累加——**冻结态不倒计时**。
             //   ・冻结态 = bossState.isFrozen()：PHASE1_VOTE / PHASE1_TRANSITION / PHASE1_PENDING / PHASE2_PENDING
             //     （投票 / 转场 / 两阶段濒死，玩家无法推进战斗进度）；
-            //   ・锁血期 = titleLockTicks > 0：段底不可越，玩家打不穿 → 同样不计入可打时间。
+            //   ・~~锁血期 = titleLockTicks > 0：段底不可越，玩家打不穿 → 同样不计入可打时间。~~
+            //     **（2026-09-13 作者裁决作废此行：锁血期改为照常计时，见下方条件处的完整说明）**
             // 起算点仍为「进入 2.8 那一刻」（设计稿 §2.8 原义），回退后重进 2.8 **不重置**（保持现状）。
-            if (!this.bossState.isFrozen() && this.titleLockTicks <= 0) {
+            // 2026-09-12（用户裁决，计时离场审计；措辞以用户原话为准）：
+            //   ★ **计时胜利是「头衔正逆推都不停止」的计时，开始点 = 2.8 激活。**
+            //   ★ 设计意图：2.8 与 2.9 难度都很大，这是给玩家的**调低难度**出路 ——
+            //      ・玩家**没在时限内打败 Boss**（＝时限到）⇒ **也视作二阶段胜利**（即本条通道）；
+            //      ・玩家**及时在 2.9 段打败 Boss** ⇒ **更好**（走正常击杀 die()，发 phase2_win 成就）。
+            //   ⇒ 故本计时**不判当前段位**：正推（2.8→2.9）、逆推（2.9→更早头衔）都**继续递减** ——
+            //     被段位变化打断，就等于把这条降难度出路废掉。
+            //   ⚠️ 与「冻结态不倒计时」不冲突：冻结态指 bossState.isFrozen()（VOTE / TRANSITION /
+            //      PENDING）与锁血期 titleLockTicks > 0，那是**状态机层面**的「打不着 / 不能推进」，
+            //      不属于头衔的正逆推，故仍照常暂停。
+            //   时限到即**二阶段胜利**（resolveColorlessChallengeSuccess → setNoAi +
+            //   settleBattle(dropReward=true, includeDefeatBook=false) ⇒ 发二阶段潜影盒奖励、不发败北书）。
+            //   配套佐证：checkBattleAreaUnloaded 里 isColorlessActive()（2.8）**或** isVoidAllThingsActive()
+            //   （2.9）期间区块卸载也都走 resolveColorlessChallengeSuccess —— 两段同属这一条挑战通道。
+            //   ⚠️ 报告口径（2026-09-12 用户裁决；同日二次裁决由「加 victory 档」改口为**已新增该档**）：
+            //   本通道在调 settleBattle **之前**先记一条 flowPhaseSettle("timedVictory")，
+            //   故对战记录 session.result = **victory**（不再与「被击杀 / 投票否决 / 区块超时」的 defeated 混同）。
+            //   ⚠️ 故此处**刻意不加 isColorlessActive() 守卫**；下轮审计勿再以「跨段残留」为由改动。
+            // ⚠️ 2026-09-13 作者裁决（**覆盖 2026-09-12 的解释**）：**锁血期照走计时**。
+            // 作者原话：「锁血期应该还在计时」＋「有一个段顶上调头衔的配置，把这个打开一下子
+            // 2.9 飙升至 2.1，然后卡在这里下不去了」。
+            // 动机（实测场景）：打开 `ALLOW_TITLE_LOCK_HEAL_REGRESSION` 后，2.8 的**永续回血**
+            // （healBoostTicks 每 tick 重置 + 2.4 恢复Ⅴ 无限时长）会让血量一口气冲高，而
+            // `computeTitleIndex` 按血量**一次跨多格**回退到 2.1，随后每 tick 钳段顶、回血仍 ≥ 玩家输出
+            // ⇒ **段底永远打不穿 ⇒ 卡死**。此时若锁血期不计时，超时兜底永不触发 ⇒ **玩家被困死**。
+            // ⇒ 锁血期必须计时，玩家至少保留「时限到 = 二阶段胜利」这条出路。
+            // 现口径：仅 `bossState.isFrozen()`（VOTE / TRANSITION / 两阶段 PENDING）暂停计时；
+            //         **锁血期照常递减** —— 锁血期玩家仍在输出（只是伤害被钳段底），属头衔推进过程的一部分，
+            //         不是"玩家无法行动"的状态。
+            if (!this.bossState.isFrozen()) {
                 --this.colorlessChallengeTicks;
                 if (this.colorlessChallengeTicks <= 0) {
                     this.resolveColorlessChallengeSuccess(serverLevel);
@@ -810,13 +911,36 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
                 (double)recover.getZ() + 0.5, this.getYRot(), this.getXRot());
             this.setDeltaMovement(0.0, 0.0, 0.0);
         }
-        // 防死兜底（2026-09-10 实测修复）：防死窗口内若有任何路径把血量写到 <1（前置模组断魂
-        // 在 LivingDamageEvent.Post 里直写血量数据、绕过 setHealth），每 tick 钳回 1 血并同步
-        // 反作弊基线——既保住 isDeadOrDying() 拦不住的"血量本身合法性"，也避免把玩家自己模组的
-        // 合法机制（断魂 DoT）误判成作弊惩罚。放在 anticheat.tick 之前，保证基线一致。
-        if (this.isProtectedFromDeath() && this.getHealth() < 1.0f) {
-            this.forceSetHealth(1.0f);
-            this.anticheat.markLegalHealthChange(1.0f);
+        // 段底保底（每 tick 不变量，2026-09-13）：非「最后头衔」时血量不得低于当前段底 —— 不论
+        // 写入走哪条路。旧实现（2026-09-10 防死兜底）只在 isProtectedFromDeath() 时生效，即仅覆盖
+        // 冻结态与末位头衔；**非末位头衔 COMBAT 下没有任何每 tick 防线**，而 setHealth 覆写的
+        // 「写入前钳制」只能挡住 setHealth 通道，第三方**直写 entityData** 绕过它 ⇒ 那一个 tick
+        // 内血量可以真的低于段底（血条闪 0），要到下一 tick 才被 tickHealthCheatCheck 恢复。
+        // 此处把下限提成一个表达式，逐格覆盖全部 6 个状态：
+        //   ・冻结态（PENDING / VOTE / TRANSITION / PHASE2_PENDING）与末位未解锁 ⇒ 1 血（濒死等待），
+        //     与旧条件 `isProtectedFromDeath() && getHealth() < 1.0f` **完全等价**；
+        //   ・非末位头衔（idx ≤ size-2）⇒ 段底（本项目最低 200：2000 血 / 10 头衔，idx 8）；
+        //   ・末位已解锁（pendingLockReleased）⇒ 下限 0 ⇒ **不钳**，保留玩家击杀窗口。
+        // 段底取 currentTitleSegmentFloor() —— 与 setHealth 覆写的写入前钳制、die() 段底守卫
+        // **同源**（危险面 5 铁律零：同一语义读同一来源），不新写第三份算法。
+        // 放在 anticheat.tick 之前，保证基线一致（同旧实现）。
+        // ⚠️ 与「打穿段底 ⇒ 逐格推进」正交：推进由 DamagePipeline 在伤害结算时判定，本保底只在
+        //    血量**已低于**段底时抬高，血量恰等于段底时不动。
+        boolean protectedNow = this.isProtectedFromDeath();
+        float floorNow = protectedNow ? 1.0f
+            : (this.isAtPhaseLastTitle() ? 0.0f : this.currentTitleSegmentFloor());
+        if (floorNow > 0.0f && this.getHealth() < floorNow) {
+            this.forceSetHealth(floorNow);
+            this.anticheat.markLegalHealthChange(floorNow);
+            // 仅「非冻结态」这一支代表真有第三方绕过了 setHealth（冻结态那支旧代码本来就在跑，
+            // 每 tick 都可能触发）。限频口径与 die() 段底守卫一致：首次必记 + 其后每 200 次。
+            if (!protectedNow
+                && (++this.segmentFloorKeepCount == 1 || this.segmentFloorKeepCount % 200 == 0)) {
+                SilentSunMod.LOGGER.warn("[Redios] 段底保底：血量低于段底（绕过 setHealth 直写？）⇒ 钳回 "
+                    + "（phase={} 头衔={} 段底={} 钳回={} 累计={} 次）",
+                    this.phase, this.titleIndex, this.currentTitleSegmentFloor(), floorNow,
+                    this.segmentFloorKeepCount);
+            }
         }
         this.anticheat.tick(serverLevel);
         if (this.deathTime > 0 && !this.legitRemoval && !this.isLegitDeathFlow()) {
@@ -983,13 +1107,13 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
 
     /** 召唤演出开始（2026-09-04）：播放切阶段立方体动画 + 烟圈收缩帧散射繁星爆闪。不冻结 Boss。 */
     public void beginSummonCinematic() {
-        this.summonIntroTicks = Math.max(1, SilentSunConfig.PHASE_TRANSITION_SECONDS.get() * 20);
+        this.summonIntroTicks = configuredTransitionTicks();
         this.summonScatterFired = false;
     }
 
     /** 召唤演出每 tick：递减；烟圈收缩帧释放一次纯视觉散射繁星爆闪；引爆纯视觉星星（幂等）。 */
     private void tickSummonCinematic(ServerLevel serverLevel) {
-        int total = Math.max(1, SilentSunConfig.PHASE_TRANSITION_SECONDS.get() * 20);
+        int total = configuredTransitionTicks();
         int elapsed = total - this.summonIntroTicks;
         // 烟圈收缩帧：立方体 fieldT=0.5 → elapsed = impactTick(6) + (total-6)/2
         int contractTick = 6 + (total - 6) / 2;
@@ -1001,13 +1125,30 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         --this.summonIntroTicks;
     }
 
-    /** 召唤散射繁星爆闪（纯视觉、无伤害、不破坏方块）：散射 20 格，复用 intro 星星引爆链（explode NONE）。 */
-    private void spawnSummonScatterStars(ServerLevel serverLevel) {
-        this.introStarfallStars.clear();
-        this.introStarfallDetonated = false;
+    /**
+     * 入场 / 召唤演出共用的繁星生成骨架（纯视觉、无伤害、不入战斗引爆集合，寿命到期自灭）。
+     * <p>两份演出星的**唯一差异是水平分布**，故由参数表达：
+     * <ul>
+     *   <li>{@code centerDense = true}（入场版）：{@code sqrt(rand) * radius} —— 中心密（旧分布）</li>
+     *   <li>{@code centerDense = false}（召唤散射版）：{@code radius * (0.25 + 0.75 * sqrt(rand))}
+     *       —— 中心留空的外围均匀带（2026-09-01 用户实测「没有分散感」后的口径）</li>
+     * </ul>
+     * <p>⚠️ 两个分支都**恰好调用一次** {@code random.nextDouble()}，且 {@code angle} 在其之前取用
+     * ⇒ 随机序列与合并前**逐位一致**（否则会改变星群布局）。
+     * <p>2026-09-14（体检 P2-A / G13 #9）：本方法由 {@code spawnIntroStars} 与
+     * {@code spawnSummonScatterStars} 两份**逐行重复**的循环合并而来（差异仅"分布那一行" + 一次集合重置）。
+     * <p>⚠️ 第三份 {@code spawnStarfallStars}（战斗繁星）**有意不并入**：它与本方法差异达 **6 项**
+     *（中心点可为目标实体 / {@code count} 可配 / 分布公式不同 / delay 上限可配 /
+     * 额外传追踪目标与水平偏移 / 是否 {@code markDisplayExempt} 相反 / 入不同集合）
+     * ⇒ 合并需 **11 个参数**，可读性反而更差 ⇒ 按《危险面与共享判据》**危险面 3** 判为
+     * **性质 B2（不同语义、碰巧相似 ⇒ 登记保持不同）**，与台账 §二「边界并存保持不同」同类处理。
+     */
+    private void spawnCinematicStars(ServerLevel serverLevel, double radius, boolean centerDense) {
         for (int i = 0; i < INTRO_STAR_COUNT; ++i) {
             double angle = this.random.nextDouble() * Math.PI * 2.0;
-            double dist = 20.0 * (0.25 + 0.75 * Math.sqrt(this.random.nextDouble()));
+            double dist = centerDense
+                ? Math.sqrt(this.random.nextDouble()) * radius
+                : radius * (0.25 + 0.75 * Math.sqrt(this.random.nextDouble()));
             double x = this.getX() + Math.cos(angle) * dist;
             double z = this.getZ() + Math.sin(angle) * dist;
             double hoverY = this.getY() + 2.0;
@@ -1021,6 +1162,13 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             serverLevel.addFreshEntity(star);
             this.introStarfallStars.add(star.getUUID());
         }
+    }
+
+    /** 召唤散射繁星爆闪（纯视觉、无伤害、不破坏方块）：散射 20 格，复用 intro 星星引爆链（explode NONE）。 */
+    private void spawnSummonScatterStars(ServerLevel serverLevel) {
+        this.introStarfallStars.clear();
+        this.introStarfallDetonated = false;
+        this.spawnCinematicStars(serverLevel, 20.0, false);
     }
 
     /** 入场演出首拍：响指音效 + 纯演出繁星爆闪（下落悬停、不引爆、无伤害）。 */
@@ -1029,25 +1177,14 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         this.spawnIntroStars(serverLevel);
     }
 
-    /** 生成入场版无伤害星星：只做下落→悬停演出，不加入引爆集合，寿命到期自行消失。 */
+    /**
+     * 生成入场版无伤害星星：只做下落→悬停演出，不加入引爆集合，寿命到期自行消失。
+     * <p>⚠️ **水平分布刻意保持「中心密旧分布」（{@code sqrt(rand) * 5.0}）** —— 它虽已被
+     * 2026-09-01 的用户实测判为「没有分散感」，但**改分布属视觉行为变更**，不在 P2-A 的去重范围内
+     *（2026-09-14 作者裁决：**只去重、分布按现状**）。要改分布请单独裁决，**别夹在重构里做**。
+     */
     private void spawnIntroStars(ServerLevel serverLevel) {
-        for (int i = 0; i < INTRO_STAR_COUNT; ++i) {
-            double angle = this.random.nextDouble() * Math.PI * 2.0;
-            // TODO(审计清理 G13 #9)：三份星星生成循环重复（本方法 / spawnSummonScatterStars / spawnStarfallStars），入场版仍是已实测否决的中心密旧分布 —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
-            double dist = Math.sqrt(this.random.nextDouble()) * 5.0;
-            double x = this.getX() + Math.cos(angle) * dist;
-            double z = this.getZ() + Math.sin(angle) * dist;
-            double hoverY = this.getY() + 2.0;
-            double spawnY = this.getY() + 30.0;
-            int delay = this.random.nextInt(20);
-            StarfallSalvoEntity star = ModEntities.STARFALL_SALVO.get().create(serverLevel);
-            if (star == null) continue;
-            star.initSalvo(this.getUUID(), hoverY, delay, null, 0.0, 0.0);
-            star.markDisplayExempt();
-            star.setPos(x, spawnY, z);
-            serverLevel.addFreshEntity(star);
-            this.introStarfallStars.add(star.getUUID());
-        }
+        this.spawnCinematicStars(serverLevel, 5.0, true);
     }
 
     /** 入场演出：待入场星全部悬停后引爆（无伤害、不破坏方块，仅爆炸特效）。 */
@@ -1055,9 +1192,23 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         if (this.introStarfallStars.isEmpty() || this.introStarfallDetonated) {
             return;
         }
-        for (UUID uuid : this.introStarfallStars) {
+        // 2026-09-14（体检 P0-1 修复）：原实现在「任一星不存在 / 已被替换 / 永不 settled」时
+        // **直接 `return`** ⇒ 入场演出**永不引爆**、集合**永不清理**、每 tick 重试同一集合
+        //（软死锁 + 持续异常状态）。改为两条收敛保证：
+        //   ① 星已被外部删除/替换（`star == null || isRemoved()`）⇒ 从集合移除该 UUID，不再阻断；
+        //   ② 星存在但未 settled ⇒ 以**星自身存活 tick** 作超时兜底，超过阈值即放行引爆，
+        //      不再被异常状态的星永久卡住（正常演出远达不到该时长）。
+        // 用「遍历副本 + 直接改集合」而非 Iterator，避免引入新 import。
+        for (UUID uuid : new java.util.ArrayList<UUID>(this.introStarfallStars)) {
             Entity star = serverLevel.getEntity(uuid);
-            if (!(star instanceof StarfallSalvoEntity salvo) || !salvo.isSettled()) {
+            if (star == null || star.isRemoved()) {
+                this.introStarfallStars.remove(uuid);
+                continue;
+            }
+            if (star instanceof StarfallSalvoEntity salvo && salvo.isSettled()) {
+                continue;
+            }
+            if (star.tickCount < 200) {
                 return;
             }
         }
@@ -1507,6 +1658,13 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         int radius = Math.max(0, RediosRules.battleRadiusBlocks());
         int timeoutTicks = Math.max(1, RediosRules.battleExpelTimeoutSeconds()) * 20;
         double radiusSqr = (double)radius * (double)radius;
+        // 2026-09-12（用户裁决「能保证不误判就行」）：基准由 Boss 实时坐标改为**战斗锚点**，
+        // 与 checkVoidBattleRange / tickChunkRetention / checkAllParticipantsDisengaged / tickAntiExile
+        // 及账本侧统一 —— 否则 2.9 的 Boss 传送后，留在战场内的玩家会被判「出圈超时」并**单人逐出**
+        // （本方法与 checkAllParticipantsDisengaged 是"逐出单人 / 全员脱战"的一对，口径必须同源）。
+        BlockPos areaAnchor = this.battleAnchorPos != null ? this.battleAnchorPos : this.blockPosition();
+        double areaAnchorX = (double)areaAnchor.getX() + 0.5;
+        double areaAnchorZ = (double)areaAnchor.getZ() + 0.5;
         for (UUID id2 : new HashSet<UUID>(this.battleParticipants)) {
             double dz;
             if (this.expelledPlayers.contains(id2)) {
@@ -1518,11 +1676,21 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
                 this.outOfAreaTicks.remove(id2);
                 continue;
             }
-            double dx = player.getX() - this.getX();
-            double distSqr = dx * dx + (dz = player.getZ() - this.getZ()) * dz;
+            double dx = player.getX() - areaAnchorX;
+            double distSqr = dx * dx + (dz = player.getZ() - areaAnchorZ) * dz;
             if (distSqr > radiusSqr) {
                 int t = this.outOfAreaTicks.getOrDefault(id2, 0) + 1;
                 if (t > timeoutTicks) {
+                    // 2026-09-12（用户裁决「以不误踢为主」+ 纲领 4(3)「不会出现莫名其妙的观感」）：
+                    // 本条原先是**静默逐出** —— 「回去休息吧，下一把再来」那句文案原本挂在已删除的
+                    // checkVoidBattleRange（2.9 专属即时逐出）里。删掉那一档后，本档成为**唯一**的出圈
+                    // 逐出路径（含 2.9），不能再无声无息，故在逐出前补提示 + 日志。
+                    // 注：不在 expelFromBattle 内统一发 —— 另一调用点 expelForDarknessFailure 有专属提示
+                    //（notifyTwilightMomentFailure），统一发会重复。
+                    player.sendSystemMessage(this.rediosSigned(
+                        Component.translatable("message.silent_sun.redios.expelled").withStyle(ChatFormatting.DARK_RED)));
+                    SilentSunMod.LOGGER.warn("[Redios] 出圈超时逐出：{}（半径={} 超时={} tick）",
+                        player.getName().getString(), (int)radius, timeoutTicks);
                     this.expelFromBattle(player);
                     this.outOfAreaTicks.remove(id2);
                     continue;
@@ -1618,9 +1786,15 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
                     this.teleportIntoView(serverLevel, player);
                 } else {
                     int now = this.tickCount;
-                    // TODO(审计清理 G14 #9)：「Boss 不在视野」提醒冷却写死 600（含哨兵 -600），与同义可配置值 RediosRules.locateBossNotifyIntervalTicks（默认 200）两套口径 —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
-                    int last = this.lastMissingViewNotifyTick.getOrDefault(id2, -600);
-                    if (now - last >= 600) {
+                    // 2026-09-12（用户裁决：口径统一）：提醒冷却原写死 600（含哨兵 -600），与本配置键
+                    // `RediosRules.locateBossNotifyIntervalTicks`（默认 200）是两套口径 —— 现统一走配置。
+                    // ⚠️ 行为变更：默认值下提醒间隔由 30 秒（600t）缩短为 10 秒（200t）；要恢复旧节奏把
+                    // 该配置键调成 600 即可，无需改代码。
+                    // 哨兵同步改为 -interval：首次进入视野外时 now - (-interval) = now + interval >= interval
+                    // ⇒ 仍立即提醒，语义不变。
+                    int interval = Math.max(1, RediosRules.locateBossNotifyIntervalTicks());
+                    int last = this.lastMissingViewNotifyTick.getOrDefault(id2, -interval);
+                    if (now - last >= interval) {
                         this.lastMissingViewNotifyTick.put(id2, now);
                         BlockPos pos = this.blockPosition();
                         player.sendSystemMessage(this.rediosSigned(Component.translatable("message.silent_sun.redios.locate_boss", new Object[]{pos.getX(), pos.getY(), pos.getZ()}).withStyle(ChatFormatting.GRAY)));
@@ -2509,11 +2683,27 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
      * 转场总时长（tick）：优先用 {@link #startTransition} 记录的实值，该字段缺失/为 0 时回落配置值。
      * 见字段注释（G13 #2：原 {@code Math.max(1, transitionTotalTicks)} 把 0 抬成 1 是坏兜底）。
      */
+    /**
+     * 转场（及召唤演出）总时长的**唯一来源**：`redios.phaseTransitionSeconds × 20`。
+     * <p>2026-09-14（体检 P2-B / G20 #3 同源化）：该表达式原先在**客户端 + 服务端共 5 处**各写一遍
+     *（{@code beginSummonCinematic} / {@code tickSummonCinematic} / {@link #transitionTotal} /
+     * {@code startTransition} / 客户端 {@code RediosRenderer}），而客户端 {@code CameraShakeEvents}
+     * 更把它**硬编码成 120.0** ⇒ 配置改成非 6s 时进度曲线被压平：分母固定 120，
+     * 剩余 tick > 120 时 {@code min(ticks,120)/120} 恒为 1 ⇒ 进度恒 0、前半段卡在 50% 强度。
+     * 现全部改调本方法。
+     * <p>默认配置（6s）下取值仍为 **120**，与旧硬编码**逐位相同** ⇒ **默认行为零变化**。
+     * <p>注：客户端调用本方法安全 —— {@code SilentSunConfig} 是双端可读的静态配置，
+     * 且 {@code RediosRenderer} 早已在客户端这么用。
+     */
+    public static int configuredTransitionTicks() {
+        return Math.max(1, SilentSunConfig.PHASE_TRANSITION_SECONDS.get() * 20);
+    }
+
     private int transitionTotal() {
         if (this.transitionTotalTicks > 0) {
             return this.transitionTotalTicks;
         }
-        return Math.max(1, SilentSunConfig.PHASE_TRANSITION_SECONDS.get() * 20);
+        return configuredTransitionTicks();
     }
 
     float applyDamageCap(float amount, DamageSource source) {
@@ -2757,6 +2947,10 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         // 「打爽了。可能让你觉得头疼也抱歉了。」——此前结算全程无玩家可见文本）。
         this.broadcastToParticipants(this.rediosSigned(
             Component.translatable("message.silent_sun.redios.challenge_success").withStyle(ChatFormatting.DARK_PURPLE)));
+        // 2026-09-12（用户裁决）：本通道是**二阶段胜利** —— 2.8「无色挑战」计时到点 = 挑战通过，
+        // 不是异常退场。故先记一条专属收尾事件：settleBattle 内部对所有结算路径统一记
+        // kind="defeat"，不先记就会把胜利归成「被击败」（见 BattleFlowRecorder.deriveResult 的 victory 档）。
+        this.flowPhaseSettle("timedVictory", "二阶段胜利：2.8 无色挑战计时到点（发二阶段奖励、不发败北书）");
         // 计时胜利（无色挑战成功）也掉二阶段奖励（2026-09-01 用户裁决：phase2.8 数值难办，
         // 计时胜利给掉落，而非原 antiCheatNoLoot 无掉落）——走 settleBattle 结算
         //（settlementDone 幂等 + 账本先标 settled + phase==2 时 dropPhase2Reward + 召唤冷却）。
@@ -2818,6 +3012,32 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
      * 等），那是唯一可靠拦截点：本方法同时作为 isDeadOrDying / setHealth 钳制 / 每 tick 回血
      * 兜底 / die 拦截的共同判据。pendingLockReleased（P2 锁血解除）后不再保护，玩家可正常击杀。
      */
+    /**
+     * 当前头衔是否为「本阶段的最后一个头衔」（1.9 / 2.9）。
+     * <p>
+     * 段底守卫用它划作用域：最后头衔的段底 = 0，允许进入濒死/死亡流程；
+     * 其余头衔段底 &gt; 0，被打穿时应「钳段底 + 逐格推进」而非死亡。
+     */
+    private boolean isAtPhaseLastTitle() {
+        int last = this.phase == 1 ? PHASE1_TITLES.size() - 1 : PHASE2_TITLES.size() - 1;
+        return this.titleIndex >= last;
+    }
+
+    /**
+     * 当前头衔的**段底**（该段剩余血量下限）：index 段 = [maxHealth-(index+1)·seg, maxHealth-index·seg]。
+     * <p>
+     * 与 {@code DamagePipeline} 里两处段底钳制同算法（值口径一致）。
+     * <p>
+     * 2026-09-13（规范化）：原实现把 {@code segment} **又内联算了一遍**
+     * （`this.getMaxHealth() / (float) titles.size()`），与 {@link #titleSegment()} 逐字相同 ⇒
+     * 同一语义仍有两份实现。改为调 {@code titleSegment()} ⇒ 段长只有**一个来源**，
+     * 段底四处调用者（写入前钳制 / {@code die()} 守卫 / 每 tick 保底 / 重建恢复）也随之同源。
+     */
+    private float currentTitleSegmentFloor() {
+        float low = this.getMaxHealth() - (float)(this.titleIndex + 1) * this.titleSegment();
+        return Math.max(0.0f, low);
+    }
+
     private boolean isProtectedFromDeath() {
         if (this.bossState == BossState.PHASE1_PENDING
             || this.bossState == BossState.PHASE1_VOTE
@@ -2894,13 +3114,13 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         // 压血至新段内）不受影响；P2 解除锁血后（pendingLockReleased）不再钳，允许击杀。
         if (health < this.getHealth() && !protectedFromDeath
             && (this.bossState == BossState.PHASE1_COMBAT || this.bossState == BossState.PHASE2_COMBAT)) {
-            List<Component> titles = this.phase == 1 ? PHASE1_TITLES : PHASE2_TITLES;
-            float maxHealth = this.getMaxHealth();
-            float segment = maxHealth / (float) titles.size();
-            float low = maxHealth - (float) (this.titleIndex + 1) * segment;
-            if (low < 0.0f) {
-                low = 0.0f;
-            }
+            // 2026-09-13（规范化，随 N1 一并做）：本处原为**内联复制的第 4 份段底算法**
+            // （titles / segment / low / 下限 0 共四行），与 `currentTitleSegmentFloor()` **逐字等价**。
+            // 改为调用该方法 ⇒ 段底才真正**四处同源**：
+            //   ① 写入前钳制（本处）② `die()` 段底守卫 ③ `tick()` 每 tick 保底 ④ `rebuildFromRecord` 恢复
+            // 依据危险面 5 铁律零「同一语义读同一来源」——本工程的事故模式就是同一语义被重复制作、
+            // 各自演化；此前只有 ②③④ 走共享方法，① 是漏网的那一份。
+            float low = this.currentTitleSegmentFloor();
             if (health < low) {
                 health = low;
                 // 钳制同步反作弊基线（2026-09-01 修复）：9pass 断魂「差额 setHealth 直扣」
@@ -3054,6 +3274,30 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             rec.antiCheat(this.gameTimeNow(), kind, this.phase, this.titleIndex, offender, punish, gatedBy30s, note);
         } catch (Throwable t) {
             SilentSunMod.LOGGER.warn("[SilentSun] 战斗流程报告记录失败（ANTICHEAT/{}）：{}", kind, t.toString());
+        }
+    }
+
+    /**
+     * PLAYER_HIT：参战玩家受击留痕（2026-09-13 新增，作者要求）。
+     * <p>
+     * {@code amount} 是 {@code LivingDamageEvent.Pre} 的量，即「**本会受到的伤害**」——
+     * 保命类道具把伤害拦下时该值仍存在（{@code Post} 则不会触发），所以必须从 Pre 侧喂进来，
+     * 这样"保护被消耗的那一下"才留得下痕迹。
+     * <p>
+     * ⚠️ 必须是 {@code public}：调用方 {@code CommonEvents} 在 {@code event} 包，与本类**不同包**
+     * （其余 {@code flowXxx} 包装方法的调用点都在本包内，故为包级可见）。
+     */
+    public void flowPlayerHit(ServerPlayer player, DamageSource source, float amount) {
+        try {
+            BattleFlowRecorder rec = this.flowRecorder;
+            if (rec == null || player == null) {
+                return;
+            }
+            this.syncFlowRecorderStart();
+            rec.playerHit(this.gameTimeNow(), player.getName().getString(),
+                source == null ? "<unknown>" : source.getMsgId(), amount, player.getHealth());
+        } catch (Throwable t) {
+            SilentSunMod.LOGGER.warn("[SilentSun] 战斗流程报告记录失败（PLAYER_HIT）：{}", t.toString());
         }
     }
 
@@ -3412,6 +3656,37 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
 
     public void die(DamageSource damageSource) {
         boolean includeDefeatBook;
+        // ────────────── 2026-09-13 新增：段底守卫 ──────────────
+        // 非「当前阶段最后头衔」时，血量物理上不该到 0 —— 段底 > 0，打穿段底应「钳段底 + 逐格推进」，
+        // 而不是死亡。此前**没有任何守卫**：`isLegitDeathFlow()` 只看 `inHurtProcessing`，而第三方真伤
+        // （灭却之日断魂）走的正是 `hurt()` 完整链路 ⇒ 被判为「合法死亡」⇒ 下面的防死拦截分支整段跳过。
+        // **实测先例（3 次，死因全是 soul_sever，全在非最后头衔）**：
+        //   battle-a7e79189 → P1 头衔 7；battle-a6c0955e → P1 头衔 8；battle-98d49054 → P2 头衔 7
+        //   （对照 battle-cd3d9db0 死在 P1 头衔 9 = 最后头衔，那一次合法）
+        // ⇒ 后果：机制没演完就死、离场不合法（作者原话「并非合法离场」）。
+        // 作用域：只拦「非最后头衔」；1.9 / 2.9（最后头衔）仍按原流程进入濒死/死亡。
+        // 2026-09-13 补充（守卫优先级）：额外排除 isProtectedFromDeath() —— 该判据对
+        //   PHASE1_PENDING / PHASE1_VOTE / PHASE1_TRANSITION / PHASE2_PENDING **不看头衔**，
+        //   恒为 true。正常流程下这些冻结态只出现在最后头衔，本排除项不生效；但
+        //   `rebuildFromRecord` / `restoreBossState` 从旧账本读回时可能造出「冻结态 + 低头衔」
+        //   的组合，此时设计值是**钳 1 血**（濒死等待），而不是段底（比 1 高的多）。
+        //   不加这个排除项，本守卫会抢先钳到段底 ⇒ 血量高于设计值、且日志记成「段底守卫」而非
+        //   「防死拦截」，掩盖真实原因。排除后该组合落回下方既有防死拦截分支，行为与设计一致。
+        if (!this.anticheat.antiCheatNoLoot && !this.isAtPhaseLastTitle() && !this.isProtectedFromDeath()) {
+            float floor = this.currentTitleSegmentFloor();
+            float restored = Math.max(1.0f, floor);
+            this.forceSetHealth(restored);
+            this.anticheat.markLegalHealthChange(restored);
+            // 日志限频（见字段 segmentFloorGuardCount 注释）。钳制行为与之前完全一致，仅少打日志。
+            if (++this.segmentFloorGuardCount == 1 || this.segmentFloorGuardCount % 200 == 0) {
+                SilentSunMod.LOGGER.warn("[Redios] 段底守卫：非最后头衔被打死 ⇒ 钳回段底继续流程 "
+                    + "（phase={} 头衔={} 段底={} 钳回={} 伤害源={} 累计={} 次）",
+                    this.phase, this.titleIndex, floor, restored,
+                    damageSource == null ? "null" : damageSource.getMsgId(),
+                    this.segmentFloorGuardCount);
+            }
+            return;
+        }
         if (!this.anticheat.antiCheatNoLoot && !this.isLegitDeathFlow()) {
             Level level = this.level();
             if (level instanceof ServerLevel) {
@@ -3478,6 +3753,17 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         }
         boolean clearedPhase1 = this.hasClearedPhase1ForLoot();
         if (!clearedPhase1) {
+            // 2026-09-12（纲领 4(3)「确保奖励能发到手，不会出现莫名其妙的观感」）：
+            // 本条原先**完全静默** —— super.die + cleanup + clearBattleRecord + discard，
+            // 无掉落、无广播、无专属记录 ⇒ 玩家只看到 Boss 凭空消失（2026-09-12 实测困惑，
+            // 当时被误判为「Boss 自己走了」）。现补一句广播 + 专用收尾事件。
+            // ⚠️ 只补**反馈**：不改任何奖励 / 结算 / 难度 —— 纲领 5 规定「一阶段放弃不入二阶段」，
+            //    故本条无奖励是设计（原始设计 §2：一阶段否决只发一阶段掉落，未通关则没有）；
+            //    这里只消除观感缺口，不动机制。
+            this.flowPhaseSettle("phase1_fail", "一阶段未通关被打死（无奖励、不入二阶段；伤害源="
+                + (damageSource == null ? "null" : damageSource.getMsgId()) + "）");
+            this.broadcastToParticipants(this.rediosSigned(
+                Component.translatable("message.silent_sun.redios.phase1_fail").withStyle(ChatFormatting.GRAY)));
             super.die(damageSource);
             this.disableBossOutline(serverLevel);
             this.cleanupNearbyLivingAfterBattle(serverLevel);
@@ -3494,7 +3780,12 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             this.grantAdvancementToParticipants(serverLevel, "phase2_win");
         }
         if (this.isVoidAllThingsActive()) {
-            if (this.isFinalKillerPlayer(damageSource)) {
+            // 2026-09-13 作者裁决：**冷却改为「有参战玩家就设」** —— 不再看最后一下是谁打的。
+            // 原因（设计漏洞，审查报告 03 的 G-01）：原判据 `isFinalKillerPlayer(damageSource)` 只认
+            // 「伤害源实体是 Player」⇒ **宠物补刀**（`FRIENDLY_MOB_DAMAGE_CAP=25` 允许宠物参战）、
+            // 环境击杀、第三方补刀都**不设冷却**，而奖励照发 ⇒ 3 天召唤冷却节奏被完全绕过、可反复刷。
+            // 作者裁决语（三选一里的推荐项）：「冷却改为『有参战玩家就设』」。
+            if (!this.battleParticipants.isEmpty()) {
                 this.applySummonCooldown(serverLevel, (long)(SilentSunConfig.COOLDOWN_DAYS.get()).intValue() * 24000L);
             }
             serverLevel.playSound(null, this.blockPosition(), SoundEvents.WARDEN_SONIC_CHARGE, SoundSource.HOSTILE, 1.0f, 1.0f);
@@ -3531,7 +3822,9 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         this.clearBattleRecord(serverLevel);
         super.die(damageSource);
         includeDefeatBook = this.phase == 2;
-        if (includeDefeatBook && this.isFinalKillerPlayer(damageSource)) {
+        // 2026-09-13 作者裁决：同 2.9 特例分支——**冷却改为「有参战玩家就设」**，不再看最后一下是谁打的
+        //（原 `isFinalKillerPlayer` 判据使宠物/环境/第三方补刀免冷却 ⇒ 可反复刷奖励）。
+        if (includeDefeatBook && !this.battleParticipants.isEmpty()) {
             this.applySummonCooldown(serverLevel, (long)(SilentSunConfig.COOLDOWN_DAYS.get()).intValue() * 24000L);
         }
         // 掉落潜影盒规范化（2026-08-30）：按 phase 分派——P1（一阶段停手/中途结算）→ P1 箱；
@@ -3548,14 +3841,16 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         // 正常路径无显式 discard：super.die 走 vanilla 死亡流程自动移除；账本已 settled，不会被重建。
     }
 
-    private boolean isFinalKillerPlayer(DamageSource damageSource) {
-        Entity entity = damageSource.getEntity();
-        if (!(entity instanceof Player)) {
-            return false;
-        }
-        Player player = (Player)entity;
-        return !player.isSpectator() && !player.isCreative();
-    }
+    // 2026-09-13 作者裁决（「冷却改为『有参战玩家就设』」）后**删除** `isFinalKillerPlayer(DamageSource)`。
+    //
+    // 被删方法原文语义：`damageSource.getEntity() instanceof Player` 且非旁观非创造 ⇒ 视为"最终击杀者是玩家"。
+    // 它曾被 `die()` 的两条分支用来决定「要不要设 3 天召唤冷却」，构成设计漏洞（审查报告 03-G-01）：
+    //   **宠物补刀**（`FRIENDLY_MOB_DAMAGE_CAP = 25` 明确允许玩家宠物参战）、环境击杀、第三方补刀
+    //   ⇒ 伤害源实体都不是 Player ⇒ **不设冷却**，而奖励照发（奖励分派不看击杀者）
+    //   ⇒ 3 天召唤冷却的节奏被完全绕过，可反复刷完整奖励。
+    // 现两处调用点均已改为 `!this.battleParticipants.isEmpty()`（有参战玩家就设冷却，不看最后一下是谁）。
+    // ⇒ 若将来需要「按击杀者区分」，**必须同时考虑宠物（`OwnableEntity.getOwner()`）与环境归因**，
+    //    不要恢复本方法这种"只看伤害源实体是不是 Player"的写法。
 
     public void startSeenByPlayer(ServerPlayer player) {
         super.startSeenByPlayer(player);
@@ -4129,6 +4424,8 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     private void restorePlayerToFull(ServerPlayer player) {
         player.setHealth(player.getMaxHealth());
         player.getFoodData().setFoodLevel(20);
+        // 刻意给满 20.0f（≠ BlackSunRespawnPayload 的 5.0f）：本处是「战斗结束恢复」，语义为完全回满；
+        // 那处是「黑日重生」，刻意留一点饥饿压力 —— 2026-09-12 用户裁决：**保持不同，勿统一**。
         player.getFoodData().setSaturation(20.0f);
         player.getFoodData().setExhaustion(0.0f);
         for (MobEffectInstance effect : new ArrayList<>(player.getActiveEffects())) {
@@ -4350,23 +4647,35 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         if (!this.isSorrowToilActive()) {
             return;
         }
-        if (this.tickCount % 5 == 0) {
-            double radius = 5.0;
-            int particles = 14;
-            double spin = (double)this.tickCount * 0.05;
+        if (this.tickCount % RediosRules.sorrowToilAuraParticleIntervalTicks() == 0) {
+            double radius = RediosRules.sorrowToilAuraParticleRadius();
             double midY = this.getY() + (double)this.getBbHeight() * 0.5;
-            for (int i = 0; i < particles; ++i) {
-                double angle = Math.PI * 2 * (double)i / (double)particles + spin;
+            
+            // 真伤光环粒子设计：双螺旋虚空能量场
+            // 环1：顺时针，深紫色末地传送门粒子
+            double spin1 = (double)this.tickCount * 0.15;
+            for (int i = 0; i < 10; ++i) {
+                double angle = Math.PI * 2 * (double)i / 10.0 + spin1;
                 double x = this.getX() + Math.cos(angle) * radius;
                 double z = this.getZ() + Math.sin(angle) * radius;
-                double y = midY + (this.random.nextDouble() - 0.5) * 0.8;
-                serverLevel.sendParticles(ParticleTypes.LARGE_SMOKE, x, y, z, 1, 0.0, 0.0, 0.0, 0.2);
+                double y = midY + Math.sin(this.tickCount * 0.1 + i) * 1.5; // 波浪形上下浮动
+                serverLevel.sendParticles(ParticleTypes.PORTAL, x, y, z, 2, 0.0, 0.0, 0.0, 0.1);
+            }
+            // 环2：逆时针，黑色墨汁与女巫魔法粒子，代表虚空侵蚀
+            double spin2 = -(double)this.tickCount * 0.15;
+            for (int i = 0; i < 10; ++i) {
+                double angle = Math.PI * 2 * (double)i / 10.0 + spin2;
+                double x = this.getX() + Math.cos(angle) * radius;
+                double z = this.getZ() + Math.sin(angle) * radius;
+                double y = midY + Math.cos(this.tickCount * 0.1 + i) * 1.5;
+                serverLevel.sendParticles(ParticleTypes.SQUID_INK, x, y, z, 1, 0.0, 0.0, 0.0, 0.05);
+                serverLevel.sendParticles(ParticleTypes.WITCH, x, y, z, 1, 0.0, 0.0, 0.0, 0.05);
             }
         }
-        if (this.tickCount % 4 != 0) {
+        if (this.tickCount % RediosRules.sorrowToilAuraIntervalTicks() != 0) {
             return;
         }
-        double r = 5.0;
+        double r = RediosRules.sorrowToilAuraRadius();
         AABB box = this.getBoundingBox().inflate(r);
         List<LivingEntity> entities = serverLevel.getEntitiesOfClass(LivingEntity.class, box, e -> e.isAlive() && e.distanceToSqr(this) <= r * r);
         for (LivingEntity living : entities) {
@@ -4375,7 +4684,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             if (!this.isAuraTarget(living)) continue;
             // 真伤光环：走 9bypass 改血（2026-09-01 用户裁决——完整 hurt + 差额 setHealth，
             // 与灭却之日 applyTrueDamage 同款，防第三方限伤/次数盾吞伤）
-            this.applyTrueDamageAura(living, 1.0f);
+            this.applyTrueDamageAura(living, (float) RediosRules.sorrowToilAuraDamage());
             this.markSoulSeverIfUnlocked(living);
         }
         // 2026-09-11（A08 → 历史 A10 第二口径落地）：Mode1 下把半径内的**无主生物**按「脱战玩家同款
@@ -4506,37 +4815,49 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         if (!showVisuals) {
             return;
         }
-        double radius = 5.0;
-        if (this.tickCount % 5 == 0) {
+        double radius = RediosRules.chaosRuinAuraParticleRadius();
+        if (this.tickCount % RediosRules.chaosRuinAuraParticleIntervalTicks() == 0) {
             double angle;
             int i;
-            int particles = 12;
+            // 增强破甲冒泡：外圈增加密集度与向内的火花
+            int particles = 24; // 从12提升至24
             for (i = 0; i < particles; ++i) {
                 angle = Math.PI * 2 * (double)i / (double)particles + (double)this.tickCount * 0.06;
                 double x = this.getX() + Math.cos(angle) * radius;
                 double z = this.getZ() + Math.sin(angle) * radius;
                 double y = this.getY() + 0.3 + this.random.nextDouble() * 2.5;
+                // 原有的音波气泡
                 serverLevel.sendParticles(ParticleTypes.SCULK_CHARGE_POP, x, y, z, 1, 0.0, 0.1, 0.0, 0.02);
+                // 新增：向内散发的破甲火花 (CRIT 粒子)
+                serverLevel.sendParticles(ParticleTypes.CRIT, x, y, z, 1, -Math.cos(angle) * 0.1, 0.1, -Math.sin(angle) * 0.1, 0.1);
             }
-            for (i = 0; i < 6; ++i) {
+            // 内部冒泡与虚空灵魂
+            for (i = 0; i < 15; ++i) { // 从6提升至15
                 angle = this.random.nextDouble() * 2.0 * Math.PI;
                 double r = this.random.nextDouble() * radius;
                 double x = this.getX() + Math.cos(angle) * r;
                 double z = this.getZ() + Math.sin(angle) * r;
                 double y = this.getY() + 0.5 + this.random.nextDouble() * 2.0;
                 serverLevel.sendParticles(ParticleTypes.ENCHANTED_HIT, x, y, z, 1, 0.0, 0.0, 0.0, 0.0);
+                // 新增：偶尔冒出深色灵魂粒子
+                if (this.random.nextBoolean()) {
+                    serverLevel.sendParticles(ParticleTypes.SCULK_SOUL, x, y - 0.5, z, 1, 0.0, 0.05, 0.0, 0.01);
+                }
             }
         }
         if (!this.isChaosRuinActive()) {
             return;
         }
-        if (this.tickCount % 20 == 0) {
-            AABB box = this.getBoundingBox().inflate(radius);
-            List<LivingEntity> entities = serverLevel.getEntitiesOfClass(LivingEntity.class, box, e -> e.isAlive() && e != this && e.distanceToSqr(this) <= radius * radius);
+        if (this.tickCount % RediosRules.chaosRuinAuraIntervalTicks() == 0) {
+            // 2026-09-14（步骤 3）：伤害半径改由**独立键**承载 —— 原与粒子半径共用同一个字面量 5.0，
+            // 默认值保持 5.0 ⇒ 行为零变化；拆开后两者可分别调整。
+            double damageRadius = RediosRules.chaosRuinAuraRadius();
+            AABB box = this.getBoundingBox().inflate(damageRadius);
+            List<LivingEntity> entities = serverLevel.getEntitiesOfClass(LivingEntity.class, box, e -> e.isAlive() && e != this && e.distanceToSqr(this) <= damageRadius * damageRadius);
             for (LivingEntity living : entities) {
                 // 2026-09-11 用户裁决（A08 = 以历史为准）：同 1.6 光环，2.3 混沌之墟也用 A10 目标过滤。
                 if (!this.isAuraTarget(living)) continue;
-                float auraDamage = 3.0f;
+                float auraDamage = (float) RediosRules.chaosRuinAuraDamage();
                 // 真伤光环：走 9bypass 改血（2026-09-01 用户裁决——完整 hurt + 差额 setHealth）
                 this.applyTrueDamageAura(living, auraDamage);
                 this.markSoulSeverIfUnlocked(living);
@@ -4591,6 +4912,28 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         return lowFpsOnline > 0;
     }
 
+    /**
+     * 参战玩家是否「**实质上还活着**」—— 用于活跃计数与各类判负。
+     * <p>
+     * <b>2026-09-13 作者裁决（原话「打死这个判定应该看是不是成功进入死亡动画」）</b>：判定"玩家是否被打死"
+     * **不能看血量，要看是否真的进入了死亡动画**。
+     * <p>
+     * <b>为什么不能用 {@code isAlive()}</b>：其实现是 {@code !isRemoved() && getHealth() > 0} ⇒ 血量 ≤0
+     * 时即为 false。而**强制保命类道具会在血量归零后把玩家救回来**（先到 0、随后恢复/免于一死）⇒
+     * 用 `isAlive()` 判定会把这种玩家**误算成已死** ⇒ 活跃参战者数归零 ⇒ **误判全灭 / 误判区域卸载**，
+     * 战斗以 `defeated` 收场而玩家其实还站着（实测：`battle-a7e79189-446031.json`，作者携带保命道具，
+     * 记录判 `defeated` 但玩家并未进入死亡界面）。
+     * <p>
+     * <b>判据</b>：`deathTime == 0` —— 原版 `die()` 之后该值开始递增，故 `== 0` 精确表示
+     * 「死亡动画尚未开始」；配合 `!isRemoved()`（真被移除的必然已死）。
+     * <p>
+     * ⚠️ 仅用于**判定战斗走向**（活跃计数 / 全灭 / 卸载 / 脱战）。给玩家发效果、发消息等处仍应按
+     * `isAlive()` 过滤 —— 那边"血量 0 就别发"是合理的，不适用本判据。
+     */
+    private boolean isParticipantVital(ServerPlayer p) {
+        return p != null && !p.isRemoved() && p.deathTime == 0;
+    }
+
     private boolean tickFailsafe(ServerLevel serverLevel) {
         boolean allLowFps;
         if (this.bossState.isSafeWindow()) {
@@ -4607,8 +4950,22 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             long delta = now - this.lastServerTickNanos;
             if (delta >= FAILSAFE_TICK_SPIKE_NANOS) {
                 ++this.tickSpikeCount;
+                this.tickSpikeDecayCooldown = 0; // 新尖峰重置节流，避免连续两次尖峰被立刻衰减掉
             } else if (this.tickSpikeCount > 0) {
-                --this.tickSpikeCount;
+                // 2026-09-12 作者裁决（方案 A；修复交接单 §6「failsafe 对孤立严重卡顿无反应」）：
+                // 原实现「异常 +1 / 任何一次正常 tick 立刻 -1」⇒ 阈值 FAILSAFE_TICK_SPIKES_TO_TRIGGER(=2)
+                // 实际被抬成「**连续两次** tick 间隔 ≥ 2 秒」，孤立严重卡顿被下一次正常 tick 直接抹平。
+                // 实测反证：`Can't keep up! Running 3732ms or 74 ticks behind`（单次卡 3.7 秒、已积压 74 tick）
+                // failsafe 毫无反应。
+                // 现改为节流衰减：每 FAILSAFE_TICK_SPIKE_DECAY_TICKS(=20) tick 才允许 -1 ⇒ 单次严重卡顿
+                // 可存活约 1 秒窗口，期间再叠一次尖峰即触发；孤立单次仍不触发（正常 tick 不计数），
+                // 故不引入抖动误触发，也不改变「宁可晚退场、不可误退场」的取舍。
+                // 判定式为**口径正确**（delta 是相邻 tick 的墙钟间隔，服务器卡住时确实变大）⇒ 只改衰减策略，
+                // 不动 FAILSAFE_TICK_SPIKE_NANOS、不动 FAILSAFE_TICK_SPIKES_TO_TRIGGER。
+                if (++this.tickSpikeDecayCooldown >= FAILSAFE_TICK_SPIKE_DECAY_TICKS) {
+                    this.tickSpikeDecayCooldown = 0;
+                    --this.tickSpikeCount;
+                }
             }
         }
         this.lastServerTickNanos = now;
@@ -4880,6 +5237,17 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             if (!entry.hasUUID("Id")) continue;
             this.battleParticipants.add(entry.getUUID("Id"));
         }
+        // 2026-09-13 作者裁决（「现在就修」）：与写入侧 `SilentSunHardcoreProtected` /
+        // `SilentSunAllExpelledLeavePending` 对称的恢复。旧存档无键 ⇒ 空集 / false（不回溯补保护，
+        // 与首次进入本机制的行为一致）。**勿把它们加进 `LEDGER_CARRIED_KEYS`**，否则回场快照会剔除它们。
+        this.hardcoreProtectedPlayers.clear();
+        ListTag hardcoreList = tag.getList("SilentSunHardcoreProtected", 10);
+        for (int hi = 0; hi < hardcoreList.size(); ++hi) {
+            CompoundTag hcEntry = hardcoreList.getCompound(hi);
+            if (!hcEntry.hasUUID("Id")) continue;
+            this.hardcoreProtectedPlayers.add(hcEntry.getUUID("Id"));
+        }
+        this.allExpelledLeavePending = tag.getBoolean("SilentSunAllExpelledLeavePending");
         // 2026-09-10（批次 2.14 / B5）：与写入侧对称——恢复斗蛐蛐模式的参战生物（旧档无键 → 空集/false）。
         this.mobParticipants.clear();
         ListTag mobList = tag.getList("SilentSunMobParticipants", 10);
@@ -5032,6 +5400,22 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             listTag4.add(entry);
         }
         tag.put("SilentSunBattleParticipants", (Tag)listTag4);
+        // 2026-09-13 作者裁决（「现在就修」）：补落盘两个此前**只存在于内存**的字段 ——
+        //  ① hardnessProtectedPlayers（硬核模式「保 1 血」宽恕名单，见 L509 字段）
+        //  ② allExpelledLeavePending（2.9 全员逐出后的补执行标记，见 L504 字段）
+        // 丢失后果（实测口径）：① 区块重载/回场重建后名单清空 ⇒ `isHardcoreProtected` 返回 false
+        // ⇒ **已获宽恕的硬核玩家会被下一次致命伤害真的打死**；② 标记丢失 ⇒ 2.9 全逐出后
+        // 「集合空了就离场」的补执行不再触发 ⇒ **卡场**（Boss 留在场上不出结果）。
+        // 二者**不加入** `LEDGER_CARRIED_KEYS` —— 它们不是账本携带键，应随实体 NBT 一起被
+        // 回场快照（snapshotUnlockFlags 整体搬运）原样携带回来。
+        ListTag hardcoreList = new ListTag();
+        for (UUID id : this.hardcoreProtectedPlayers) {
+            CompoundTag hcTag = new CompoundTag();
+            hcTag.putUUID("Id", id);
+            hardcoreList.add(hcTag);
+        }
+        tag.put("SilentSunHardcoreProtected", (Tag)hardcoreList);
+        tag.putBoolean("SilentSunAllExpelledLeavePending", this.allExpelledLeavePending);
         // 2026-09-10（批次 2.14 / B5）：斗蛐蛐模式的参战生物一并落盘。
         // 原先只存 battleParticipants，区块重载/存档重载后 mobParticipants 为空
         // → getActiveMobParticipantCount()/退场判定与 2.0 的 mob 分支都会误判。
@@ -5319,16 +5703,18 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         // 都有 Math.max(1,…)，只有这里没有 ⇒ phaseTransitionSeconds=0 时本处得 0，转场会在
         // 第一 tick 立刻 enterPhase2Combat()、立方体特效被跳过、transitionTotal()-6 的冲击帧永不命中。
         // 默认值 6 不受影响；0 的语义统一为「1 tick」。
-        // TODO(审计清理 G20 #3)：转场「总时长 = 配置×20 / 冲击帧 = 6」在客户端+服务端共四处各写一遍，本处为服务端转场总时长 —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
-        this.transitionTicks = ticks = Math.max(1, SilentSunConfig.PHASE_TRANSITION_SECONDS.get() * 20);
+        // 原 TODO(审计清理 G20 #3)：「转场总时长 = 配置×20 / 冲击帧 = 6」在客户端+服务端共四处各写一遍（本处为服务端转场总时长）。
+        // 2026-09-14（G20 #3 **已闭环**）：总时长的 6 处重复已收敛为 {@link #configuredTransitionTicks()}，本处改为调用。
+        // ⚠️ **残留（本轮有意不动）**：**冲击帧 `6`** 仍是 2 处字面量（本类 `tickSummonCinematic` 的 contractTick 计算 + 客户端
+        // `RediosRenderer` 的 impactTick）—— 它是**纯常量、不随配置变化**，漂移风险远低于"总时长"，故登记不动。
+        this.transitionTicks = ticks = configuredTransitionTicks();
         this.transitionTotalTicks = ticks;
         this.bossEvent.setVisible(true);
         this.triggerAnim("main", "transition");
-        Level level = this.level();
-        if (level instanceof ServerLevel) {
-            ServerLevel sl = (ServerLevel)level;
-            this.grantAdvancementToParticipants(sl, "phase1_clear");
-        }
+        // 2026-09-12（用户裁决：「phase1_clear 应该触发投票就给」）：本方法**不再授予** phase1_clear ——
+        // 授予点已前移到 beginPhase2Choice() 开头。原实现只在此处（转场）授予，导致「投票否决离场」的
+        // 玩家（已打完一阶段 6 段才触发投票，但否决后不走 startTransition）拿不到该成就。
+        // 前移后覆盖全部路径：免投票直转 ×4 + 投票通过 + 投票否决。
     }
 
     private void spawnTransitionImpact(ServerLevel serverLevel) {
@@ -5904,24 +6290,31 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         int count = 0;
         for (UUID id : this.battleParticipants) {
             ServerPlayer player;
-            if (this.expelledPlayers.contains(id) || (player = this.getServerPlayer(id)) == null || player.isSpectator() || player.isCreative() || !player.isAlive() || player.level() != this.level()) continue;
+            // 2026-09-13 作者裁决（原话「打死这个判定应该看是不是成功进入死亡动画」）：
+            // 原判据 `!player.isAlive()` 在血量 ≤0 时即为 false ⇒ **携带强制保命道具、血量归零后
+            // 被救回的玩家会被误算成已死** ⇒ 活跃数归零 ⇒ 误判「全员死亡 / 区域卸载」⇒ 战斗以
+            // `defeated` 收场而玩家其实还站着（实测 battle-a7e79189-446031：记录判 defeated，
+            // 但玩家并未进入死亡界面）。现改用 `!isParticipantVital(player)`
+            // （= 未移除 且 `deathTime == 0`，即**死亡动画尚未开始**）。
+            // 跨维玩家仍视为非活跃（同日另一条裁决「跨维不计入存活」），故保留 level 判据。
+            // ⚠️ 本方法是**唯一**的活跃计数入口，`checkDefeatByAllDead` 与 `checkBattleAreaUnloaded`
+            // 都读它 ⇒ 改这里即同时修正两处判负。
+            if (this.expelledPlayers.contains(id) || (player = this.getServerPlayer(id)) == null
+                || player.isSpectator() || player.isCreative() || player.level() != this.level()
+                || !this.isParticipantVital(player)) continue;
             ++count;
         }
         return count;
     }
 
-    private int getCrossDimensionAliveCount() {
-        if (!(this.level() instanceof ServerLevel)) {
-            return 0;
-        }
-        int count = 0;
-        for (UUID id : this.battleParticipants) {
-            ServerPlayer player;
-            if (this.expelledPlayers.contains(id) || (player = this.getServerPlayer(id)) == null || player.isSpectator() || player.isCreative() || !player.isAlive() || player.level() == this.level()) continue;
-            ++count;
-        }
-        return count;
-    }
+    // 2026-09-13 作者裁决（「跨维不计入存活」）后**删除** `getCrossDimensionAliveCount()`。
+    // 被删方法语义：统计"在线、非旁观、非创造、存活、**且不在 Boss 维度**"的参战者数量。
+    // 它曾被两处判负守卫用作"还有人活着"的依据 —— 全员死亡判负（`checkDefeatByAllDead`）
+    // 与区域卸载判负（`checkBattleAreaUnloaded`），构成设计漏洞（审查报告 03-G-04）：
+    // 玩家可**留一个人跨维**来规避判负（反流放把 Boss 钉死在场，人却能一直拖）。
+    // 现两处守卫均只读 `getActiveParticipantCount()`（跨维与离线同等视为非活跃）⇒ 本方法零引用。
+    // ⇒ 若将来要恢复"跨维也算参战"，**不要**重新引入一个独立的计数方法，而应直接在
+    //    `getActiveParticipantCount()` 内部决定是否把跨维计入（保持单一口径）。
 
     private void tickBlackSun() {
         double ratio;
@@ -5964,6 +6357,13 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         }
         ServerLevel serverLevel = (ServerLevel)level;
         boolean dropReward = this.phase == 2;
+        // 2026-09-13 作者裁决：**2.7 触发只发一阶段奖励（棕盒）**，不发二阶段白盒。
+        // 原因（设计漏洞，审查报告 03-G-02 / 02-G-01）：原实现 `dropReward = (phase == 2)` ⇒ 打到二阶段后
+        // **主动脱离战斗**即拿「与打赢完全相同的白盒」，且冷却同为 `COOLDOWN_DAYS`（3 天）⇒
+        // §十 D7「战斗只有打赢一条路」被推翻。作者裁决语：「只发一阶段奖励」。
+        // 实现手法与 §2.5 全体被传送一致：置 `forcePhase1Reward` ⇒ `settleBattle` 即使 phase==2 也走
+        // `dropPhase1Reward`（棕盒）。
+        this.forcePhase1Reward = true;
         this.settleBattle(serverLevel, (long)(SilentSunConfig.COOLDOWN_DAYS.get()).intValue() * 24000L, dropReward, true);
     }
 
@@ -5982,11 +6382,14 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         if (loot.isEmpty()) {
             return;
         }
-        // 卸载退场（对应维度无玩家）：掉落直接发给参战玩家，不做世界放置（掉落地不可加载）
+        // 卸载退场（对应维度无玩家）：不做世界放置（掉落地不可加载），先试交玩家、否则掉在 Boss 位置
         if (this.leaveReason == LeaveReason.CHUNK_UNLOAD) {
             ItemStack box = ShulkerBoxUtil.createShulkerBox(Items.BROWN_SHULKER_BOX, loot, Component.translatable("container.silent_sun.phase1_reward"));
+            // 2026-09-13 作者裁决：优先交给**物品栏有余位**的参战者（见 deliverRewardToPlayer 的改进说明）；
+            // 无人放得下才掉在 Boss 位置并播报坐标。
             if (!this.deliverRewardToPlayer(serverLevel, box)) {
                 this.spawnAtLocation(box);
+                this.notifyRewardCoordinates(serverLevel, this.blockPosition());
             }
             return;
         }
@@ -5997,8 +6400,11 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         }
         if (!placed) {
             ItemStack box = ShulkerBoxUtil.createShulkerBox(Items.BROWN_SHULKER_BOX, loot, Component.translatable("container.silent_sun.phase1_reward"));
+            // 世界放置失败是**常态**：`findNearbyRewardPlacement` 要求「该格为空气且下方非空气」，
+            // 故 Boss 在空中离场时必然返回 null（作者 2026-09-13 实测确认）。
+            // 顺序：先交给有余位的参战者（背包满则自动试下一位）⇒ 都放不下才掉落 + 播报坐标。
             if (this.deliverRewardToPlayer(serverLevel, box)) {
-                return; // 已发玩家，无世界箱，跳过坐标播报
+                return; // 已交给玩家：无世界箱，无需坐标播报
             }
             this.spawnAtLocation(box);
             placePos = this.blockPosition();
@@ -6119,13 +6525,15 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         boolean crossDim = !hereDim.equals(this.battleAnchorDim);
         boolean voided = !crossDim && this.getY() < (double)serverLevel.getMinBuildHeight() - 8.0;
         boolean exiled = false;
-        // 2026-09-12（用户裁决：口径统一）：下面「是否还有人靠近」的半径原为裸写 16384.0（= 128²），
-        // 与 tickChunkRetention / checkBattleAreaUnloaded / 账本侧同义却各自取值 —— 统一取
-        // RediosRules.battleRadiusBlocks()（默认 72）。
-        // ⚠️ 属**行为变更**：反流放触发更早（原先有人退到 72~128 格之间仍算「有人靠近」）。
+        // 2026-09-12（用户裁决）：下面「是否还有人靠近」的半径原为裸写 16384.0（= 128²），与
+        // tickChunkRetention 同属**极端距离**档（原值同源 128），故一并统一取 HARD_FLEE_RADIUS_BLOCKS = 84。
+        //   修正上一版：那版把它并进 RediosRules.battleRadiusBlocks()（72）属**误并** —— 本条判的是
+        //   「Boss 被推到 256 格外时，这附近还有没有人」，不是「玩家是否已脱离接触」，
+        //   与 72 格那一档（配 60 秒宽限 / 逐出超时）不是同一判据。
+        //   副作用：72~84 格内有人也算「有人靠近」→ 反流放更难触发（更保守）。
         // 注：上方 65536.0（= 256²，锚点偏离阈值）**刻意保留** —— 它判的是「Boss 离战斗锚点多远」，
         // 与「玩家离场半径」不是同一维度，不参与本次统一。
-        double battleRadius = Math.max(1.0, RediosRules.battleRadiusBlocks());
+        double battleRadius = Math.max(1.0, (double)HARD_FLEE_RADIUS_BLOCKS);
         double battleRadiusSqr = battleRadius * battleRadius;
         if (!crossDim && !voided) {
             double dz;
@@ -6211,7 +6619,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         // 附加到最后一条收尾事件上）。
         this.flowPhaseSettle("defeat", "最终结算（发一阶段奖励=" + dropPhase1Reward + "，冷却tick=" + cooldownTicks
             + "，结局书=" + includeDefeatBook + "，强制一阶段奖励=" + this.forcePhase1Reward
-            + "，重建自账本=" + this.rebuiltAsSettled + "）");
+            + "，重建自账本=" + (this.flowRecorder != null && this.flowRecorder.isRebuiltFromRecord()) + "）");
         // 退场秩序化（2026-08-30）：先标记账本「已合法离场」再执行掉落等可能抛异常的步骤。
         // 顺序颠倒（先 clearBattleRecord 再掉落）能保证：即使掉落/音效/清理中抛异常中断，
         // 账本记录也已移除——这是「终态闸门」的实现基础：记录存在 ⟺ 未结算，已结算场次
@@ -6239,7 +6647,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         }
         if (cooldownTicks > 0L && BossTargeting.playerOnlyMode()) {
             this.applySummonCooldown(serverLevel, cooldownTicks);
-            if (this.rebuiltAsSettled) {
+            if (this.flowRecorder != null && this.flowRecorder.isRebuiltFromRecord()) {
                 SilentSunMod.LOGGER.info("Redios rebuilt from record settled normally; summon cooldown applied as usual ({} ticks)", cooldownTicks);
             }
         }
@@ -6263,11 +6671,13 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         if (loot.isEmpty()) {
             return;
         }
-        // 卸载退场（对应维度无玩家）：掉落直接发给参战玩家，不做世界放置（掉落地不可加载）
+        // 卸载退场（对应维度无玩家）：不做世界放置（掉落地不可加载），先试交玩家、否则掉在 Boss 位置
         if (this.leaveReason == LeaveReason.CHUNK_UNLOAD) {
             ItemStack box = ShulkerBoxUtil.createShulkerBox(Items.WHITE_SHULKER_BOX, loot, Component.translatable("container.silent_sun.redios_loot"));
+            // 2026-09-13 作者裁决：同 §一阶段奖励，优先交给物品栏有余位的参战者。
             if (!this.deliverRewardToPlayer(serverLevel, box)) {
                 this.spawnAtLocation(box);
+                this.notifyRewardCoordinates(serverLevel, this.blockPosition());
             }
             return;
         }
@@ -6278,8 +6688,10 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         }
         if (!placed) {
             ItemStack box = ShulkerBoxUtil.createShulkerBox(Items.WHITE_SHULKER_BOX, loot, Component.translatable("container.silent_sun.redios_loot"));
+            // 同上：空中离场时世界放置必然失败（见 §一阶段奖励注释）⇒ 先交给有余位的参战者，
+            // 都放不下才掉落 + 播报坐标。
             if (this.deliverRewardToPlayer(serverLevel, box)) {
-                return; // 已发玩家，无世界箱，跳过坐标播报
+                return;
             }
             this.spawnAtLocation(box);
             placePos = this.blockPosition();
@@ -6383,22 +6795,74 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     }
 
     /**
-     * 唯一性守卫：任意维度已存在 self 以外的 RediosEntity 时返回 true。
-     * self 传 null 表示「检测是否存在任何 RediosEntity」（重建前调用）。
+     * **唯一来源**：全维度查找「存活且未结算」的 RediosEntity；找不到返回 null。
+     * <p>{@code self} 传 {@code null} 表示不排除任何实体；传 {@code this} 表示排除自己
+     *（{@code finalizeSpawn} 用 —— 该实体此时可能已在实体列表里）。
+     * <p>2026-09-14（体检 P1-1 同源化）：本方法是「是否已存在有效 Boss」这一语义的**唯一实现**，
+     * 召唤器 {@code RediosSigilItem} 与祭坛 {@code CleavingPainBlockEntity} 均改调本方法。
+     * 此前该语义有**三份**实现且判据不一致（其中两份漏了 {@code settlementDone}）⇒ 离场结算窗口内误判
+     * ⇒ 召唤器把玩家传送到正在消失的 Boss 处、祭坛**静默吞掉召唤材料**（详见施工台账 #45）。
      */
-    public static boolean isAnotherRediosPresent(ServerLevel level, Entity self) {
+    public static RediosEntity findExisting(ServerLevel level, Entity self) {
         MinecraftServer server = level.getServer();
         if (server == null) {
-            return false;
+            return null;
         }
         for (ServerLevel sl : server.getAllLevels()) {
             for (Entity e : sl.getEntities().getAll()) {
-                if (!(e instanceof RediosEntity)) continue;
-                if (e == self) continue;
-                return true;
+                if (!(e instanceof RediosEntity other)) continue;
+                if (other == self) continue;
+                // 2026-09-14（体检 P0-2 修复，作者裁定「只计入活体且未结算」）：
+                // 原实现只看类型 ⇒「逻辑上已结束、但同 tick 仍在实体列表里」的 Boss 也算数
+                // ⇒ `finalizeSpawn` 拒绝生成 / `rebuildFromRecord` 拒绝回场（闸门类误判 = 功能阻断）。
+                // ⚠️ 只加 `isAlive()` 补不上这个洞 —— **正在离场结算的 Boss 血量是正的**，
+                //    `isAlive()` 仍为 true；真正能挡住它的是 `settlementDone`。三者缺一不可。
+                if (other.isRemoved() || !other.isAlive() || other.settlementDone) continue;
+                return other;
             }
         }
-        return false;
+        return null;
+    }
+
+    /**
+     * 唯一性守卫：任意维度已存在 self 以外的**有效** RediosEntity 时返回 true。
+     * self 传 null 表示「检测是否存在任何有效 RediosEntity」（重建前调用）。
+     * <p>2026-09-14（P1-1）：改为委托 {@link #findExisting} —— 判据不在此处重复，杜绝再次漂移。
+     */
+    public static boolean isAnotherRediosPresent(ServerLevel level, Entity self) {
+        return findExisting(level, self) != null;
+    }
+
+    /**
+     * 把玩家传送到 Boss 附近水平 3~5 格的随机安全落点（2026-08-30：落点高度 = Boss 所在高度，
+     * Boss 在空中/高处时玩家也传到同高度，不再回落地表）。M22：优先找安全落点。
+     * <p>2026-09-14（体检 P1-1 同源化）：本方法是**唯一实现**，召唤器与祭坛均改调本方法
+     *（原两处各写一遍，方法体逐行等价）。
+     * <p>⚠️ 目标维度取 {@code boss.level()}（**Boss 所在维度**），而非调用方所在维度 ——
+     * 祭坛原版用「祭坛所在维度」传送，而 Boss 由 {@link #findExisting} **跨维度**查得（可能在别的维度）
+     * ⇒ 跨维度时会把玩家传到「祭坛维度 + Boss 坐标」的错误位置。合并后顺带修正该既有缺陷。
+     */
+    public static void teleportPlayerNearBoss(Player player, RediosEntity boss) {
+        if (boss == null || !(boss.level() instanceof ServerLevel sl)) {
+            return;
+        }
+        for (int i = 0; i < 12; i++) {
+            double angle = sl.getRandom().nextDouble() * Math.PI * 2.0;
+            double dist = 3.0 + sl.getRandom().nextDouble() * 2.0;
+            double x = boss.getX() + Math.cos(angle) * dist;
+            double z = boss.getZ() + Math.sin(angle) * dist;
+            double y = boss.getY() + 0.5;
+            BlockPos feet = BlockPos.containing(x, y, z);
+            if (sl.getBlockState(feet).isAir()
+                && sl.getBlockState(feet.above()).isAir()
+                && !sl.getBlockState(feet.below()).isAir()) {
+                player.teleportTo(sl, x, y, z, Set.of(), player.getYRot(), player.getXRot());
+                return;
+            }
+        }
+        double angle = sl.getRandom().nextDouble() * Math.PI * 2.0;
+        double dist = 3.0 + sl.getRandom().nextDouble() * 2.0;
+        player.teleportTo(sl, boss.getX() + Math.cos(angle) * dist, boss.getY() + 0.5, boss.getZ() + Math.sin(angle) * dist, Set.of(), player.getYRot(), player.getXRot());
     }
 
     public static boolean rebuildFromRecord(ServerLevel level, RediosBattleData.BattleRecord record) {
@@ -6509,11 +6973,27 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             float segment = maxHealth / (float)titles.size();
             restored = maxHealth - (float)titleIdx * segment;
         } else {
-            restored = record.health > 0.0f ? Mth.clamp(record.health, 1.0f, maxHealth) : maxHealth;
+            // 2026-09-13（N1，作者裁决「改，下限换成段底」）：非末位头衔的恢复下限由 1.0f 改为**段底**。
+            // 原实现 `clamp(record.health, 1.0f, maxHealth)` 自 0.0.24 起一字未变（历史比对已证），
+            // 问题是：若账本快照取自「血量低于段底」的时刻（绕过 setHealth 的直写残留 / 旧档 / 异常中断），
+            // 重建后血量会**直接低于段底**，只能靠 `tick()` 里的「每 tick 段底保底」在**下一 tick** 纠正
+            // —— 又是"先错后救"，与刚立下的「段底 = 每 tick 不变量」不一致。
+            // 段底取 currentTitleSegmentFloor()（与 `setHealth` 的写入前钳制、`die()` 段底守卫、
+            // 每 tick 保底**同源**）⇒ 段底四处同源，不新写第五份算法。
+            // 注：该法读的是 `this.titleIndex`；若旧档携带越界值，其内部 `max(0, …)` 会退化为 0
+            // ⇒ `Math.max(1.0f, 0)` = 1，与旧行为一致（越界档不会因此变差）。
+            float floor = boss.currentTitleSegmentFloor();
+            restored = record.health > 0.0f
+                ? Mth.clamp(record.health, Math.max(1.0f, floor), maxHealth)
+                : maxHealth;
         }
         boss.forceSetHealth(restored);
         boss.anticheat.markLegalHealthChange(boss.getHealth());
-        boss.rebuiltAsSettled = true;
+        // 2026-09-13（N2 方案 b）：取代原 `boss.rebuiltAsSettled = true` —— 改记到**战斗记录**里，
+        // 使「本场发生过重建回场」可从 `session.rebuiltFromRecord` 检索（原字段只服务一行日志）。
+        if (boss.flowRecorder != null) {
+            boss.flowRecorder.markRebuiltFromRecord();
+        }
         // 2026-09-10 实测修复（L4）：必须检查落地结果——原实现丢弃 addFreshEntity 返回值后无条件
         // return true，于是"重建没站住"也被当成成功（A8 已取消重建次数上限）→ 每 5 秒重试一次并
         // 每次广播「来！不打到痛快不罢休！」，无限循环。失败时交给 rebuildOrDrop 的冷却门重试。
@@ -6522,7 +7002,11 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
                 record.pos, record.phase, record.titleIndex);
             return false;
         }
-        boss.leaveReason = LeaveReason.ANOMALY;
+        // 2026-09-13（N2 方案 b，作者裁定）：原此处设 `leaveReason = ANOMALY`、又在方法末尾复位成 NONE
+        // ⇒ 该值**只服务于下面那条日志**，导出时 `session.leaveReason` 恒为 NONE ——
+        // 「本场是否发生过重建」在战斗记录里**不可检索**。现改为记进 `BattleFlowRecorder`
+        // （见上方 `markRebuiltFromRecord()`，随 `session.rebuiltFromRecord` 落盘）。
+        // `leaveReason` 不再被这一路过路污染，其语义恢复为「本场**以什么方式**离场」。
         boss.broadcastToParticipants(boss.rediosSigned(Component.translatable("message.silent_sun.redios.rebuilt_after_purge").withStyle(ChatFormatting.RED)));
         // 2026-09-11 用户裁决（C5 落地）：**重建回场本身就是"明确的作弊场景"** —— 外部模组/存档编辑
         // 把 Boss 清除掉（例：寰宇支配之剑的"清除实体"）。按设计触发反作弊惩罚：全员警告 +
@@ -6535,8 +7019,11 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             boss.anticheat.isPunishGateClosed(), "外部清除 Boss 后按账本重建回场（参战 "
                 + boss.battleParticipants.size() + " 人）");
         boss.anticheat.counterAllCheatAttackers(level, true);
-        SilentSunMod.LOGGER.warn("Redios rebuilt from battle record at {} (externally removed, phase={}, leaveReason={})", new Object[]{record.pos, record.phase, boss.leaveReason});
-        boss.leaveReason = LeaveReason.NONE;
+        // 2026-09-13（N2 方案 b）：日志不再读 `leaveReason` —— 该场是否重建已由战斗记录的
+        // `session.rebuiltFromRecord` 承载且可检索；原「设 ANOMALY 再复位 NONE」只是给这行日志
+        // 喂一个词，反而让人误以为 `leaveReason` 能反映重建。
+        SilentSunMod.LOGGER.warn("Redios rebuilt from battle record at {} (externally removed, phase={}, rebuiltFromRecord=true)",
+            new Object[]{record.pos, record.phase});
         return true;
     }
 
@@ -6565,17 +7052,29 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         if (this.battleParticipants.isEmpty()) {
             return;
         }
-        // 2026-09-01 用户裁决：最近活跃参战玩家 > 128 格直接退场，无视 AI 停止
+        // 2026-09-01 用户裁决：最近活跃参战玩家 > 84 格直接退场，无视 AI 停止
         //（不再因 VOTE/TRANSITION 提前返回）。外部性能模组（Adaptive Performance Tweaks 等）
         // 强保区块加载会让 checkBattleAreaUnloaded 永不触发，这里改用「最近玩家距离」兜底退场。
         int active = 0;
         boolean anyClose = false;
-        // 2026-09-12（用户裁决：口径统一）：退场半径不再硬编码 128 格，统一取
-        // RediosRules.battleRadiusBlocks()（默认 72），与 checkBattleAreaUnloaded 的创造豁免半径、
-        // RediosBattleData 账本侧的走远判据同源 —— 原先三处各自裸写 128 / 4096.0(64²) / 72。
-        // ⚠️ 属**行为变更**：原来 72~128 格之间不断战，现在会断（退场更早）。
-        double retentionRadius = Math.max(1.0, RediosRules.battleRadiusBlocks());
+        // 2026-09-12（用户裁决，修正上一版「口径统一」）：本条是**极端逃离即时退场**，半径取
+        // HARD_FLEE_RADIUS_BLOCKS = 84，不再复用 RediosRules.battleRadiusBlocks()（72）。
+        //   起因：上一版把它与通用脱战统一成 72 后，因本方法在 tick() 顶层无条件先执行、且一退场即
+        //   safeDiscard（其后 L770 立即 return），72 格那一档的宽限机制全部被抢先废掉 ——
+        //   tickBattleAreaCheck 的逐出超时、checkAllParticipantsDisengaged 的 60 秒宽限都成了死代码，
+        //   玩家一越过 72 格 Boss 就无奖励消失（VOTE 期 600 tick 投票倒计时同样形同虚设）。
+        //   现两档分离：≤72 正常战斗，72~84 交宽限机制，>84 即时逃离退场（保持本兜底语义，无宽限）。
+        double retentionRadius = Math.max(1.0, (double)HARD_FLEE_RADIUS_BLOCKS);
         double retentionRadiusSqr = retentionRadius * retentionRadius;
+        // 2026-09-12（用户裁决「能保证不误判就行」）：基准由 Boss **实时坐标** 改为**战斗锚点**。
+        //   同类问题：2.9 的传送是 Boss 的核心机制（teleportToAttackEdge），基准随传送漂移后，
+        //   没跑远的玩家会被瞬间判成「最近玩家 > 84 格」⇒ 本方法**即时退场、无宽限**（无奖励），
+        //   与 checkVoidBattleRange 的误逐出是同一个根因。锚点在战斗开始时设一次并落盘，不随传送漂，
+        //   本文件 tickAntiExile 与账本侧 RediosBattleData 的走远判定都已用它。
+        //   「逃离」的正确语义是**远离战场**，不是远离 Boss 当前所在格。
+        BlockPos retainAnchor = this.battleAnchorPos != null ? this.battleAnchorPos : this.blockPosition();
+        double retainAnchorX = (double)retainAnchor.getX() + 0.5;
+        double retainAnchorZ = (double)retainAnchor.getZ() + 0.5;
         for (UUID id : this.battleParticipants) {
             ServerPlayer player = this.getServerPlayer(id);
             if (this.expelledPlayers.contains(id) || player == null || player.isSpectator()
@@ -6584,9 +7083,9 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             }
             ++active;
             // 只按水平（XZ）距离判定：不把高度轴算进退场距离，
-            // 否则 Boss 高度飞行（飞上去追人）时地面玩家会被垂直差误判 >128 格。
-            double dx = player.getX() - this.getX();
-            double dz = player.getZ() - this.getZ();
+            // 否则 Boss 高度飞行（飞上去追人）时地面玩家会被垂直差误判 >84 格。
+            double dx = player.getX() - retainAnchorX;
+            double dz = player.getZ() - retainAnchorZ;
             if (dx * dx + dz * dz <= retentionRadiusSqr) {
                 anyClose = true;
                 break;
@@ -6610,7 +7109,7 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             this.bossLeaveNoLoot();
             return;
         }
-        // 非硬核：最近玩家 > 128 格直接无奖励退场（逃离优先）。
+        // 非硬核：最近玩家 > 84 格直接无奖励退场（逃离优先）。
         this.bossLeaveNoLoot();
     }
 
@@ -6625,7 +7124,11 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
                 this.allParticipantsDeadTicks = 0;
                 return false;
             }
-            if (this.getActiveParticipantCount() > 0 || this.getCrossDimensionAliveCount() > 0) {
+            // 2026-09-13 作者裁决（「跨维不计入存活」）：**删除**原 `|| this.getCrossDimensionAliveCount() > 0`。
+            // 原因（设计漏洞，审查报告 03-G-04）：跨维玩家原先"计入存活"⇒ 可**留一个人跨维**来规避
+            // 「全员死亡判负」与「区域卸载判负」（反流放把 Boss 钉死在场，人却能一直拖）。
+            // 现与**离线**同等处理：跨维玩家视为非活跃，不阻止判负。
+            if (this.getActiveParticipantCount() > 0) {
                 this.allParticipantsDeadTicks = 0;
                 return false;
             }
@@ -6671,6 +7174,13 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             this.disengageTicks = 0;
             return false;
         }
+        // 2026-09-12（用户裁决「能保证不误判就行」）：基准由 Boss **实时坐标** 改为**战斗锚点**。
+        //   本条有 60 秒宽限，传送造成的瞬时漂移不至于误判；但 2.9 的 Boss 传送后若**停在远处超过
+        //   60 秒**，留在锚点附近的玩家仍会被判「全员脱战」⇒ Boss 无奖励退场。锚点不随传送漂，
+        //   与 tickAntiExile / 账本侧 / 已修的 checkVoidBattleRange、tickChunkRetention 同一口径。
+        BlockPos disengageAnchor = this.battleAnchorPos != null ? this.battleAnchorPos : this.blockPosition();
+        double disengageAnchorX = (double)disengageAnchor.getX() + 0.5;
+        double disengageAnchorZ = (double)disengageAnchor.getZ() + 0.5;
         int active = 0;
         boolean anyClose = false;
         for (UUID id : this.battleParticipants) {
@@ -6682,8 +7192,8 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             // 2026-09-11（代码审计 P2 修复）：与 tickChunkRetention 的口径统一——只按水平（XZ）距离。
             // 原用 player.distanceToSqr(this)（含 Y 轴），Boss 高度飞行去追人时，地面玩家会被垂直差
             // 误判为「超出战斗半径」→ 60 秒后判全员脱战 → Boss 无奖励退场（明明水平还在圈内）。
-            double dx = player.getX() - this.getX();
-            double dz = player.getZ() - this.getZ();
+            double dx = player.getX() - disengageAnchorX;
+            double dz = player.getZ() - disengageAnchorZ;
             if (dx * dx + dz * dz <= radiusSqr) {
                 anyClose = true;
                 break;
@@ -6711,7 +7221,9 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
                 this.battleAreaUnloadedTicks = 0;
                 return false;
             }
-            if (this.getActiveParticipantCount() == 0 && this.getCrossDimensionAliveCount() == 0) {
+            // 2026-09-13 作者裁决（「跨维不计入存活」）：同 §全员死亡判负 —— 删除
+            // `|| this.getCrossDimensionAliveCount() > 0`，跨维玩家不再阻止「区域卸载判负」。
+            if (this.getActiveParticipantCount() == 0) {
                 this.battleAreaUnloadedTicks = 0;
                 return false;
             }
@@ -6728,9 +7240,23 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         // 合并成格数会改变语义。
         double battleRadius = Math.max(1.0, RediosRules.battleRadiusBlocks());
         double battleRadiusSqr = battleRadius * battleRadius;
+        // 2026-09-12（用户裁决「能保证不误判就行」）：创造模式的「仍在场」豁免，基准由 Boss 实时坐标
+        // 改为**战斗锚点**、并把三维距离（含 Y）改为**水平（XZ）**——与本文件其余全部离场判定
+        // （checkVoidBattleRange / tickChunkRetention / tickAllParticipantsDisengaged / tickBattleAreaCheck
+        // / tickAntiExile / 账本侧）统一。原写法 `player.distanceToSqr(this)` 有两个问题：
+        //   ① 原点随 2.9 传送漂移 ⇒ 创造玩家在锚点附近却被判「不在场」⇒ 区块卸载退场可能被误触发；
+        //   ② 含 Y 轴 ⇒ Boss 高飞时地面创造玩家被垂直差误判为「超出半径」。
+        BlockPos unloadAnchor = this.battleAnchorPos != null ? this.battleAnchorPos : this.blockPosition();
+        double unloadAnchorX = (double)unloadAnchor.getX() + 0.5;
+        double unloadAnchorZ = (double)unloadAnchor.getZ() + 0.5;
         for (UUID id : this.battleParticipants) {
             ServerPlayer player = this.getServerPlayer(id);
-            if (player == null || this.expelledPlayers.contains(id) || player.isSpectator() || !player.isAlive() || player.level() != this.level() || !serverLevel.isPositionEntityTicking(player.blockPosition()) || player.isCreative() && !(player.distanceToSqr(this) <= battleRadiusSqr)) continue;
+            if (player == null || this.expelledPlayers.contains(id) || player.isSpectator() || !player.isAlive() || player.level() != this.level() || !serverLevel.isPositionEntityTicking(player.blockPosition())) continue;
+            if (player.isCreative()) {
+                double cdx = player.getX() - unloadAnchorX;
+                double cdz = player.getZ() - unloadAnchorZ;
+                if (cdx * cdx + cdz * cdz > battleRadiusSqr) continue;
+            }
             anyTicking = true;
             break;
         }
@@ -6950,7 +7476,10 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             return;
         }
         ServerLevel serverLevel2 = (ServerLevel)level;
-        this.checkVoidBattleRange(serverLevel2);
+        // 2026-09-12（用户裁决「以不误踢为主」）：原此处调用 `checkVoidBattleRange`（2.9 专属即时逐出，
+        // 64 格、无宽限）—— **已删除该方法与其调用**。它是 `tickBattleAreaCheck`（72 格 + 逐出超时，
+        // 在 `tick()` 内无条件执行）的重复实现，后者本来就已覆盖 2.9 阶段。
+        // 效果：2.9 被击退 / 被传送不再直接出局，而是进入出圈计时（有坐标提示，走回即可取消）。
         if (this.voidTeleportCooldown > 0) {
             --this.voidTeleportCooldown;
         }
@@ -7118,32 +7647,14 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         }
     }
 
-    /*
-     * WARNING - Removed try catching itself - possible behaviour change.
-     */
-    private void checkVoidBattleRange(ServerLevel serverLevel) {
-        for (UUID id : new HashSet<UUID>(this.battleParticipants)) {
-            ServerPlayer player = this.getServerPlayer(id);
-            if (player == null || this.expelledPlayers.contains(id) || player.isSpectator() || player.isCreative() || !player.isAlive() || player.level() != this.level()) continue;
-            // 2026-09-11（代码审计 P2 修复）：统一为水平（XZ）距离，同 tickChunkRetention / 脱战判定。
-            // 原用 this.distanceToSqr(player)（含 Y 轴），2.9 期间 Boss 高飞时地面玩家会被垂直差
-            // 误判为「超出 64 格」而即时逐出。
-            double vdx = player.getX() - this.getX();
-            double vdz = player.getZ() - this.getZ();
-            if (vdx * vdx + vdz * vdz <= VOID_BATTLE_RANGE_BLOCKS_SQR) continue;
-            ChunkPos cp = player.chunkPosition();
-            if (!serverLevel.getChunkSource().hasChunk(cp.x, cp.z)) continue;
-            player.sendSystemMessage(this.rediosSigned(Component.translatable("message.silent_sun.redios.expelled").withStyle(ChatFormatting.DARK_RED)));
-            // 2026-09-11（代码审计 G17 修复）：改为复用统一入口 expelFromBattle。
-            // 原先的内联实现只做「remove 参战者 + 清格挡统计 + cleanupPlayerAfterBattle」，
-            // 漏掉该入口的 4 项状态更新：expelledPlayers 登记（被逐出者不算已逐出，可能再次入战）、
-            // twilightTimedMissingTicks / twilightTimedMissingFromApply 两个计时表、
-            // hardcoreProtectedPlayers（硬核 1 血保护残留）；且 allExpelledLeavePending 的判据
-            // 少了 playerOnlyMode()，Mode 2（斗蛐蛐）下会误判全员离场而让 Boss 无奖励退场。
-            this.expelFromBattle(player);
-            SilentSunMod.LOGGER.warn("[Redios] 2.9 超距逐出：{}", player.getName().getString());
-        }
-    }
+    // 2026-09-12（用户裁决「**以不误踢为主**」）：原 `checkVoidBattleRange`（2.9「空无万象」专属
+    // **即时逐出**，64 格、无宽限，「回去休息吧」那句消息就来自它）**已整段删除**。
+    //   · 它是 `tickBattleAreaCheck`（72 格 + `battle_expel_timeout_seconds` 逐出超时、单人出圈逐出）
+    //     的**重复实现**，而后者在 `tick()` 里**无条件执行**，本来就已覆盖 2.9 阶段；
+    //   · 删除依据见字段区注释（原始设计「脱战判定同 3.6」/ 锚点修复后补偿前提消失 / 实测误逐出）；
+    //   · 连同常量 `VOID_BATTLE_RANGE_BLOCKS` 与 `_SQR` 一并删除（它们只被本方法使用）。
+    // ⇒ 现在 2.9 与其余阶段**共用同一档**，不再有"更严的即时档"。要调松紧改配置即可：
+    //   `battle_radius_blocks`（半径）、`battle_expel_timeout_seconds`（宽限）。
 
     /**
      * 「阻断外部传送」的唯一判据（2026-09-11 代码审计 G17 #2 修复）。
@@ -7250,15 +7761,16 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         boolean hasDiamondBlocks = false;
         Iterator<ItemStack> it = loot.iterator();
         while (it.hasNext()) {
-            String title;
             String hover;
             ItemStack stack = it.next();
             if (stack == null || stack.isEmpty()) continue;
+            // ⚠️ 下面两处「列表 / 统计物品」「记载物品」识别针对的是**外部（整合包作者）按标题约定造的
+            // 书**——本模组从不创建它们 ⇒ 按 hover 名匹配是正确口径，勿改成读存储 title。
             if ((stack.is(Items.WRITTEN_BOOK) || stack.is(Items.WRITABLE_BOOK)) && (DROP_LIST_BOOK_TITLE.equals(hover = stack.getHoverName().getString()) || DROP_STATS_BOOK_TITLE.equals(hover))) {
                 it.remove();
                 continue;
             }
-            if (stack.is(Items.WRITTEN_BOOK) && (OUTCOME_BOOK_LEGACY_TITLE.equals(title = stack.getHoverName().getString()) || OUTCOME_BOOK_TITLE.equals(title))) {
+            if (stack.is(Items.WRITTEN_BOOK) && this.isOutcomeBookStack(stack)) {
                 if (!hasBook) {
                     this.applyOutcomeBookContent(stack, outcome);
                     hasBook = true;
@@ -7292,6 +7804,29 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         }
     }
 
+    /**
+     * 是否为「本模组的结局书」——用于掉落去重（{@link #ensureMandatoryLoot}）。
+     * <p>
+     * 2026-09-20（多语言接线·收尾）：判据改为**优先读存储内的 title**
+     * （{@code WRITTEN_BOOK_CONTENT.title().raw()}，语言无关）。原因：显示名自本日起走
+     * {@code ITEM_NAME} + lang 键，而 {@code getHoverName()} 会优先解析该组件 —— 若继续拿
+     * hover 名匹配中文字面量，英文/其它语言客户端下就会**认不出自己造的书**，导致掉落里多塞一本。
+     * <p>
+     * hover 名那一档**保留**，用于兼容两类书：① 旧存档里已存在的书（其存储 title 同为该字面量，
+     * 两条路都命中）；② 整合包作者手造的、只改了显示名的同名书。
+     */
+    private boolean isOutcomeBookStack(ItemStack stack) {
+        WrittenBookContent content = stack.get(DataComponents.WRITTEN_BOOK_CONTENT);
+        if (content != null) {
+            String stored = content.title().raw();
+            if (OUTCOME_BOOK_TITLE.equals(stored) || OUTCOME_BOOK_LEGACY_TITLE.equals(stored)) {
+                return true;
+            }
+        }
+        String hover = stack.getHoverName().getString();
+        return OUTCOME_BOOK_TITLE.equals(hover) || OUTCOME_BOOK_LEGACY_TITLE.equals(hover);
+    }
+
     private ItemStack createOutcomeBook(RediosBookOutcome outcome) {
         ItemStack book = new ItemStack(Items.WRITTEN_BOOK);
         this.applyOutcomeBookContent(book, outcome);
@@ -7299,24 +7834,50 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     }
 
     private void applyOutcomeBookContent(ItemStack book, RediosBookOutcome outcome) {
-        String text = this.resolveOutcomeBookText(outcome);
-        List<Filterable<Component>> pages = List.of(Filterable.passThrough(Component.literal((String)text)));
+        // 2026-09-18（多语言接线）：书页由 translatable 组件构成，客户端打开时按自身语言解析。
+        MutableComponent page = this.resolveOutcomeBookStory(outcome).copy()
+            .append("\n\n")
+            .append(this.buildOutcomeBattleRecord());
+        List<Filterable<Component>> pages = List.of(Filterable.passThrough(page));
         WrittenBookContent content = new WrittenBookContent(Filterable.passThrough(OUTCOME_BOOK_TITLE), RediosRules.rediosBookAuthor(), 0, pages, true);
         book.set(DataComponents.WRITTEN_BOOK_CONTENT, content);
+        // 2026-09-20（多语言接线·收尾）：显示名走 lang 键（书页正文见 resolveOutcomeBookStory）。
+        // 优先级：ItemStack.getHoverName() 取 CUSTOM_NAME → ITEM_NAME → item.getName(stack)，
+        // 而 WrittenBookItem.getName 才去读 WrittenBookContent.title ⇒ ITEM_NAME 足以覆盖标题。
+        // 用 ITEM_NAME 而非 CUSTOM_NAME：后者会带斜体，成书应保持原版的不斜体外观。
+        book.set(DataComponents.ITEM_NAME, Component.translatable(OUTCOME_BOOK_NAME_KEY));
     }
 
-    private String resolveOutcomeBookText(RediosBookOutcome outcome) {
-        MinecraftServer server = null;
-        Level level = this.level();
-        if (level instanceof ServerLevel) {
-            server = ((ServerLevel)level).getServer();
-        }
-        return switch (outcome.ordinal()) {
-            case 0 -> this.applyOutcomePlaceholders(BookTextCache.getOrDefault(server, RediosRules.rediosOutcomeTextPhase1WinOnlyFile(), "\u505a\u7684\u4e0d\u9519\uff0c\u652f\u6301\u4e0b\u6b21\u518d\u6765"));
-            case 1 -> this.applyOutcomePlaceholders(BookTextCache.getOrDefault(server, RediosRules.rediosOutcomeTextPhase1WinPhase2LoseFile(), RediosRules.rediosNotePhase1WinPhase2Lose()));
-            case 2 -> this.applyOutcomePlaceholders(BookTextCache.getOrDefault(server, RediosRules.rediosOutcomeTextPhase2WinFile(), "\u6211\u5e94\u6025\u63aa\u65bd\u53d1\u52a8\u4e86\uff0c\u6253\u5230\u8fd9\u5c31\u884c\u4e86\uff0c\u4f60\u5e94\u8be5\u6253\u723d\u4e86\u5427\uff1f\u6211\u80af\u5b9a\u662f\u6253\u723d\u4e86"));
-            default -> throw new MatchException(null, null);
+    /**
+     * 结局书故事部分。原为服务端数据包 txt（data/silent_sun/books/redios/outcome_*.txt），
+     * 数据资源对所有语言一视同仁、无法随客户端语言变化；现改用 translatable 组件，
+     * 每种客户端语言读到自己的文案。战斗记录（服务端运行时数据）见 {@link #buildOutcomeBattleRecord()}。
+     */
+    private Component resolveOutcomeBookStory(RediosBookOutcome outcome) {
+        return switch (outcome) {
+            case PHASE1_WIN_ONLY -> Component.translatable("book.silent_sun.redios.phase1_win.page0");
+            case PHASE1_WIN_PHASE2_LOSE -> Component.translatable("book.silent_sun.redios.defeat.page0",
+                Component.translatable("book.silent_sun.redios.defeat.remain").withStyle(ChatFormatting.RED, ChatFormatting.BOLD));
+            case PHASE2_WIN -> Component.translatable("book.silent_sun.redios.victory.page0");
         };
+    }
+
+    /**
+     * 结局书末尾的战斗记录：标签走 translatable（随语言变化），数据为服务端运行时字面量。
+     */
+    private Component buildOutcomeBattleRecord() {
+        String dimension = this.level().dimension().location().toString();
+        BlockPos pos = this.blockPosition();
+        int durationSeconds = 0;
+        if (this.level() instanceof ServerLevel serverLevel && this.battleStartGameTime >= 0L) {
+            durationSeconds = (int)Math.max(0L, (serverLevel.getGameTime() - this.battleStartGameTime) / 20L);
+        }
+        MutableComponent record = Component.translatable("book.silent_sun.record.title").copy().append("\n");
+        record.append(Component.translatable("book.silent_sun.record.dimension", dimension)).append("\n");
+        record.append(Component.translatable("book.silent_sun.record.position", pos.getX(), pos.getY(), pos.getZ())).append("\n");
+        record.append(Component.translatable("book.silent_sun.record.participants", this.formatOutcomeParticipants())).append("\n");
+        record.append(Component.translatable("book.silent_sun.record.duration", durationSeconds));
+        return record;
     }
 
     private boolean hasClearedPhase1ForLoot() {
@@ -7378,24 +7939,6 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             .ifPresent(item -> loot.add(new ItemStack(item, count)));
     }
 
-    private String applyOutcomePlaceholders(String template) {
-        if (template == null) {
-            return "";
-        }
-        String dimension = this.level().dimension().location().toString();
-        BlockPos pos = this.blockPosition();
-        int durationSeconds = 0;
-        Level level = this.level();
-        if (level instanceof ServerLevel) {
-            ServerLevel serverLevel = (ServerLevel)level;
-            if (this.battleStartGameTime >= 0L) {
-                durationSeconds = (int)Math.max(0L, (serverLevel.getGameTime() - this.battleStartGameTime) / 20L);
-            }
-        }
-        String participants = this.formatOutcomeParticipants();
-        return template.replace("{dimension}", dimension).replace("{x}", Integer.toString(pos.getX())).replace("{y}", Integer.toString(pos.getY())).replace("{z}", Integer.toString(pos.getZ())).replace("{participants}", participants).replace("{duration_seconds}", Integer.toString(durationSeconds));
-    }
-
     private String formatOutcomeParticipants() {
         Set<UUID> ids = this.initialParticipants.isEmpty() ? this.battleParticipants : this.initialParticipants;
         Set<UUID> set = ids;
@@ -7422,7 +7965,13 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     private Component getBossBarName() {
         List<Component> titles = this.phase == 1 ? PHASE1_TITLES : PHASE2_TITLES;
         Component title = titles.get(Mth.clamp((int)this.titleIndex, 0, titles.size() - 1));
-        MutableComponent base = this.getType().getDescription().copy().append(Component.literal(" \u00b7 ")).append(title);
+        // 2026-09-18（多语言接线）：相位标签「一阶段/二阶段」走 translatable，
+        // 随客户端语言解析（hud.silent_sun.redios.phase1/2），自定义血条渲染器直接画完整名字。
+        MutableComponent base = this.getType().getDescription().copy()
+            .append(Component.literal(" "))
+            .append(Component.translatable(this.phase == 2 ? "hud.silent_sun.redios.phase2" : "hud.silent_sun.redios.phase1").withStyle(ChatFormatting.DARK_GRAY))
+            .append(Component.literal(" \u00b7 "))
+            .append(title);
         if (this.bossState.isVoteOrTransition()) {
             return base;
         }
@@ -7754,8 +8303,8 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     }
 
     public void registerControllers(AnimatableManager.ControllerRegistrar controllers) {
-        controllers.add(new AnimationController(this, "main", 5, state -> state.setAndContinue(DefaultAnimations.IDLE)));
-        controllers.add(new AnimationController(this, "transition", 0, state -> state.setAndContinue(TRANSITION_ANIM)));
+        controllers.add(new AnimationController<>(this, "main", 5, state -> state.setAndContinue(RawAnimation.begin().thenLoop("animation.redios.idle"))));
+        controllers.add(new AnimationController<>(this, "transition", 0, state -> state.setAndContinue(TRANSITION_ANIM)));
     }
 
     public AnimatableInstanceCache getAnimatableInstanceCache() {
@@ -7781,6 +8330,18 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     }
 
     void beginPhase2Choice() {
+        // 2026-09-12（用户裁决）：「phase1_clear 的意思是**投票开始时给**」，其用途是**提醒玩家
+        // 二阶段的难度**（文案「做好准备再来吧 / 意犹未尽啊……」即此意）—— 它是**进度提示**型成就，
+        // 不是击杀表彰。故判据是「**是否走到「即将进入二阶段」这个节点**」，与走哪条路径无关：
+        //   ・授予点即本方法入口，位于 `transitionTo(BossState.PHASE1_VOTE)`（投票真正开始）之前几行、
+        //     **同一 tick** ⇒ 等价于「投票开始时授予」，且与玩家后续投 yes / no 无关（否决也照给）；
+        //   ・本方法是全部 P1 收尾路径的**唯一入口**（全库仅此一处调用），故一并覆盖 4 条**不投票**的
+        //     配置/边角路径（非玩家模式直转 / 免投票直转 / 无投票者 / 零票）—— 这些场次玩家同样要面对
+        //     二阶段，按上述用途**应当**给；漏给反而违背本成就的设计目的。
+        // 原实现在 startTransition() 内授予 ⇒ 投票否决路径不经过它，玩家白打完一阶段却拿不到成就。
+        if (this.level() instanceof ServerLevel) {
+            this.grantAdvancementToParticipants((ServerLevel)this.level(), "phase1_clear");
+        }
         if (!BossTargeting.playerOnlyMode()) {
             this.startTransition();
             return;
@@ -7898,25 +8459,52 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         return null;
     }
 
-    /** 把奖励潜影盒直接发给参战玩家（物品栏满则掉落在其脚下）。返回是否成功交给某在线玩家。 */
+    /**
+     * 把奖励潜影盒交给**物品栏有余位**的参战玩家。
+     * <p>
+     * **2026-09-13 作者裁决**（原话：「改动前的主流路径可以留下，并且给物品栏有空位的玩家更好，
+     * 这一点应该也在结算播报显示」）—— 本方法在同日一度被删除、改为「一律掉落」，现按该裁决**恢复并改进**：
+     * <ul>
+     *   <li>**与原实现的差别**：原版取「遍历顺序里第一个有效玩家」，若其**背包满**则 `drop` 在其脚下
+     *       （等同强制掉落、可能被他人捡走或落入危险地形）；现改为**继续尝试下一位**，直到找到放得下的人。
+     *       ⇒ 只有「所有人都放不下 / 无有效在线者」才返回 false，交由调用方走 `spawnAtLocation`。</li>
+     *   <li>**归属**：不按首刀、也不按击杀者 —— 全库**没有**这两类记录（`battleParticipants` 是 `HashSet`，
+     *       无首位概念），且作者裁决「归属感随便了，如果是随机也行，因为模组可以被魔改」
+     *       ⇒ 取遍历顺序中第一个有余位者。</li>
+     *   <li>**播报**：成功时向全体参战者播报「奖励已交给 &lt;玩家&gt;」，使奖励去向可见（作者明确要求结算播报体现）。</li>
+     * </ul>
+     * 调用方顺序（三处发放点一致）：世界箱放置成功 → 用它；否则 → 本方法；再否则 → 掉落 + 坐标播报。
+     */
     private boolean deliverRewardToPlayer(ServerLevel serverLevel, ItemStack box) {
-        for (UUID id : this.battleParticipants) {
-            ServerPlayer p = this.getServerPlayer(id);
-            if (p == null || p.isSpectator() || !p.isAlive()) continue;
-            if (!p.getInventory().add(box)) {
-                p.drop(box, false);
+        for (UUID id : new HashSet<UUID>(this.battleParticipants)) {
+            if (this.tryGiveRewardBox(box, id)) {
+                return true;
             }
-            return true;
         }
-        for (UUID id : this.expelledPlayers) {
-            ServerPlayer p = this.getServerPlayer(id);
-            if (p == null || p.isSpectator() || !p.isAlive()) continue;
-            if (!p.getInventory().add(box)) {
-                p.drop(box, false);
+        for (UUID id : new HashSet<UUID>(this.expelledPlayers)) {
+            if (this.tryGiveRewardBox(box, id)) {
+                return true;
             }
-            return true;
         }
         return false;
+    }
+
+    /**
+     * 尝试把奖励盒交给指定玩家。成功（物品栏放得下）⇒ 播报并向全体返回 true。
+     * **背包放不下时直接返回 false，不做 `drop`** —— 由调用方继续找下一位或改为掉落。
+     */
+    private boolean tryGiveRewardBox(ItemStack box, UUID id) {
+        ServerPlayer p = this.getServerPlayer(id);
+        if (p == null || p.isSpectator() || p.isCreative() || !p.isAlive() || p.level() != this.level()) {
+            return false;
+        }
+        if (!p.getInventory().add(box)) {
+            return false;
+        }
+        MutableComponent msg = Component.translatable("message.silent_sun.reward_given_to", p.getName().getString())
+            .withStyle(ChatFormatting.GOLD);
+        this.broadcastToParticipants(this.rediosSigned(msg));
+        return true;
     }
 
     /** 管理员清理命令：把全维度存活的 Boss 标记为待离场（任意状态；区块静止的 Boss 解冻恢复 tick 后自动退场）。 */
@@ -8124,6 +8712,12 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         if (damage < sp.getHealth()) {
             return damage;
         }
+        // 2026-09-18（确认保命道具豁免）：带白名单保命道具 ⇒ 不事前钳、不演假死亡
+        // ⇒ 真伤按原值标记并落地（LOWEST 钳制同样放行）⇒ 道具在 hurt 死亡链内自己触发救人。
+        // 必须在这里就放开：本方法的返回值会成为 AbsoluteDamageUtil 的标记值，事后无法放大。
+        if (CommonEvents.hasWhitelistedTotem(sp)) {
+            return damage;
+        }
         this.notifyHardcoreSpare(sp);
         return Math.max(0.0f, sp.getHealth() - 1.0f);
     }
@@ -8190,11 +8784,20 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         return !state.isAir() && state.getFluidState().isEmpty() && state.isCollisionShapeFullBlock((BlockGetter)serverLevel, pos);
     }
 
+    /**
+     * 本场**以什么方式离场**。
+     * <p>
+     * 2026-09-13（N2 方案 b，作者裁定）移除原 {@code ANOMALY} 常量 —— 它只在
+     * {@code rebuildFromRecord} 里被设一次、又在**同一个方法内**立刻复位成 {@code NONE}，
+     * **只服务一行日志**；而「本场是否发生过重建回场」现由战斗记录的
+     * {@code session.rebuiltFromRecord} 承载，**可检索**。
+     * <p>
+     * 保留 {@code NONE}（字段默认值 / 比较基准）与 {@code CHUNK_UNLOAD}（区块卸载优先判定）。
+     * 注：本枚举**不落盘**（全库无 ordinal / name 序列化路径），故增删常量无存档兼容问题。
+     */
     static enum LeaveReason {
         NONE,
-        CHUNK_UNLOAD,
-        ANOMALY;
-
+        CHUNK_UNLOAD;
     }
 
     private static final class RediosRiptideDashGoal

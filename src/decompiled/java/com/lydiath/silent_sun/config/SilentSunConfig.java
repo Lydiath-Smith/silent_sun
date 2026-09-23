@@ -86,6 +86,14 @@ public final class SilentSunConfig {
     public static final ModConfigSpec.IntValue SOUL_SEVER_DURATION_SECONDS = BUILDER.defineInRange("soulSever.durationSeconds", 15, 1, Integer.MAX_VALUE);
     public static final ModConfigSpec.IntValue SOUL_SEVER_MAX_AMPLIFIER = BUILDER.defineInRange("soulSever.maxAmplifier", 4, 0, 10);
     public static final ModConfigSpec.IntValue SOUL_SEVER_Y_WARNING_THRESHOLD = BUILDER.defineInRange("soulSever.yWarningThreshold", 5000, 0, Integer.MAX_VALUE);
+    /**
+     * 传送门刀身残影的**激活阈值**：Boss 断魂值（{@code baseX + soulSeverY}）达到该值时，
+     * 其刀身叠加末地传送门残影（见 {@code client.render.PortalBladeCondition}）。
+     * <p>与上面 {@code yWarningThreshold}（默认 5000）**同量纲**。
+     * <p>2026-09-14（残影 · 步骤 3）：由硬编码 3000 抽为配置键。刻意放**静态配置**（与断魂其余 4 键同层，
+     * 保持"断魂相关参数在一处"）；若将来要在线调，再整体迁热配置。
+     */
+    public static final ModConfigSpec.IntValue SOUL_SEVER_PORTAL_TRAIL_THRESHOLD = BUILDER.defineInRange("soulSever.portalTrailThreshold", 3000, 0, Integer.MAX_VALUE);
 
     // 回血速率（每 20 tick 即每秒生效一次）
     // 每次 30 点 = 每秒 30 点（P1）；每次 60 点 = 每秒 60 点（P2）
@@ -174,12 +182,18 @@ public final class SilentSunConfig {
     // 2.8 无光失色挑战成功时限：进入 2.8 起算；若未在该时限内攻克 Boss，则视为挑战成功
     // （Boss 转为友好生物并走创造离场路径，进入 3 天召唤冷却）。
     // 代码强制下限 = 最后两个二阶段头衔持续时间（2 × P2 头衔锁血时长，默认 60 秒）。
-    // 2026-09-10 用户裁决：**冻结态不倒计时**（投票 / 转场 / 两阶段濒死 / 锁血期均暂停），
-    // 即"实际可打时长"恒为该值；回退后重进 2.8 不重置。
+    // 2026-09-10 用户裁决：**冻结态不倒计时**（投票 / 转场 / 两阶段濒死）。
+    // ⚠️ 2026-09-13 作者裁决（**覆盖**上述原口径）：**锁血期照常计时** —— 原写
+    //    「投票 / 转场 / 两阶段濒死 / **锁血期**均暂停」中的锁血期一项**已作废**。
+    //    动机：打开 `ALLOW_TITLE_LOCK_HEAL_REGRESSION` 后，2.8 的永续回血可能把玩家卡在低头衔
+    //    （回血 ≥ 输出 ⇒ 段底打不穿）；若锁血期不计时，则兜底出口永不触发、玩家被困死。
+    //    实现见 `RediosEntity` 的计时条件：`if (!this.bossState.isFrozen())`，**无 titleLockTicks 判据**。
+    // 回退后重进 2.8 不重置。
     public static final ModConfigSpec.IntValue COLORLESS_CHALLENGE_SECONDS = BUILDER
         .comment("2.8 无光失色激活后的挑战成功时限（秒）。",
-            "从「进入 2.8」起算；**冻结态暂停计时**（投票 / 转场 / 两阶段濒死 / 锁血期不倒计时），",
-            "因此该值等于玩家实际可打时长。若未在该时限内攻克 Boss，则视为挑战成功：",
+            "从「进入 2.8」起算；**冻结态暂停计时**（投票 / 转场 / 两阶段濒死）；",
+            "**锁血期照常计时**（2026-09-13 作者裁决，推翻原「锁血期不倒计时」）。",
+            "若未在该时限内攻克 Boss，则视为挑战成功：",
             "Boss 转为友好生物并离场，进入 3 天召唤冷却。代码强制下限为最后两个二阶段头衔的持续时间",
             "（2 × P2 头衔锁血时长，默认 60 秒），填写的值低于该下限时按该下限生效。")
         .defineInRange("redios.colorlessChallengeSeconds", 300, 0, Integer.MAX_VALUE);
@@ -255,33 +269,61 @@ public final class SilentSunConfig {
      *   namespace ∈ 本白名单 ∧ namespace ∉ BOSS_SA_EXCLUDED_NAMESPACES ∧ id ∉ BOSS_SA_EXCLUDED_SA_IDS
      * </pre>
      * <p>
-     * 默认值 = 本实例实装且已分析过的 7 个 namespace（各模组的 SA 注册表实测得出；SlashBlade 的
-     * SA id 恒为 {@code <modid>:<sa_name>}，所以 namespace 就是 mod id）：
+     * 默认值 = {@code recasting} + {@code prinegorerouse} 两个 namespace。
+     * <p>
+     * <b>2026-09-12 用户裁决：白名单**替换**为这两个模组的 SA。</b>原 7 个 namespace 共 25 个 SA
+     * 已全部完成实测验证（结果见 {@code docs/boss战斗流程日志报告-2026-09-12.md}），本轮按
+     * 「新模组针对性测试」流程放行仙剑阁 2 与尼格洛兹。SlashBlade 的 SA id 恒为
+     * {@code <modid>:<sa_name>}，所以 namespace 就是 mod id：
      * <ul>
-     *   <li>{@code slashblade} —— 重锋本体（judgement_cut / sakura_end / piercing / circle_slash / drive_* / void_slash / wave_edge）；</li>
-     *   <li>{@code slashblade_addon} —— SJAP 日系附属包（fire_spiral / gale_swords / lighting_swords / rapid_blistering_swords / spiral_edge / water_drive）；</li>
-     *   <li>{@code extinction_day_mod_1784441698} —— 灭却之日（Boss 刀本体，含 life_severing_slash 等）；</li>
-     *   <li>{@code foxextra} —— 狐月刀改·重生（其 thrust 已由 SA id 黑名单单独排除）；</li>
-     *   <li>{@code slashbladeamazingshine} —— 荧光惊异（gold_shine）；</li>
-     *   <li>{@code shinkubloodkatana} —— 炼狱真红之刃（heart_slash / heart_slashc）；</li>
-     *   <li>{@code feibiblade} —— 飞比刀（jiubi 等；静态分析未覆盖，按用户裁决先放行，待实机针对性测试）。</li>
+     *   <li>{@code recasting} —— 仙剑阁 2（{@code recasting2-1.21.1-1.0.5.jar}）共 85 个 SA：
+     *       sword_rain / unlimited_blade_works / final_supernova / zantetsuden_* / lightning_chain_* /
+     *       myriad_silence / void_hole / matrix 等；</li>
+     *   <li>{@code prinegorerouse} —— 尼格洛兹（{@code prinegorerouse-1.3.2-scex.8-dev.jar}）共 6 个 SA：
+     *       over_the_horizon / divine_cross_sa / zenith12th / burning_fire_sa / cosmic_line /
+     *       magnetic_storm_sword。</li>
      * </ul>
+     * <b>替换的副作用（知情）</b>：原先在池的 {@code slashblade} / {@code slashblade_addon} /
+     * {@code extinction_day_mod_1784441698} / {@code foxextra} / {@code slashbladeamazingshine} /
+     * {@code shinkubloodkatana} / {@code feibiblade} 共 25 个 SA <b>不再进池</b> ——
+     * 连拔刀剑原生 SA（circle_slash / piercing / sakura_end 等）也一并让位。
+     * 它们的实测结论已存档，随时可把 namespace 加回本列表恢复。
+     * 
      * <b>新模组接入流程</b>：装上后其 namespace 默认不在名单 ⇒ Boss 不会放它的 SA（零风险跑着）；
      * 想看能不能用，就临时加进本名单 + {@code /silent_sun battle_report on}，打一场后看报告里的
      * {@code saCasts}（ok / error / note）决定去留。
      */
     public static final ModConfigSpec.ConfigValue<List<? extends String>> BOSS_SA_WHITELIST_NAMESPACES = BUILDER
         .comment("Boss 随机施放 SA 的 **namespace 白名单**：不在名单里的 namespace 一律不进池。",
-            "默认 7 个：slashblade / slashblade_addon / extinction_day_mod_1784441698 / foxextra /",
-            "           slashbladeamazingshine / shinkubloodkatana / feibiblade",
+            "默认 3 个（2026-09-14 作者裁决）：slashblade（拔刀剑·重锋）· slashblade_addon（拔刀剑日系附属包 SJAP）·",
+            "  extinction_day_mod_1784441698（灭却之日）—— 即「基础 + 日系附属 + 必装前置」这一组。",
+            "2026-09-14 设计意图：**SA 池是整合包作者 / 玩家自行决定 Boss 强度的旋钮**，",
+            "  故默认白名单刻意收窄到「必装且已验」的基础件，**其余模组的 SA 一律默认不开**。",
             "新装模组的 SA 默认**不**进池（fail-safe）；要启用需针对性测试后把其 namespace 加进本列表。",
             "白名单之下还有两层二次排除：bossSaExcludedNamespaces 与 bossSaExcludedSaIds。",
-            "2026-09-12（SA 名单热配置化）：本键已降级为**回退**，当前生效值优先取热配置",
-            "silent_sun/redios_rules.json 的 boss_sa_whitelist_namespaces（改 json + 重载即生效）；",
-            "仅当该热配置键未提供或为空时才使用本值，此时修改 TOML 仍需重启服务器。")
+            "（2026-09-12 已热配置化：本键是**回退**，生效值优先取 redios_rules.json 的同名键。）",
+            "",
+            "──────── 其他已知模组的 SA（2026-09-14 登记 · 供整合包作者取舍）────────",
+            "【可作备选 · 默认关闭，测过再开】",
+            "  recasting                                  仙剑阁 2（85 个 SA）—— 2026-09-12 曾为默认，现降为备选",
+            "  prinegorerouse                             尼格洛兹（6 个 SA）—— 同上",
+            "  guitu 及其 15 个附属命名空间                 归途包：arsalmal, arsalmal_zero, chitong, dafeiyu, elysia,",
+            "                                             heiyao, huiliyi, jiuweihu, konghai, qingqiu, sakura,",
+            "                                             xuecun, yinshuang, yumianchihu, zhuxi",
+            "  scorchfrost                                霜寒（SlashBladeHoarfrost）",
+            "  foxextra / fox_trot_brew                   狐月刀改·重生 / 狐步酿香",
+            "  slashbladeamazingshine                     荧光惊异",
+            "  more_slashblade_ex_enchantment_effects · slashblade_patchouli   超多附魔增效",
+            "  sbr_core                                   SlashBlade Core（silent_sun 不依赖它，见 mods.toml 注释）",
+            "【危险 · 选了一定会出事，不要加】",
+            "  tianshaxing / tiansha_extinction           天杀星刀 —— 其 SA 以 SE 为硬性前提",
+            "  annihilationblade / annihilationbladeex    湮灭之刃",
+            "  foxextra:thrust（单个 SA，非 namespace）   见下方 bossSaExcludedSaIds",
+            "",
+            "⚠️ 分类依据：「危险」= 已在下述两个排除键中的既有登记；「备选」= 其余已见过的拔刀剑系模组。",
+            "   改动分类时请同步更新本注释 —— 这是给整合包作者看的唯一索引。")
         .defineList("redios.bossSaWhitelistNamespaces",
-            List.of("slashblade", "slashblade_addon", "extinction_day_mod_1784441698",
-                    "foxextra", "slashbladeamazingshine", "shinkubloodkatana", "feibiblade"),
+            List.of("slashblade", "slashblade_addon", "extinction_day_mod_1784441698"),
             o -> o instanceof String);
 
     // 2026-09-12（SA 名单热配置化）：本键已降级为**回退**——优先读热配置 silent_sun/redios_rules.json

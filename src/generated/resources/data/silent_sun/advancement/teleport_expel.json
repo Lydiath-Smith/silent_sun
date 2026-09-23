@@ -1,21 +1,27 @@
 {
-  "display": {
-    "title": {
-      "translate": "advancement.silent_sun.teleport_expel.title"
-    },
-    "description": {
-      "translate": "advancement.silent_sun.teleport_expel.desc"
-    },
-    "icon": {
-      "id": "minecraft:compass"
-    },
-    "frame": "task",
-    "hidden": true
-  },
-  "parent": "silent_sun:root",
+  "parent": "extinction_day_mod_1784441698:miedao_duan",
   "criteria": {
     "trigger": {
       "trigger": "minecraft:impossible"
     }
-  }
+  },
+  "display": {
+    "description": {
+      "translate": "advancement.silent_sun.teleport_expel.desc"
+    },
+    "hidden": true,
+    "icon": {
+      "count": 1,
+      "id": "minecraft:compass"
+    },
+    "title": {
+      "translate": "advancement.silent_sun.teleport_expel.title"
+    }
+  },
+  "requirements": [
+    [
+      "trigger"
+    ]
+  ],
+  "sends_telemetry_event": true
 }

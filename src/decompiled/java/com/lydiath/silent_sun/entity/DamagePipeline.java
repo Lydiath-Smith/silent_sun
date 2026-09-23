@@ -375,9 +375,8 @@ public final class DamagePipeline {
                 boss.weapons.tryGuardBlock(ctx.source);
             }
             if (boss.weapons.guardActiveTicks > 0) {
-                // 2026-09-10（用户裁决 C6/待确认 6）：「格挡就全免」——格挡窗口内本次伤害全额免除，
-                // 不再按 adaptive_block_damage_reduction 打折（原 0.8 口径改成减伤口径的产物）。
-                // 该配置键自此不再被消费，保留仅为旧配置兼容（见 RediosRules 同名 setter 注释）。
+                // 2026-09-10（用户裁决 C6/待确认 6）：「格挡就全免」——格挡窗口内本次伤害全额免除。
+                // 2026-09-18：原 adaptive_block_damage_reduction 配置键及其兼容读取已整体删除（零消费）。
                 return DamageResult.cancel();
             }
         }
@@ -477,7 +476,13 @@ public final class DamagePipeline {
 
         if (boss.isWrongInterferenceActive()) {
             if (ctx.source.getEntity() instanceof LivingEntity
-                // TODO(审计清理 G07 #6)：2.3 闪避率 0.2f 硬编码，与相邻阶段同义闪避走 RediosRules/dodgeChance 配置的口径不一致 —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
+                // 2026-09-12（用户裁决：**保持不同**；本条原为 TODO(审计清理 G07 #6)）：
+                // 2.3「错乱干涉」的闪避率硬编码 0.2f，但它与下面通用分支**不是同一语义**，刻意不走 dodgeChance：
+                //   ・本分支 `nextFloat() > 0.2f` ⇒ 实际闪避率 **80%**（0.2f 在这里是「不闪避」的概率）；
+                //   ・通用分支 `nextDouble() < dodgeChance` ⇒ 实际闪避率 = dodgeChance，而 dodgeChance
+                //     全库只被 `Math.max(dodgeChance, 0.15)` 赋值 ⇒ **恒为 15%**；
+                // ⇒ 两处相差 80% vs 15%，且**比较方向相反**。若「统一」到 dodgeChance，2.3 难度会剧变，
+                //   故维持现状并在此写明：**下轮审计勿再以「口径不一致」为由改动。**
                 && boss.getRandom().nextFloat() > 0.2f) {
                 return DamageResult.cancel();
             }
@@ -725,9 +730,27 @@ public final class DamagePipeline {
             || boss.bossState == BossState.PHASE1_VOTE
             || boss.bossState == BossState.PHASE1_TRANSITION;
         if (frozenPhase1) {
-            // 挂起窗口全程锁 1 血：>1 的伤害正常结算（与 PENDING 既有口径一致），任何会把血量
-            // 打到 <1 的一律钳 1 + 取消。
-            if (boss.getHealth() - ctx.amount < 1.0f) {
+            // 2026-09-13（作者**二次裁决**，覆盖同日早间的「全 cancel」）：恢复「**非致命照常结算**」。
+            // 早间按 4194f38 把本处改为无条件 cancel，实测副作用（作者反馈「两个收尾阶段都被改弱」）：
+            //   ① 1.9 收尾（PENDING / VOTE / TRANSITION）期间伤害全免 ⇒ `hurt()` 在 `ctx.cancelled`
+            //      时**提前 `return false`**，跳过其后 `if (dealt)` 整段 ⇒ PENDING 期间
+            //      `markBattleParticipant` / `recordPlayerDamageType` / `recordPlayerNetDamage` /
+            //      `recordLegalDamage` **全部不执行** ⇒ 参战登记与伤害统计缺失
+            //      ⇒ 投票人数、脱战（`checkAllParticipantsDisengaged`）、传送候选池等
+            //      **一切读 `battleParticipants` 的机制全部失真**。
+            //   ② 观感上即「收尾阶段 Boss 战斗力被削弱」。
+            // ⇒ 现口径：**只在「这一下会致命」或「逐 tick 真伤（BYPASSES_INVULNERABILITY）」时
+            //    钳 1 并 cancel**；其余照常结算。
+            // ⚠️ 保留 9pass 排除是**必需的** —— 实测 `battle-98d49054` 的成因正是「单次不足以打到 <1
+            //    ⇒ 放行 ⇒ **累积穿底** ⇒ 机制没演完就死」，而那条链走的正是 9pass 断魂
+            //   （灭却之日 `SoulSeverMobEffect` 的伤害类型声明了 `bypasses_invulnerability`，
+            //    其源码注释原话：「断魂类型带 bypasses_invulnerability，不受原版无敌帧/传奇怪物 cap 限制」）。
+            //    排除它 ⇒ 磨穿路径依旧被封住，普通伤害恢复往常手感。
+            // 作用域仍仅限挂起窗口；**非 x.9 的「打穿段底 ⇒ 逐格推进」在下方 COMBAT 分支，不受影响**；
+            // 锁血到期后（P2 由 `pendingLockReleased`、P1 由切回 COMBAT）放开 ⇒ 恢复可击杀。
+            boolean bypassInvuln = ctx.source != null
+                && ctx.source.is(net.minecraft.tags.DamageTypeTags.BYPASSES_INVULNERABILITY);
+            if (bypassInvuln || boss.getHealth() - ctx.amount < 1.0f) {
                 boss.setHealth(1.0f);
                 boss.anticheat.markLegalHealthChange(1.0f);
                 return DamageResult.cancel();
@@ -801,15 +824,40 @@ public final class DamagePipeline {
             boss.enterPendingState();
             return DamageResult.cancel();
         }
-        // TODO(审计清理 G07 #8)：段底锁血/濒死推进本文件四处重复、< 1.0f 与 <= 1.0f 边界口径并存（此处为较次要的 pending 防死分支） —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
-        if (boss.bossState == BossState.PHASE2_PENDING && !boss.pendingLockReleased
-            && boss.getHealth() - ctx.amount < 1.0f) {
-            // pending 唯一目的 = 防止击杀误判（2026-09-04 最终口径）：仅当本次伤害会把血量扣到
-            // <1 时钳 1 并取消（防死）；>1 伤害正常结算。pendingLockReleased=true（可击杀）后
-            // 不再拦截，伤害可正常致死（die 设 CD）。
-            boss.setHealth(1.0f);
-            boss.anticheat.markLegalHealthChange(1.0f);
-            return DamageResult.cancel();
+        // 2026-09-12（用户裁决「机制衔接与管线连接需确保无误」）：**本条原为 TODO(审计清理 G07 #8)，
+        // 措辞为「< 1.0f 与 <= 1.0f 边界口径并存」—— 那会误导后来者当成漂移而统一掉。现改写为语义说明。
+        // 本文件三种边界的语义（**刻意不同，勿统一**，详见 docs/管线衔接与判定连接-检查表-2026-09-12.md）：
+        //   ・`health - amount <= 1.0f`：判「**是否触发状态转移**」⇒ 锁 1 血 + 进 PENDING。
+        //      只用于**活的战斗态**（PHASE1_COMBAT / PHASE2_COMBAT），见 :290 / :313 / :755 / :802。
+        //      若改成 `<`，「恰好打到 1 血」会漏掉转移 ⇒ Boss 停在 1 血不进入濒死流程。
+        //   ・`health - amount < 1.0f`：判「**是否会死**」⇒ 只钳 1，**不改状态**。
+        //      只用于**已在挂起窗口**（PENDING / VOTE / TRANSITION），即下面两条（:736 / 本处）。
+        //      若改成 `<=`，挂起窗口里条件反复满足 ⇒ 行为改变。
+        //   ・`health - amount < low`：打穿**段底** ⇒ 钳段底（+ 仅在 titleLockTicks<=0 时推进）。
+        // 「四处重复」那一半属**重复实现**（值口径一致），不是「分裂」，故维持现状。
+        if (boss.bossState == BossState.PHASE2_PENDING && !boss.pendingLockReleased) {
+            // 2026-09-13（作者**二次裁决**，覆盖同日早间的「全 cancel」）：恢复「**非致命照常结算**」。
+            // 早间曾按 4194f38 改为**无条件 cancel** 以防 9pass 断魂逐 tick 磨穿，但实测副作用为：
+            //   ① PENDING 期间伤害全免 ⇒ 血量**只涨不跌**（`setHeal` 在 PENDING 刻意跳过越段顶钳制，
+            //      见 RediosEntity:2729-2731 注释）⇒ 迅速饱和满血：回血"看不见"；且锁血到期时 Boss
+            //      是**满血**，与往常节奏不同（`onPendingLockExpired` 注释：击杀需打掉回血后的当前血量）。
+            //   ② **更要紧**：`hurt()` 在 `ctx.cancelled` 时**提前 `return false`**，跳过其后
+            //      `if (dealt)` 整段 ⇒ PENDING 期间 `markBattleParticipant` / `recordPlayerDamageType` /
+            //      `recordPlayerNetDamage` / `recordLegalDamage` **全部不执行** ⇒ 参战登记缺失
+            //      ⇒ `pickVoidTeleportTarget` 的候选池可能为空 ⇒ **2.9 传送变少甚至不传**
+            //      （作者实测反馈「phase2.9 的 pending 状态下传送和回血效率没和往常一样」）。
+            // ⇒ 现口径：**只在「这一下会致命」或「逐 tick 真伤（BYPASSES_INVULNERABILITY = 9pass 断魂）」
+            //    时钳 1 并 cancel**；其余照常结算。即回到 18d9818 的「`< 1` 才钳 1、`> 1` 正常结算」，
+            //    **并补上当初被钻空子的 9pass 那一半**（那正是 4194f38 要解决的、也是 18d9818 漏掉的）。
+            // `pendingLockReleased` 为 true（2.9 锁血到期）后不再进入本分支 ⇒ 伤害可正常致死（die 设 CD）。
+            boolean bypassInvuln = ctx.source != null
+                && ctx.source.is(net.minecraft.tags.DamageTypeTags.BYPASSES_INVULNERABILITY);
+            if (bypassInvuln || boss.getHealth() - ctx.amount < 1.0f) {
+                boss.setHealth(1.0f);
+                boss.anticheat.markLegalHealthChange(1.0f);
+                return DamageResult.cancel();
+            }
+            return DamageResult.proceed();
         }
         if (boss.bossState.isPhase2Combat() && !atLastTitle
             && boss.getHealth() - ctx.amount < low) {

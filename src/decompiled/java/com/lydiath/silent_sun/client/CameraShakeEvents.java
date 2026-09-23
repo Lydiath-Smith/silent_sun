@@ -22,10 +22,14 @@ import java.util.List;
 @EventBusSubscriber(modid = "silent_sun", value = Dist.CLIENT)
 public final class CameraShakeEvents {
 
-    // TODO(审计清理 G20 #3)：转场「总时长 = 配置×20 / 冲击帧 = 6」在客户端+服务端共四处各写一遍，此处把配置驱动的总时长硬编码成 120.0（= 默认 6s 的值）—— 配置改时长后本处不跟随 —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
-    /** 过渡时长归一化参考（对应 PHASE_TRANSITION_SECONDS 默认 6s = 120 tick）；
-     *  配置改时长只影响强度曲线相位，不影响功能。 */
-    private static final double TRANSITION_TICKS_REF = 120.0;
+    // 2026-09-14（体检 P2-B / G20 #3 **已闭环**）：原先此处把配置驱动的转场总时长**硬编码成 120.0**
+    //（= 默认 6s 的值）⇒ 配置改成非 6s 时**进度曲线被压平**：分母固定 120，而剩余 tick > 120 时
+    //`Math.min(ticks, 120) / 120` 恒为 1 ⇒ progress 恒 0、前半段一直卡在开场 50% 强度，
+    //要等到剩余 < 120 才开始上升（即"配置改时长本处不跟随"）。
+    //现改为调用**唯一来源** `RediosEntity.configuredTransitionTicks()`（客户端可安全调用：它是 static，
+    //且 `SilentSunConfig` 双端可读 —— 同包客户端 `RediosRenderer` 早已这么用）。
+    //默认配置（6s）下取值仍为 **120**，与旧硬编码**逐位相同** ⇒ 默认行为零变化。
+    //原 TODO(审计清理 G20 #3) 已闭环，勿再本地硬编码转场时长。
     /** 震屏生效半径（格） */
     private static final double SHAKE_RADIUS = 96.0;
     private static final double MAX_ROLL_DEG = 3.0;
@@ -76,7 +80,8 @@ public final class CameraShakeEvents {
             return;
         }
         // 强度：过渡开场 50%，随进度线性升至 100%（临近 P2 登场最强）
-        double progress = 1.0 - Math.min(ticks, TRANSITION_TICKS_REF) / TRANSITION_TICKS_REF;
+        double ref = RediosEntity.configuredTransitionTicks();
+        double progress = 1.0 - Math.min(ticks, ref) / ref;
         double intensity = 0.5 + 0.5 * Math.max(progress, 0.0);
         // 距离衰减：96 格外无震，50 格内满强度（线性）
         double distFactor = Math.max(0.0, 1.0 - Math.sqrt(distSq) / SHAKE_RADIUS);

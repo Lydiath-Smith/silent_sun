@@ -130,7 +130,15 @@ final class WeaponManager {
         if (boss.isSprinting() != wantSprint) {
             boss.setSprinting(wantSprint);
         }
-        if (boss.bossState.isPhase1()) {
+        // 2026-09-13 作者裁决：定向射线挖掘**开给 P2**（与 P1 一致）。
+        // 原始稿 `思路留档.txt` L118 要求 2.9「挖掘效率等同于一个红物质钉头锤」（用于破玩家自填的掩体），
+        // 而原判据 `isPhase1()` 使 P2 全程没有这一能力 ⇒ 与要求不符。作者裁决语：「二阶段难道 boss
+        // 不会自己动手挖方块吗？」——P2 本就有方块炸弹（下一行）/ 星爆（`tickStarfallSalvo` 仅判
+        // `isCombat()`，P1/P2 都跑）/ 2.6 暗星 27³ / 2.9 传送清落点，**只缺"沿视线精准挖掉挡路那一格"**。
+        // 现改为战斗态（P1/P2）均可执行，与 `tryThrowBlockBomb` 的判据一致。
+        // 注意：`tryDigBlockingBlocks` 内部有 `stageDigCooldownTicks`（`STAGE_DIG_INTERVAL_TICKS`）限频，
+        // 且要求方块「有碰撞形状」才挖（流体与无碰撞方块跳过）⇒ P2 开启不会造成每 tick 连续挖掘。
+        if (boss.bossState.isPhase1() || boss.bossState.isPhase2()) {
             tryDigBlockingBlocks(serverLevel);
         }
         if (boss.bossState.isPhase1() || boss.bossState.isPhase2()) {

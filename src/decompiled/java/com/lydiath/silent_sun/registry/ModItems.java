@@ -37,7 +37,10 @@ public final class ModItems {
      * 封面贴图来自用户提供的 image (2).png（转为圆形唱片贴图）。
      */
     public static final DeferredHolder<Item, Item> REDIOS_DISC_PHASE2 = ITEMS.register("redios_disc_phase2", () -> new RediosDiscItem(new Item.Properties().stacksTo(1).fireResistant().component(DataComponents.JUKEBOX_PLAYABLE, new JukeboxPlayable(new EitherHolder<>(ResourceKey.create(Registries.JUKEBOX_SONG, ResourceLocation.fromNamespaceAndPath("silent_sun", "redios_disc_phase2"))), true)), "tooltip.silent_sun.redios_disc.phase2"));
-    // TODO(审计清理 G01 #7)：en_us / zh_cn 均缺 item.silent_sun.redios_trident 翻译键，而该物品确实被装到 Boss 主手 —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
+    // 2026-09-14（体检 P2-C / G01 #7 **已闭环**）：item.silent_sun.redios_trident 翻译键已补入**两份真源 lang**
+    // （zh_cn「莱德厄斯之刃」/ en_us「Redios's Blade」，名称由执行者拟定，作者可一句改）。
+    // ⚠️ lang 真源在 **bin/main**（assets/data 手写资源），**不是** src/main/resources —— 改文案改这里。
+    // 原 TODO(审计清理 G01 #7) 已闭环，勿重做。
     /**
      * 莱德厄斯常规状态手持的三叉戟型武器（未拔刀形态）。
      * 模型复用拔刀剑 OBJ（models/item/miedao_duan.obj，见 redios_trident.json），

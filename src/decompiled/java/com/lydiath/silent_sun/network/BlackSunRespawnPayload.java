@@ -75,7 +75,12 @@ public record BlackSunRespawnPayload() implements CustomPacketPayload {
         }
     }
 
-    // TODO(审计清理 G05 #8)：出生点解析 / 传送 / 回满血与 entity/RediosEntity.java 各写一遍，y 偏移 +0.0 vs +0.1、饱和度 5.0 vs 20.0 已发散 —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
+    // 2026-09-12（用户裁决：**保持不同**；本条原为 TODO(审计清理 G05 #8)）：本方法与
+    // RediosEntity.restorePlayerToFull 都做「恢复玩家」，但**场景不同，刻意不同值**：
+    //   ・本处 = 黑日重生（送回出生点）⇒ saturation **5.0f**（重生不等于完全恢复，留一点饥饿压力）；
+    //   ・restorePlayerToFull = 战斗结束恢复 ⇒ saturation **20.0f**，且额外清 exhaustion；
+    // 另注：本处 y 直接取出生点（+0.0），对方用 +0.1 —— 差异微小且各自贴合场景。
+    // ⇒ **下轮审计勿再以「两处已发散」为由统一。**
     private static void respawnToSpawn(ServerPlayer player) {
         ServerLevel current = player.serverLevel();
         MinecraftServer server = current.getServer();
@@ -104,6 +109,8 @@ public record BlackSunRespawnPayload() implements CustomPacketPayload {
         player.teleportTo(target, pos.x, pos.y, pos.z, Set.of(), player.getYRot(), player.getXRot());
         player.setHealth(player.getMaxHealth());
         player.getFoodData().setFoodLevel(20);
+        // 刻意只给 5.0f（而非 20.0f）：本处是「黑日重生」，不是「战斗结束恢复」—— 见方法头注释，
+        // 勿与 RediosEntity.restorePlayerToFull 的 20.0f 统一（2026-09-12 用户裁决）。
         player.getFoodData().setSaturation(5.0f);
         player.clearFire();
         player.removeEffect(MobEffects.DARKNESS);

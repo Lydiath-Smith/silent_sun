@@ -25,15 +25,21 @@ import org.slf4j.LoggerFactory;
  * Boss 战斗流程日志报告记录器（2026-09-12 新增，见 {@code docs/实现计划-2026-09-12-战斗流程日志报告.md} §2）。
  * <p>
  * <b>定位：旁路观测器</b>。它不参与任何战斗逻辑——不改条件、不改返回值、不改时序；所有记录与写文件
- * 失败只 {@code warn}，异常绝不允许冒泡到战斗路径。默认关闭（{@link #isEnabled()} == false），
- * 关闭时 {@code RediosEntity} 不创建本对象（字段为 null），所有记录点先判 null ⇒ 零开销。
+ * 失败只 {@code warn}，异常绝不允许冒泡到战斗路径。**默认开启**（{@link #isEnabled()} == true，
+ * 2026-09-13 作者要求「战斗记录默认开启」）；关闭时 {@code RediosEntity} 不创建本对象（字段为 null），
+ * 所有记录点先判 null ⇒ 零开销（命令 {@code /silent_sun battle_report off} 可临时关）。
  * <p>
  * 纯内存记录 + 退场时一次性序列化；不持有实体强引用（只用 UUID / 字符串 / 基本类型）。
  * 记录面只含四类事件（{@code TITLE} / {@code SA_CAST} / {@code PHASE_SETTLE} / {@code ANTICHEAT}）
  * 加一份 SA 池快照。
  * <p>
- * 开关由命令侧控制（{@link #setEnabled(boolean)}）：{@code on} 时**当场开战的那一场**开始采集
- * （记录器在实体构造时按开关状态创建，已存在的 Boss 不补挂——与设计 §2.3 一致）。
+ * 开关由命令侧控制（{@link #setEnabled(boolean)}）：记录器**在实体构造时**按开关状态创建
+ * （已存在的 Boss 不补挂）。⇒ 若无默认开启，{@code on} 只对**之后召唤**的 Boss 生效；
+ * 现在默认即为 true，所以每场战斗都会被采集，不必再手动开。
+ * <p>
+ * <b>开销（2026-09-13 复核）</b>：产出观测**不是每 tick 扫描**，而是在**每次 SA 施放时**扫一次
+ * 48 格半径（{@code IntegrationContract.PRODUCTION_SCAN_RADIUS}，调用点在 {@code tryInvokeRandomSA} 内）
+ * ⇒ SA 间隔以秒计，代价很小。唯一持续成本是**每场结束写一个几百 KB 的 JSON**。
  */
 public final class BattleFlowRecorder {
 
@@ -53,14 +59,24 @@ public final class BattleFlowRecorder {
 
     // ── 开关（命令侧接口） ──
 
-    private static volatile boolean enabled = false;
+    /**
+     * 全局开关默认值：**true**（2026-09-13 作者要求「战斗记录默认开启」）。
+     * <p>
+     * 原为 {@code false}（须手动 {@code /silent_sun battle_report on}）。改为默认开后：
+     * ① 每场战斗都会被采集，不必再手动开；② 顺带消除了「{@code on} 对已存在的 Boss 无效」这个坑
+     * —— 记录器在实体构造时读本值，默认即为 true ⇒ 任何时候召唤的 Boss 都会建记录器。
+     * <p>
+     * ⚠️ 记录器是按**实体构造时刻**的状态创建的（{@code RediosEntity} 字段初始化器）⇒ 用命令改成
+     * {@code false} 之后，**已在场的 Boss 仍会继续采集并导出**，只是**之后新召唤**的 Boss 不再建记录器。
+     */
+    private static volatile boolean enabled = true;
 
-    /** 命令侧开关：{@code on} 之后**新开战**的场次开始采集；{@code off} 之后不再新建记录器。 */
+    /** 命令侧开关：{@code off} 之后**新召唤**的 Boss 不再建记录器（已在场的照常采完并导出）。 */
     public static void setEnabled(boolean value) {
         enabled = value;
         LOG.info("[SilentSun] 战斗流程报告 {}", value
-            ? "已开启（当场开战的那一场开始采集，退场时导出 JSON）"
-            : "已关闭（已有记录器的场次照常导出，之后不再采集）");
+            ? "已开启（之后召唤的 Boss 开始采集，退场时导出 JSON）"
+            : "已关闭（已有记录器的场次照常导出，之后召唤的 Boss 不再采集）");
     }
 
     public static boolean isEnabled() {
@@ -73,7 +89,7 @@ public final class BattleFlowRecorder {
     private record TitleEvent(long t, int phase, int fromPhase, int from, int to, boolean forced) {
     }
 
-    /** 收尾事件：kind ∈ vote / transition / defeat / pending / noLootLeave。 */
+    /** 收尾事件：kind ∈ vote / transition / defeat / pending / noLootLeave / timedVictory。 */
     private record SettleEvent(long t, int phase, int titleIndex, String kind, String note) {
     }
 
@@ -128,6 +144,18 @@ public final class BattleFlowRecorder {
     private record SaProductionEvent(long t, String saId, List<String> added) {
     }
 
+    /**
+     * 玩家受击事件（2026-09-13 新增）。
+     * <p>
+     * {@code amount} = {@code LivingDamageEvent.Pre} 的 amount（**本会受到的伤害** —— 保命道具把伤害
+     * 拦下时这个值仍然有，而 {@code Post} 不会触发，故必须在 Pre 记）；
+     * {@code healthBefore} = 受击前血量 ⇒ 两者对比即可看出「这一下是否致命、保命是否被消耗」；
+     * {@code sinceLastSaCastTicks} / {@code lastSaId} 与产出观测同源 ⇒ 能把受击对齐到最近一次 SA。
+     */
+    private record PlayerHitEvent(long t, String player, String damageType, float amount, float healthBefore,
+                                  long sinceLastSaCastTicks, String lastSaId) {
+    }
+
     /** 实体产出事件累计（按类型聚合，导出成 {@code entityProduction.byType}）。 */
     private static final class ProdAgg {
         private int count;
@@ -176,11 +204,35 @@ public final class BattleFlowRecorder {
     private long startGameTime = -1L;
     /** 已导出标记：导出幂等（safeDiscard 与 remove 两条导出路径只写一次文件）。 */
     private boolean flushed = false;
+    // 2026-09-13（N2 方案 b）：本场是否由「外部清除 Boss 实体 ⇒ 按账本重建回场」产生。
+    // 取代原先 `RediosEntity.rebuildFromRecord` 里 `leaveReason = LeaveReason.ANOMALY` 的
+    // 「设完立刻复位」做法 —— 那个标记只服务一行日志，导出时 session.leaveReason 永远是 NONE
+    // ⇒「这场是否发生过重建」在战斗记录里**不可检索**（实测三场非法死亡记录全为 leaveReason:NONE
+    // 就是同一成因模式）。改为显式布尔字段，随 session 落盘。
+    private boolean rebuiltFromRecord = false;
 
     private final List<TitleEvent> titleFlow = new ArrayList<>();
     private final List<SettleEvent> phaseSettle = new ArrayList<>();
     private final List<AntiCheatEvent> antiCheat = new ArrayList<>();
     private final List<SaCastEvent> saCasts = new ArrayList<>();
+    /**
+     * 玩家受击事件（2026-09-13 新增，作者要求）。
+     * <p>
+     * <b>用途</b>：把「Boss 抽到哪个 SA」与「玩家什么时候挨了多重的打」对齐，用于回答
+     * 「哪几次 SA 打穿了玩家的保命手段」。原先记录面只有四类事件（TITLE / SA_CAST / PHASE_SETTLE /
+     * ANTICHEAT）+ 产出观测，**看不到玩家受伤**。
+     * <p>
+     * <b>挂钩</b>：{@code CommonEvents} 的 {@code LivingDamageEvent.Pre}，只记**参战玩家**。
+     * 用 {@code Pre} 而非 {@code Post}：{@code Pre} 能看到「**本会受到的伤害**」——保命类道具把伤害
+     * 拦下时 {@code Post} 不会触发，那样恰恰看不到"保护被消耗"的那一刻。
+     * <p>
+     * <b>与 SA 对齐</b>：每条带 {@code sinceLastSaCastTicks} 与 {@code lastSaId}，与产出观测同源，
+     * 因此能直接判断「这次挨打发生在哪次 SA 之后多少 tick」。
+     */
+    private final List<PlayerHitEvent> playerHits = new ArrayList<>();
+    /** 受击条目上限：玩家受击频率可高于其他事件，故放宽到 2000；超出丢后续并计入 {@code playerHitsDropped}。 */
+    private static final int PLAYER_HIT_MAX = 2000;
+    private int playerHitsDropped;
     private final Map<String, Integer> antiCheatDropped = new LinkedHashMap<>();
     /** 各 kind 已记录条数（配合 {@link #ANTI_CHEAT_MAX_PER_KIND} 截断，避免每次都遍历列表计数）。 */
     private final Map<String, Integer> antiCheatCountByKind = new LinkedHashMap<>();
@@ -243,6 +295,29 @@ public final class BattleFlowRecorder {
     private final List<SaProductionEvent> saProductions = new ArrayList<>();
     /** 按 SA id 聚合：{@code casts} / {@code emptyCasts} / {@code addedTotal} 直接回答「哪一部分 SA 真的出了实体」。 */
     private final Map<String, SaProdAgg> saProductionBySaId = new LinkedHashMap<>();
+    /**
+     * SA「**窗口产出**」归因（2026-09-13 新增）。
+     * <p>
+     * 为什么需要它：{@code saCastAddedEntities} 量的是「SA 施放**同一次调用内**新增的实体」，而
+     * SlashBlade 的 SA 产出是**延迟**的 ⇒ 同拍差恒为 0 ⇒ 会被读成"7 次 SA 全部空放"（实测
+     * `battle-a7e79189-446031.json` 就是如此，而同一份记录里 {@code byType} 却有 animated_slash 150 /
+     * drive 103 等实体）。**那是统计窗口太窄，不是 SA 无效。**
+     * <p>
+     * 本聚合改用「最近一次成功 SA 施放后 {@link #SA_PRODUCTION_WINDOW_TICKS} tick 内出现的实体」
+     * 归给那次 SA ⇒ 能回答"这次 SA 到底产出了什么"。数据来源与 {@code trace} 里的
+     * {@code sinceLastSaCastTicks} / {@code lastSaId} 同源，**没有新采数据**。
+     * <p>
+     * 局限：按「距最近一次 SA」归因 ⇒ 窗口内若另有一次 SA 施放，产出会算给**更近**的那次；
+     * 故本记录同时给出 {@code windowTicks} 与 {@code outsideSelfDriven} 便于判读。
+     */
+    private final Map<String, Integer> saWindowProductionBySaId = new LinkedHashMap<>();
+    /** 窗口产出的 {@code selfDriven=false} 部分（用于区分"我方驱动窗口内"与"完全外部"）。 */
+    private final Map<String, Integer> saWindowProductionOutsideBySaId = new LinkedHashMap<>();
+    /**
+     * SA 产出的归因窗口（tick）。取 40（= 2 秒）：实测 SA 产出延迟通常在 1 秒内，
+     * 而本场 SA 施放间隔为 6~50 秒 ⇒ 40 tick 足够吞下延迟、又不会跨到下一次 SA。
+     */
+    private static final int SA_PRODUCTION_WINDOW_TICKS = 40;
     private int saProductionTotal;
     /** SA 施放新增实体的总数（所有 SaProductionEvent 的 added 之和）。 */
     private int saProductionAddedTotal;
@@ -506,6 +581,18 @@ public final class BattleFlowRecorder {
                 return;
             }
             long sinceLastSaCast = this.lastSaCastRelTick < 0L ? -1L : t - this.lastSaCastRelTick;
+            // 2026-09-13 新增：窗口产出归因 —— 把"距最近一次 SA 施放 ≤ 40 tick 内出现的实体"
+            // 归给那次 SA。这是对 saCastAddedEntities（同调用差值）的必要补充：同调用差恒为 0
+            // 只说明"产出不在施放那一拍"，不代表 SA 无效。
+            if (this.lastSaCastRelTick >= 0L && sinceLastSaCast >= 0L && sinceLastSaCast <= SA_PRODUCTION_WINDOW_TICKS) {
+                String saId = this.lastSuccessfulSaId();
+                if (saId != null && !saId.isEmpty()) {
+                    this.saWindowProductionBySaId.merge(saId, 1, Integer::sum);
+                    if (!selfDriven) {
+                        this.saWindowProductionOutsideBySaId.merge(saId, 1, Integer::sum);
+                    }
+                }
+            }
             long sincePlayerSlash = this.lastPlayerSlashRelTick < 0L ? -1L : t - this.lastPlayerSlashRelTick;
             long sincePlayerCharge = this.lastPlayerChargeRelTick < 0L ? -1L : t - this.lastPlayerChargeRelTick;
             this.productionTrace.add(new ProductionEvent(t, typeKey, category, owner, selfDriven,
@@ -513,6 +600,25 @@ public final class BattleFlowRecorder {
                 sincePlayerSlash, this.lastPlayerSlashPlayer, sincePlayerCharge, this.lastPlayerChargePlayer));
         } catch (Throwable t) {
             LOG.warn("[SilentSun] 战斗流程报告：ENTITY_PRODUCTION 记录失败：{}", t.toString());
+        }
+    }
+
+    /**
+     * 玩家受击留痕（2026-09-13 新增）。由 {@code CommonEvents} 的 {@code LivingDamageEvent.Pre}
+     * 对**参战玩家**调用；记录「本会受到的伤害」与「受击前血量」，并带上距最近一次 SA 的 tick 偏移。
+     */
+    public void playerHit(long nowGameTime, String player, String damageType, float amount, float healthBefore) {
+        try {
+            if (this.playerHits.size() >= PLAYER_HIT_MAX) {
+                this.playerHitsDropped++;
+                return;
+            }
+            long t = this.rel(nowGameTime);
+            long sinceLastSaCast = this.lastSaCastRelTick < 0L ? -1L : t - this.lastSaCastRelTick;
+            this.playerHits.add(new PlayerHitEvent(t, player, damageType, amount, healthBefore,
+                sinceLastSaCast, this.lastSuccessfulSaId()));
+        } catch (Throwable t) {
+            LOG.warn("[SilentSun] 战斗流程报告：PLAYER_HIT 记录失败：{}", t.toString());
         }
     }
 
@@ -650,6 +756,21 @@ public final class BattleFlowRecorder {
      * {@code remove(RemovalReason)}（die() 的 vanilla 死亡移除、discard 兜底）都会调它，只写一次。
      * 任何失败只 warn。
      */
+    /**
+     * 标记本场由账本重建回场（外部清除 Boss 实体）。2026-09-13（N2 方案 b）。
+     * <p>
+     * 取代原「{@code leaveReason = LeaveReason.ANOMALY} 设完即复位」的做法 —— 那个标记只服务一行日志，
+     * 导出时 {@code session.leaveReason} 恒为 {@code NONE} ⇒「这场是否发生过重建」**不可检索**。
+     */
+    public void markRebuiltFromRecord() {
+        this.rebuiltFromRecord = true;
+    }
+
+    /** {@return 本场是否由账本重建回场} */
+    public boolean isRebuiltFromRecord() {
+        return this.rebuiltFromRecord;
+    }
+
     public void export(UUID bossId, long endGameTime, String leaveReason, List<String> participants,
                        boolean playerOnlyMode) {
         if (this.flushed) {
@@ -732,6 +853,29 @@ public final class BattleFlowRecorder {
         }
     }
 
+    /**
+     * 玩家受击事件数组（2026-09-13 新增）。判读：
+     * ① 与 {@code saCasts} 按 {@code sinceLastSaCastTicks} 对齐 ⇒「这次挨打在哪次 SA 之后多少 tick」；
+     * ② {@code amount >= healthBefore} ⇒ 这一下**本该致命**（若玩家没死，说明保命手段被消耗了一次）；
+     * ③ {@code lastSaId} 为空 / {@code sinceLastSaCastTicks} 为 -1 ⇒ 挨打与任何 SA 无关（普通攻击 / 光环 / 第三方）。
+     */
+    private JsonArray buildPlayerHits() {
+        JsonArray arr = new JsonArray();
+        for (PlayerHitEvent e : this.playerHits) {
+            JsonObject o = new JsonObject();
+            o.addProperty("t", ticksToSeconds(e.t()));
+            o.addProperty("player", e.player());
+            o.addProperty("damageType", e.damageType());
+            o.addProperty("amount", e.amount());
+            o.addProperty("healthBefore", e.healthBefore());
+            o.addProperty("lethal", e.amount() >= e.healthBefore());
+            o.addProperty("sinceLastSaCastTicks", e.sinceLastSaCastTicks());
+            o.addProperty("lastSaId", e.lastSaId());
+            arr.add(o);
+        }
+        return arr;
+    }
+
     private Path resolveOutputFile(UUID bossId) {
         String id = bossId.toString();
         String shortId = id.length() >= 8 ? id.substring(0, 8) : id;
@@ -748,6 +892,9 @@ public final class BattleFlowRecorder {
         root.add("titleFlow", this.buildTitleFlow());
         root.add("phaseSettle", this.buildPhaseSettle(leaveReason, participants));
         root.add("antiCheat", this.buildAntiCheat());
+        // 2026-09-13 新增：玩家受击留痕 —— 用于把「哪次 SA」与「什么时候挨了多重的打」对齐。
+        root.add("playerHits", this.buildPlayerHits());
+        root.addProperty("playerHitsDropped", this.playerHitsDropped);
         root.add("saCasts", this.buildSaCasts());
         root.add("saStats", this.buildSaStats());
         root.add("tickActionProbe", this.buildTickActionProbe());
@@ -773,6 +920,9 @@ public final class BattleFlowRecorder {
         session.addProperty("durationTicks", this.startGameTime < 0L ? 0L : Math.max(0L, endGameTime - this.startGameTime));
         session.addProperty("result", deriveResult(leaveReason));
         session.addProperty("leaveReason", leaveReason == null ? "NONE" : leaveReason);
+        // 2026-09-13（N2 方案 b）：显式落盘「本场是否发生过重建回场」。
+        // 原实现靠 leaveReason=ANOMALY 传递该信息，但那个值在同一次调用内就被复位成 NONE ⇒ 永远读不到。
+        session.addProperty("rebuiltFromRecord", this.rebuiltFromRecord);
         JsonArray parts = new JsonArray();
         if (participants != null) {
             for (String p : participants) {
@@ -789,24 +939,42 @@ public final class BattleFlowRecorder {
      * 离场结果归纳（设计 §2.2 的 result 枚举）。
      * <p>
      * 判据：① {@code leaveReason=CHUNK_UNLOAD} 优先 → {@code chunkUnload}；
-     * ② 走过结算/击杀（{@code phaseSettle} 里出现 {@code defeat}）→ {@code defeated}；
-     * ③ 只走了无掉落离场（{@code noLootLeave}）→ {@code noLootLeave}；
-     * ④ 什么都没记到（例如区块卸载直接冻结实体，未走任何退场路径）→ {@code walkAway}。
+     * ② 出现 {@code timedVictory} → {@code victory}（**须先于 defeat 判**，理由见下）；
+     * ③ 走过结算/击杀（{@code phaseSettle} 里出现 {@code defeat}）→ {@code defeated}；
+     * ④ 只走了无掉落离场（{@code noLootLeave}）→ {@code noLootLeave}；
+     * ⑤ 什么都没记到（例如区块卸载直接冻结实体，未走任何退场路径）→ {@code walkAway}。
+     * <p>
+     * <b>2026-09-12（用户裁决）新增 {@code victory} 档</b>：2.8「无色挑战」计时到点 = <b>二阶段胜利</b>，
+     * 但它同样走 {@code settleBattle}，而后者对所有结算路径统一记 {@code kind="defeat"} ⇒
+     * 不特判就会把胜利归成「被击败」，与玩家击杀 / 投票否决 / 区块超时同档。
+     * 解法是不动 {@code settleBattle}（避免影响其余路径），改由
+     * {@code RediosEntity.resolveColorlessChallengeSuccess} 在调它**之前**先记一条
+     * {@code timedVictory}，本方法据此优先返回 {@code victory}。
+     * <p>
      * 注意：投票否决离场也走 {@code settleBattle}（发一阶段奖励 + 设冷却），因此同样归入
      * {@code defeated}——要区分具体收尾方式请看 {@code phaseSettle} 的 kind/note 与 leaveReason。
+     * {@code CHUNK_UNLOAD} 保持最高优先：2.8/2.9 期间走远导致区块卸载的场次仍记 {@code chunkUnload}
+     * （其 {@code phaseSettle} 里照样能看到 {@code timedVictory} 条目，成就 phase2_countdown 与
+     * 二阶段奖励照发），这样不改变既有「走远优先」的判定。
      */
     private String deriveResult(String leaveReason) {
         if ("CHUNK_UNLOAD".equals(leaveReason)) {
             return "chunkUnload";
         }
+        boolean victory = false;
         boolean defeated = false;
         boolean noLoot = false;
         for (SettleEvent e : this.phaseSettle) {
-            if ("defeat".equals(e.kind())) {
+            if ("timedVictory".equals(e.kind())) {
+                victory = true;
+            } else if ("defeat".equals(e.kind())) {
                 defeated = true;
             } else if ("noLootLeave".equals(e.kind())) {
                 noLoot = true;
             }
+        }
+        if (victory) {
+            return "victory";
         }
         if (defeated) {
             return "defeated";
@@ -1025,7 +1193,8 @@ public final class BattleFlowRecorder {
                 + "而空时间线本来就不写指纹 ⇒ 无法区分。请让 Boss 施放一个带时间线的 SA 后再看。");
         } else if (this.comboMaxTimelineFrames == -1) {
             verdict = "inconclusive";
-            basis.append("观测到的 combo 其 tickAction 不是 TimeLineTickAction（帧数 -1）⇒ 指纹机制对它不适用，无法判定。");
+            basis.append("观测到的 combo **找不到时间线**（帧数 -1：连 tickAction 的捕获字段里也没有 "
+                + "TimeLineTickAction，或组合体拆不开）⇒ 指纹机制对它不适用，无法判定。");
         } else {
             verdict = "inconclusive";
             basis.append("读不到活动 combo 的帧数信息（-2：探针反射未解析 / comboSeq 不在 combo_state 注册表），"
@@ -1103,10 +1272,11 @@ public final class BattleFlowRecorder {
                 + "③ control.fingerprintMechanismVerified = true 才代表指纹机制在当前 jar 上有效"
                 + "（对照 = 持刀玩家的同一指纹 > 0，玩家物品栏每 tick 调 inventoryTick）。"
                 + " 注意 elapsedMax 是 combo 已过帧数（= gameTime - lastActionTime，随时间自然增长），"
-                + "**不能**用来判断时间线是否在跑；maxTimelineFrames 的 -1 **不代表没有时间线** —— "
-                + "它的含义是「采样时刻 combo 的 tickAction 字段不是直接的 TimeLineTickAction」"
-                + "（slashblade 的 TickAction.andThen 会把时间线包装成组合对象，第三方也可自定义 TickAction 实现），"
-                + "-2 = 读不到；判定一律以 fingerprintMax 为准；comboSeqTrace 里 selfDriven = silent_sun 在本 tick（或前一 tick）"
+                + "**不能**用来判断时间线是否在跑；maxTimelineFrames 现已**能拆 andThen 组合体**读到帧数"
+                + "（2026-09-12 修复「时间轴查找」：递归拆 tickAction 的捕获字段找 TimeLineTickAction）—— "
+                + "故 >=0 = 找到时间线并读到帧数、**-1 = 确实找不到时间线**（组合体拆不开 / 第三方自定义实现 / 真无时间线）、"
+                + "-2 = 读不到；注意 tickActionIsTimeline=false 而 frames>=0 属**合法组合**（时间线被 andThen 组合在 tickAction 里）；"
+                + "判定一律以 fingerprintMax 为准；comboSeqTrace 里 selfDriven = silent_sun 在本 tick（或前一 tick）"
                 + "刚主动写过 comboSeq / 推进过 combo —— 因此**变化本身不能证明时间线在跑**"
                 + "（silent_sun 的 updateComboSeq/progressCombo 与 resolvCurrentComboState 的超时迁移都会改 comboSeq），"
                 + "结论只以 fingerprintMax 为准。");
@@ -1194,6 +1364,19 @@ public final class BattleFlowRecorder {
         out.addProperty("saCastProductions", this.saProductionTotal);
         out.addProperty("saCastAddedEntities", this.saProductionAddedTotal);
         out.addProperty("saCastEmptyProductions", this.emptySaProductions);
+        // 2026-09-13 新增：SA「窗口产出」—— 与上面的同调用差值互补。判读：
+        //   windowCount > 0 ⇒ 该 SA 确实产出了实体（只是不在施放那一拍）；
+        //   windowCount == 0 且同调用也是 0 ⇒ 这个 SA 是真的没产出任何东西。
+        JsonArray saWindow = new JsonArray();
+        for (Map.Entry<String, Integer> entry : this.saWindowProductionBySaId.entrySet()) {
+            JsonObject o = new JsonObject();
+            o.addProperty("saId", entry.getKey());
+            o.addProperty("windowCount", entry.getValue());
+            o.addProperty("outsideSelfDriven", this.saWindowProductionOutsideBySaId.getOrDefault(entry.getKey(), 0));
+            o.addProperty("windowTicks", SA_PRODUCTION_WINDOW_TICKS);
+            saWindow.add(o);
+        }
+        out.add("saWindowProductions", saWindow);
         JsonArray byType = new JsonArray();
         for (Map.Entry<String, ProdAgg> entry : this.productionByType.entrySet()) {
             ProdAgg a = entry.getValue();

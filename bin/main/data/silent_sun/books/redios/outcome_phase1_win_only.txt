@@ -1,9 +1,0 @@
-你打舒服了我也打舒服了，这样就行了。
-接下来不是很有打的必要。
-
-[战斗记录]
-维度: {dimension}
-坐标: {x} {y} {z}
-参战者: {participants}
-用时: {duration_seconds}s
-

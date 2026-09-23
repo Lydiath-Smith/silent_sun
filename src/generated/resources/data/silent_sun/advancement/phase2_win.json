@@ -1,20 +1,27 @@
 {
-  "display": {
-    "title": {
-      "translate": "advancement.silent_sun.phase2_win.title"
-    },
-    "description": {
-      "translate": "advancement.silent_sun.phase2_win.desc"
-    },
-    "icon": {
-      "id": "silent_sun:redios_disc_phase2"
-    },
-    "frame": "challenge"
-  },
-  "parent": "silent_sun:root",
+  "parent": "extinction_day_mod_1784441698:miedao_duan",
   "criteria": {
     "trigger": {
       "trigger": "minecraft:impossible"
     }
-  }
+  },
+  "display": {
+    "description": {
+      "translate": "advancement.silent_sun.phase2_win.desc"
+    },
+    "frame": "challenge",
+    "icon": {
+      "count": 1,
+      "id": "silent_sun:redios_disc_phase2"
+    },
+    "title": {
+      "translate": "advancement.silent_sun.phase2_win.title"
+    }
+  },
+  "requirements": [
+    [
+      "trigger"
+    ]
+  ],
+  "sends_telemetry_event": true
 }

@@ -43,6 +43,9 @@ repo/
 libs/
 # Electron/Chromium crashpad 日志（桌面壳产生，与工程无关）
 debug.log
+# JVM 崩溃产物（HotSpot hs_err / replay，非工程内容）
+hs_err_pid*.log
+replay_pid*.log
 
 ### Silent Sun 资源真源例外（bin/main）###
 # 2026-09-10 实测修复：原先第 26 行有一条 `bin/`（排除整个 bin 目录），而 Git 规则是

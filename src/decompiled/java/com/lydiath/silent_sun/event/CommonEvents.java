@@ -20,10 +20,15 @@ import com.lydiath.silent_sun.registry.ModEffects;
 import com.lydiath.silent_sun.rules.RediosRules;
 import com.lydiath.silent_sun.rules.RediosRulesReloadListener;
 import com.lydiath.silent_sun.util.AbsoluteDamageUtil;
-import com.lydiath.silent_sun.util.BookTextReloadListener;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
 import java.util.ArrayList;
+import java.lang.reflect.Method;
+import java.util.Map;
+import java.util.Optional;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
@@ -39,7 +44,6 @@ import net.minecraft.server.level.ServerPlayer;
 import net.neoforged.neoforge.event.entity.player.PlayerEvent;
 import net.neoforged.fml.loading.FMLPaths;
 import net.minecraft.server.packs.resources.PreparableReloadListener;
-import net.minecraft.util.Mth;
 import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.effect.MobEffect;
 import net.minecraft.world.effect.MobEffectInstance;
@@ -85,8 +89,17 @@ public final class CommonEvents {
     private static final ResourceLocation MIRROR_FACE_ATTACK_DAMAGE_ID = ResourceLocation.fromNamespaceAndPath("silent_sun", "mirror_face_attack_damage");
     /** 拔刀剑全局兜底清扫的 tick 计数器（每 20 tick 跨维度清扫一次危险暴击剑气） */
     private static int bladeGlobalSweepTick = 0;
-    /** 诊断统计周期（100 tick = 5 秒）。洪峰时单体维度实体数量大，遍历开销不能按每 tick 计。 */
-    private static final int SA_FLOOD_DIAG_INTERVAL_TICKS = 100;
+    /**
+     * 诊断统计周期（600 tick = 30 秒）。洪峰时单体维度实体数量大，遍历开销不能按每 tick 计。
+     * <p>
+     * 2026-09-13 作者裁决（方案 B）：原值 100（5 秒）。探针使命已完成 —— 「刀光洪峰」来源已定案为
+     * {@code legendreliclib:base_sword_rain}（玩家侧，代码 + 日志双重证据，见 `_知识文库/危险面与共享判据.md`
+     * 危险面 4），而剑雨洪峰常态 182 会**每条都超阈值** ⇒ 每 5 秒一条 warn 无限刷，
+     * 是 169 MB latest.log / 185 MB debug.log 的主要贡献者之一。
+     * 降为 30 秒一条：日志量省约 6 倍，**阈值 {@link #SA_FLOOD_DIAG_WARN_THRESHOLD} 保持 50 不动**
+     * ⇒ 剑雨洪峰仍然看得见，排查拔刀剑适配时不会失去这条唯一能看出实体归属的观测。
+     */
+    private static final int SA_FLOOD_DIAG_INTERVAL_TICKS = 600;
     /** 诊断告警阈值：SlashBlade 系实体总数低于此值不打日志，避免正常战斗刷屏。 */
     private static final int SA_FLOOD_DIAG_WARN_THRESHOLD = 50;
     /**
@@ -204,7 +217,6 @@ public final class CommonEvents {
     public static void onAddReloadListeners(AddReloadListenerEvent event) {
         event.addListener(new RediosRulesReloadListener());
         event.addListener(new RediosLocalConfigReloadListener());
-        event.addListener(new BookTextReloadListener());
     }
 
     @SubscribeEvent
@@ -238,9 +250,13 @@ public final class CommonEvents {
     /**
      * 战斗流程报告开关（2026-09-12，beta1 发布前的流程分析用）。
      * <p>
-     * 默认关闭；开启后**新开战**的场次开始采集（SA 施放 / 头衔转变 / 双阶段收尾 / 反作弊触发），
-     * 退场时导出 JSON 到 {@code <实例根目录>/logs/silent_sun/}。
-     * 采集是纯旁路观测，关闭时不建记录器、零开销。
+     * **默认开启**（2026-09-13 作者要求「战斗记录默认开启」；原为默认关闭，须手动 {@code on}）。
+     * 采集 SA 施放 / 头衔转变 / 双阶段收尾 / 反作弊触发，退场时导出 JSON 到
+     * {@code <实例根目录>/logs/silent_sun/}。纯旁路观测，{@code off} 时不建记录器、零开销。
+     * <p>
+     * ⚠️ 记录器在**实体构造时**按开关状态创建 ⇒ {@code off} 只影响**之后新召唤**的 Boss，
+     * 已在场的照常采完并导出。默认开启后，「开了报告但赶不上 Boss 构造」这个坑自然消失
+     * （2026-09-13 实测：报告在战斗中途才开 ⇒ 那一场记录为空壳）。
      */
     private static int runBattleReportOn(CommandContext<CommandSourceStack> ctx) {
         BattleFlowRecorder.setEnabled(true);
@@ -301,9 +317,10 @@ public final class CommonEvents {
         // 直到玩家真正死亡（死亡界面选择回到出生点）或脱离战斗。
         // 非致命伤害直接短路：既省一次 2048 格类过滤查询，也避免把钳制逻辑用在非致命伤害上。
         if (event.getNewDamage() < player.getHealth()) return;
-        if (hasHardcoreProtector(player)) {
-            event.setNewDamage(Math.max(0.0f, player.getHealth() - 1.0f));
-        }
+        // 2026-09-18（确认保命道具豁免）：改走共享钳制入口——白名单保命道具在场时不钳，
+        // 伤害原样落地、道具在 hurt 链内自己救人；其余硬核保护照旧钳到 1 血。
+        // （原内联钳伤不查白名单，普通链致死伤害上图腾永远触发不了——与计划 §5 选项 B 矛盾。）
+        event.setNewDamage(clampHardcoreProtected(player, event.getNewDamage()));
     }
 
     /**
@@ -337,6 +354,47 @@ public final class CommonEvents {
      * 真伤值。此处以最低优先级（最后运行）把 {@code LivingDamageEvent.Pre} 的最终伤害
      * 锁回标记值，从而绕过护甲/附魔/减伤模组在 Pre 之前的减免。
      */
+    /**
+     * 玩家受击留痕（2026-09-13 新增，作者要求）。
+     * <p>
+     * <b>用途</b>：把「Boss 抽到哪个 SA」与「参战玩家什么时候挨了多重的打」对齐，用于回答
+     * 「**哪几次 SA 打穿了玩家的保命手段**」。此前的记录面只有四类事件 + 产出观测，**看不到玩家受伤**。
+     * <p>
+     * <b>为何用 {@code Pre} 而非 {@code Post}</b>：保命类道具把伤害拦下时 {@code Post} 不会触发，
+     * 而 {@code Pre} 的伤害值仍在 ⇒ 只有从 Pre 记，"保护被消耗的那一下"才留得下痕迹。
+     * <p>
+     * <b>开销</b>：先判全局开关（默认已开）⇒ 关闭时零开销；只对**参战玩家**记（按半径反查该维度的 Boss
+     * 并检查其参战集合），非参战玩家（旁观 / 路过 / 其他战斗）一律不记。
+     */
+    @SubscribeEvent
+    public static void onPlayerHitForFlowReport(LivingDamageEvent.Pre event) {
+        if (!BattleFlowRecorder.isEnabled()) {
+            return;
+        }
+        if (!(event.getEntity() instanceof ServerPlayer player)) {
+            return;
+        }
+        // LivingDamageEvent.Pre 只暴露 getNewDamage()/setNewDamage()（没有 getAmount()）。
+        float amount = event.getNewDamage();
+        if (amount <= 0.0f) {
+            return;
+        }
+        if (!(player.level() instanceof ServerLevel level)) {
+            return;
+        }
+        UUID id = player.getUUID();
+        for (RediosEntity boss : level.getEntitiesOfClass(RediosEntity.class,
+                player.getBoundingBox().inflate(FLOW_HIT_LOOKUP_RADIUS))) {
+            if (boss.battleParticipants().contains(id)) {
+                boss.flowPlayerHit(player, event.getSource(), amount);
+                return;
+            }
+        }
+    }
+
+    /** 受击留痕反查 Boss 的半径（格）：只需覆盖"玩家与 Boss 同处一场战斗"的尺度。 */
+    private static final double FLOW_HIT_LOOKUP_RADIUS = 256.0;
+
     @SubscribeEvent(priority = EventPriority.LOWEST)
     public static void onAbsoluteDamageLockPre(LivingDamageEvent.Pre event) {
         LivingEntity target = event.getEntity();
@@ -382,6 +440,129 @@ public final class CommonEvents {
         return false;
     }
 
+    // ================================================================
+    // 保命道具白名单（2026-09-14 · 作者裁决「白名单语义」）
+    // ================================================================
+    // 语义：**宽恕名单内的玩家**若身上带着下列道具，则**不再钳到 1 血** ⇒ 伤害按原样落地 ⇒
+    // 玩家真的进入死亡流程 ⇒ 道具自己触发救人（消耗 / 扣耐久 / 冷却，由道具自身决定）。
+    // **未列入**的一律不放开 —— 含原版 {@code minecraft:totem_of_undying} 与 rexray 其余三个图腾。
+    // 需求与跨模组清单见 docs/实现计划-保命道具白名单-2026-09-14.md（清单出处 `_跨模组协作.md` L604-658）。
+    //
+    // ⚠️ 只对**走 {@code hurt()} 的链**放开（计划 §5 选项 B）：普通链 + 本模组 AbsoluteDamageUtil 真伤链。
+    //    **断魂链继续钳** —— 灭却之日的 SoulSeverMobEffect 在 {@code LivingDamageEvent.Post} 直写血量数据、
+    //    绕过 vanilla 收尾判定 ⇒ 那里放开的话道具根本救不了（它不经过 hurt），玩家只会白死。
+    private static final ResourceLocation[] TOTEM_WHITELIST_IDS = {
+        ResourceLocation.fromNamespaceAndPath("avaritia", "infinity_totem"),        // 无尽贪婪 Re:Avaritia
+        ResourceLocation.fromNamespaceAndPath("enigmaticlegacyplus", "the_cube"),   // 神秘遗物+（非欧立方）
+        ResourceLocation.fromNamespaceAndPath("rexray", "ultra_totem"),             // X光与超级工具（极限图腾）
+    };
+
+    /** 白名单物品（懒解析；未装对应模组的条目自动缺席 ⇒ **软依赖安全**，不影响加载）。 */
+    private static volatile Item[] totemWhitelist;
+
+    private static Item[] totemWhitelist() {
+        Item[] cached = totemWhitelist;
+        if (cached != null) {
+            return cached;
+        }
+        ArrayList<Item> out = new ArrayList<>();
+        for (ResourceLocation id : TOTEM_WHITELIST_IDS) {
+            // ⚠️ 必须用 getOptional：DefaultedRegistry 对未知 id 返回**默认值（air）而非 null**
+            //（这条契约在体检 G08 #5 里核实过），用 get() 会把 air 当成有效物品加进白名单。
+            BuiltInRegistries.ITEM.getOptional(id).ifPresent(out::add);
+        }
+        cached = out.toArray(new Item[0]);
+        totemWhitelist = cached;
+        return cached;
+    }
+
+    private static boolean isWhitelistedTotem(ItemStack stack) {
+        if (stack == null || stack.isEmpty()) {
+            return false;
+        }
+        for (Item item : totemWhitelist()) {
+            if (stack.is(item)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // ── Curios 饰品栏反射（可选联动，不硬依赖；调用链照 AntiCheatLayer.applyCuriosCooldowns）──
+    private static volatile boolean totemCuriosTried = false;
+    private static volatile Method totemCuriosGetInventory;
+    private static volatile Method totemCuriosGetCurios;
+    private static volatile Method totemCuriosGetStacks;
+    private static volatile Method totemCuriosGetSlots;
+    private static volatile Method totemCuriosGetStackInSlot;
+
+    /**
+     * Curios 未安装 / API 不匹配时**静默降级**（只是少查一个位置）——Curios 是可选联动，
+     * 未装属常态，不记日志（与 {@code AntiCheatLayer} 的选择不同：那边是"该生效却没生效"）。
+     */
+    private static void ensureTotemCuriosReflection() {
+        if (totemCuriosTried) return;
+        totemCuriosTried = true;
+        try {
+            Class<?> api = Class.forName("top.theillusivec4.curios.api.CuriosApi");
+            totemCuriosGetInventory = api.getMethod("getCuriosInventory", LivingEntity.class);
+            Class<?> handler = Class.forName("top.theillusivec4.curios.api.type.capability.ICuriosItemHandler");
+            totemCuriosGetCurios = handler.getMethod("getCurios");
+            Class<?> stacksHandler = Class.forName("top.theillusivec4.curios.api.type.inventory.ICurioStacksHandler");
+            totemCuriosGetStacks = stacksHandler.getMethod("getStacks");
+            Class<?> dynamic = Class.forName("top.theillusivec4.curios.api.type.inventory.IDynamicStackHandler");
+            totemCuriosGetSlots = dynamic.getMethod("getSlots");
+            totemCuriosGetStackInSlot = dynamic.getMethod("getStackInSlot", int.class);
+        } catch (Exception ignored) {
+            // 反射失败 ⇒ 后续各字段为 null，扫描直接返回 false
+        }
+    }
+
+    private static boolean hasWhitelistedTotemInCurios(ServerPlayer player) {
+        ensureTotemCuriosReflection();
+        if (totemCuriosGetInventory == null || totemCuriosGetCurios == null || totemCuriosGetStacks == null
+            || totemCuriosGetSlots == null || totemCuriosGetStackInSlot == null) {
+            return false;
+        }
+        try {
+            Object invOpt = totemCuriosGetInventory.invoke(null, player);
+            if (!(invOpt instanceof Optional<?> opt) || opt.isEmpty()) return false;
+            Object curiosMap = totemCuriosGetCurios.invoke(opt.get());
+            if (!(curiosMap instanceof Map<?, ?> map)) return false;
+            for (Object stacksHandler : map.values()) {
+                Object stacks = totemCuriosGetStacks.invoke(stacksHandler);
+                int slots = (Integer) totemCuriosGetSlots.invoke(stacks);
+                for (int i = 0; i < slots; i++) {
+                    Object stackObj = totemCuriosGetStackInSlot.invoke(stacks, i);
+                    if (stackObj instanceof ItemStack stack && isWhitelistedTotem(stack)) {
+                        return true;
+                    }
+                }
+            }
+        } catch (Exception ignored) {
+            // 反射调用失败 ⇒ 按"未携带"处理（保守：不放开钳制，玩家仍被保 1 血）
+        }
+        return false;
+    }
+
+    /**
+     * 玩家身上（**主手 → 副手 → 背包 → Curios 饰品栏**）是否带着白名单保命道具。
+     * <p>位置顺序照褪色之日的口径（`_跨模组协作.md` L615），保持跨模组一致。
+     * <p>2026-09-18：由 private 改 public——RediosEntity.clampHardcoreSpare 事前钳伤
+     * 需要同样的豁免判据（否则真伤值在标记前已被钳小，LOWEST 也放不回来）。
+     */
+    public static boolean hasWhitelistedTotem(ServerPlayer player) {
+        if (isWhitelistedTotem(player.getMainHandItem()) || isWhitelistedTotem(player.getOffhandItem())) {
+            return true;
+        }
+        for (ItemStack stack : player.getInventory().items) {
+            if (isWhitelistedTotem(stack)) {
+                return true;
+            }
+        }
+        return hasWhitelistedTotemInCurios(player);
+    }
+
     /**
      * M14 硬核 1 血锁（2026-09-10 用户裁决：**两条伤害链共用同一判据**）。
      * <p>
@@ -391,15 +572,34 @@ public final class CommonEvents {
      * <p>
      * 原实现只写在绝对真伤那条链里 → 断魂走另一套标记（{@code isSoulSeverDamageMarked}）可以
      * **越过 1 血锁直接击杀**硬核保护玩家，与 M14 本意矛盾（W5）。
+     * <p><b>2026-09-14（保命道具白名单）</b>：本入口=真伤/普通链 ⇒ **放行白名单**
+     *（带了白名单道具就不钳，让道具自己救人）。断魂链请用
+     * {@link #clampHardcoreProtectedNoTotemBypass}。
      */
     private static float clampHardcoreProtected(LivingEntity target, float damage) {
+        return clampHardcoreProtected(target, damage, true);
+    }
+
+    /**
+     * 断魂链专用入口：**不**放行白名单（计划 §5 选项 B）。
+     * <p>理由：断魂由灭却之日直写血量、绕过 {@code hurt()} ⇒ 放开后道具也救不了，只会让玩家白死。
+     */
+    private static float clampHardcoreProtectedNoTotemBypass(LivingEntity target, float damage) {
+        return clampHardcoreProtected(target, damage, false);
+    }
+
+    private static float clampHardcoreProtected(LivingEntity target, float damage, boolean allowTotemBypass) {
         if (!(target instanceof ServerPlayer player)) {
             return damage;
         }
-        if (hasHardcoreProtector(player)) {
-            return Math.min(damage, Math.max(0.0f, player.getHealth() - 1.0f));
+        if (!hasHardcoreProtector(player)) {
+            return damage;
         }
-        return damage;
+        // 2026-09-14：带白名单保命道具 ⇒ 不钳 ⇒ 伤害按原样落地 ⇒ 道具自己触发救人
+        if (allowTotemBypass && hasWhitelistedTotem(player)) {
+            return damage;
+        }
+        return Math.min(damage, Math.max(0.0f, player.getHealth() - 1.0f));
     }
 
     /**
@@ -444,7 +644,9 @@ public final class CommonEvents {
         // 2026-09-10（W5）：断魂同样受 M14 硬核 1 血锁约束——原实现只锁断魂值、没有硬核判定，
         // 于是断魂成了唯一能越过 1 血锁击杀硬核保护玩家的通道（与本意矛盾）。
         float locked = AbsoluteDamageUtil.getSoulSeverDamageValue(target);
-        event.setNewDamage(clampHardcoreProtected(target, locked));
+        // 2026-09-14（保命道具白名单）：断魂链**不放行**白名单 —— 断魂由灭却之日直写血量、绕过 hurt，
+        // 放开后道具救不了，只会让玩家白死（计划 §5 选项 B）。
+        event.setNewDamage(clampHardcoreProtectedNoTotemBypass(target, locked));
     }
 
     /**
@@ -464,7 +666,8 @@ public final class CommonEvents {
             return;
         }
         event.setCanceled(false);
-        event.setAmount(clampHardcoreProtected(target, AbsoluteDamageUtil.getSoulSeverDamageValue(target)));
+        // 2026-09-14（保命道具白名单）：断魂兜底同样**不放行**白名单（同锁定链的理由）。
+        event.setAmount(clampHardcoreProtectedNoTotemBypass(target, AbsoluteDamageUtil.getSoulSeverDamageValue(target)));
     }
 
     /**
@@ -508,19 +711,22 @@ public final class CommonEvents {
         float amount = event.getAmount();
         event.setCanceled(true);
         data.putBoolean(BLADE_DAMAGE_RANDOMIZED_KEY, true);
-        boolean dealt;
         try {
-            dealt = target.hurt(newSource, amount);
+            target.hurt(newSource, amount);
         } finally {
             data.remove(BLADE_DAMAGE_RANDOMIZED_KEY);
         }
-        // 原伤害被取消后 AttackHelper 走了 miss 分支（无击退），此处按 SlashBlade 同款 0.5 倍率补齐
-        if (dealt && target.isAlive()) {
-            float kb = (float) redios.getAttributeValue(Attributes.ATTACK_KNOCKBACK);
-            if (kb > 0.0f) {
-                target.knockback(kb * 0.5f, Mth.sin(redios.getYRot() * 0.017453292f), -Mth.cos(redios.getYRot() * 0.017453292f));
-            }
-        }
+        // 2026-09-13 作者裁决（原话「现在没击退就不用了」）：此处原有一段「补击退」代码 ——
+        //   `float kb = (float) redios.getAttributeValue(Attributes.ATTACK_KNOCKBACK);
+        //    if (kb > 0.0f) target.knockback(kb * 0.5f, sin(yRot), -cos(yRot));`
+        // 其本意是补偿「原伤害被 `event.setCanceled(true)` 取消后 AttackHelper 走 miss 分支 ⇒ 这次攻击丢掉击退」，
+        // 注释自述「按 SlashBlade 同款 0.5 倍率补齐」。
+        // **但取值来源失效**：Boss 的 `createAttributes()` 只设 7 个属性、**从未设置 `ATTACK_KNOCKBACK`**（默认 0）
+        // ⇒ `if (kb > 0.0f)` 恒 false ⇒ 补偿从未生效。全库 `ATTACK_KNOCKBACK` 仅此一处引用；
+        // 历史 jar（0.0.17 / 0.0.24 / 1.0.0）中亦无其它取值来源。
+        // 从 SlashBlade 侧也取不到（其唯一可调用项是刀光实体的 `setKnockBackOrdinal`，属**刀光自身**档位 ≠ 攻击击退）
+        // ⇒ 既然实际没有击退，作者裁决**不再保留**这段（随之移除已无用途的 `dealt` 局部变量）。
+        // 注：2.9「四级击退」是**另一条独立要求**（`思路留档.txt` L91），不属于本段职责，见 `_知识文库/施工台账.md` §三。
     }
 
     @SubscribeEvent

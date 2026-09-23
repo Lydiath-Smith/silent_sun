@@ -40,8 +40,8 @@ public final class TwilightVisualEvents {
 
     /** 断光之刻视觉生效半径（格）：与战斗锚点/反流放范围对齐。 */
     private static final double BOSS_RADIUS = 256.0;
-    /** 黑块雾的终止距离：超过此距离的方块被雾完全覆盖为纯黑。 */
-    private static final float BLACK_FOG_END = 8.0F;
+    /** 黑块雾的终止距离：由 8 格放宽到 64 格，消除“撞墙感”并实现自然渐隐。 */
+    private static final float BLACK_FOG_END = 64.0F;
     /** 入场演出雾的终止距离：约 3 格，营造失明观感（无 debuff）。 */
     private static final float INTRO_FOG_END = 3.0F;
     /** 白天天空盘颜色（浅蓝）。 */
@@ -80,7 +80,7 @@ public final class TwilightVisualEvents {
         if (event.getMode() != FogRenderer.FogMode.FOG_TERRAIN) {
             return;
         }
-        event.setNearPlaneDistance(0.0F);
+        event.setNearPlaneDistance(intro ? 0.0F : 16.0F);
         event.setFarPlaneDistance(intro ? INTRO_FOG_END : BLACK_FOG_END);
         event.setFogShape(FogShape.SPHERE);
         event.setCanceled(true);

@@ -1128,8 +1128,8 @@ public final class IntegrationContract {
      * @param elapsed         {@code ComboState.getElapsed(entity)}（读不到为 {@code -1}）
      * @param lastProcessedTick tickAction 指纹（{@code persistentData} 的 lastProcessedTick，读不到为 {@code -1}）
      * @param timelineFrames  当前 combo 的 tickAction 时间线帧数：{@code >=0} 帧数（0 = 空时间线）、
-     *                        {@code -1} tickAction 不是直接的 TimeLineTickAction（可能被 andThen 组合，
-     *                        或为第三方自定义实现 —— **不代表没有时间线**）、{@code -2} 读不到
+     *                        {@code -1} **确实找不到时间线**（已递归拆过 andThen 组合体的捕获字段）、
+     *                        {@code -2} 读不到
      * @param unavailableReason 非 null = 探针本身不可用（而非「结论如此」）
      */
     public record ComboProbeSnapshot(String comboSeq, long elapsed, long lastProcessedTick,
@@ -1355,15 +1355,22 @@ public final class IntegrationContract {
     /**
      * 当前 combo 的 tickAction 时间线帧数（只读）。
      * <p>
-     * <b>2026-09-12 首场实测提醒</b>：本信号返回 -1 是**常态**（实测该场 maxTimelineFrames 全程 -1，
-     * 而指纹却达到 29）—— 原因：{@code ComboState.tickAction} 字段里放的可能是
-     * {@code TickAction.andThen(...)} 包装后的**组合对象**（javap 确证 slashblade 用 andThen 串接动作），
-     * 或第三方自定义的 {@code TickAction} 实现，此时 {@code isInstance(TimeLineTickAction)} 为 false。
-     * <b>故 -1 不代表「没有时间线」；判定一律以指纹（{@link #readComboFingerprint}）为准。</b>
+     * <b>2026-09-12 首场实测 → 同日修复（「时间轴查找」）</b>：该场 {@code maxTimelineFrames} 全程 -1，
+     * 而指纹达到 29 —— 原因是 {@code ComboState.tickAction} 字段里放的是
+     * {@code TickAction.andThen(...)} 生成的**合成 lambda**（javap 确证 {@code andThen} 是 interface 的
+     * default 方法、编译为捕获式 lambda，且该字段声明类型是 {@code Consumer<LivingEntity>}，
+     * 可放任意组合体），此时 {@code isInstance(TimeLineTickAction)} 恒 false。
+     * <p>
+     * <b>现已按捕获字段递归拆解组合体</b>（{@link #findTimeLineAction}）⇒ 帧数可正常读出。解读方式：
+     * <ul>
+     *   <li>{@code >=0} ⇒ 找到时间线并读到帧数（0 = 空时间线，即 {@code ComboState.EMPTY_TICK_ACTION}）；</li>
+     *   <li>{@code -1} ⇒ **确实找不到时间线**（组合体拆不开 / 第三方自定义实现 / 该 combo 真无时间线）；</li>
+     *   <li>{@code -2} ⇒ 读不到（反射不可用 / comboSeq 不在 combo_state 注册表里）。</li>
+     * </ul>
+     * 注：{@code tickActionIsTimeline=false} 且本值 {@code >=0} 是**合法组合** —— 表示时间线被
+     * {@code andThen} 组合在 tickAction 里，而非字段值本身。
      *
-     * @return {@code >=0} 帧数（0 = 空时间线，即 {@code ComboState.EMPTY_TICK_ACTION}）；
-     *         {@code -1} 该 combo 的 tickAction 不是直接的 TimeLineTickAction（组合体 / 自定义实现）；
-     *         {@code -2} 读不到（反射不可用 / comboSeq 不在 combo_state 注册表里）
+     * @return {@code >=0} 帧数；{@code -1} 找不到时间线；{@code -2} 反射不可用 / comboSeq 未注册
      */
     /**
      * 当前 combo 的 {@code tickAction} / {@code clickAction} 字段的**实际运行时类型**（只读）。
@@ -1379,7 +1386,10 @@ public final class IntegrationContract {
      * </ul>
      * 另外「组合体」情况（slashblade 的 {@code TickAction.andThen}、第三方如 True_POWER 的
      * {@code wrapOperationUpperSlashTickAction} 包装）会表现为类名是合成的 lambda 类，而非
-     * {@code ComboState$TimeLineTickAction} —— 这也是过去 {@code maxTimelineFrames=-1} 的成因。
+     * {@code ComboState$TimeLineTickAction} —— 这正是过去 {@code maxTimelineFrames=-1} 的成因；
+     * <b>2026-09-12 已修</b>：{@link #findTimeLineAction} 会递归拆捕获字段把时间线找出来
+     * （见 {@link #timelineFramesOf}），故本类型的 {@code *IsTimeline=false} 不再等于「没有时间线」，
+     * 要配合对应的 {@code *Frames >= 0} 一起读。
      */
     public record ComboActionTypes(String tickActionClass, String clickActionClass,
                                    boolean tickActionIsTimeline, boolean clickActionIsTimeline,
@@ -1429,13 +1439,69 @@ public final class IntegrationContract {
         return action != null && timeLineTickActionClass != null && timeLineTickActionClass.isInstance(action);
     }
 
-    /** 动作对象的 timeLine 帧数（{@code -1} = 非时间线对象 / 读不到，{@code >=0} = 帧数）。 */
+    /**
+     * 从 {@code tickAction} / {@code clickAction} 字段值里**递归查找** TimeLineTickAction
+     * （只读；找不到返回 {@code null}）。
+     * <p>
+     * <b>2026-09-12（实战「时间轴查找」）</b>：该字段实测往往**不是**直接的 {@code TimeLineTickAction}，
+     * 而是 {@code ComboState$TickAction.andThen(...)} 生成的**合成 lambda**。javap 确证：
+     * <ul>
+     *   <li>{@code ComboState$TickAction} 是 interface，{@code andThen} 是它的 default 方法，
+     *       编译为捕获式 lambda（{@code ComboState$TickAction$$Lambda}）；</li>
+     *   <li>{@code ComboState.tickAction} 的**声明类型是 {@code Consumer<LivingEntity>}**，
+     *       因此可以放任意组合体，不受 {@code TickAction} 名义类型约束。</li>
+     * </ul>
+     * ⇒ 直接 {@code isInstance} 判断恒 false、帧数恒 {@code -1}，这就是过去 {@code maxTimelineFrames}
+     * 全程 -1 的成因（也让实体产出无法归因到具体时间轴）。组合体的**捕获字段**里存着原 TickAction，
+     * 故按字段递归拆解即可定位真正的时间轴对象。
+     * <p>
+     * 深度上限 4：{@code andThen} 串联「时间线→附加动作」通常只 1 层，上限用于挡住第三方深层包装
+     * 导致的无界递归。全程只读并吞异常 —— 任一环读不到只返回 {@code null}，不影响战斗。
+     */
+    private static Object findTimeLineAction(Object action, int depth) {
+        if (action == null || depth > 4) {
+            return null;
+        }
+        if (isTimelineAction(action)) {
+            return action;
+        }
+        try {
+            for (Field f : action.getClass().getDeclaredFields()) {
+                if (java.lang.reflect.Modifier.isStatic(f.getModifiers())) {
+                    continue;
+                }
+                if (!f.trySetAccessible()) {
+                    continue;
+                }
+                Object captured = f.get(action);
+                if (captured == null || captured == action) {
+                    continue;
+                }
+                Object found = findTimeLineAction(captured, depth + 1);
+                if (found != null) {
+                    return found;
+                }
+            }
+        } catch (Throwable ignored) {
+            // 组合体不可拆（模块访问限制 / 非捕获式实现）⇒ 视为「找不到时间轴」，探针降级不影响战斗
+        }
+        return null;
+    }
+
+    /**
+     * 动作对象的 timeLine 帧数。
+     * <p>
+     * {@code -1} = **找不到时间线**（含组合体拆不开、字段读不到）；{@code >=0} = 帧数（0 = 空时间线）。
+     * 与 {@code tickActionIsTimeline} 配合解读：{@code isTimeline=false} 但本值 {@code >=0} ⇒
+     * 说明时间线被 andThen **组合**在 tickAction 里（时间线确实存在，只是不直接是字段值）。
+     */
     private static int timelineFramesOf(Object action) {
-        if (!isTimelineAction(action)) {
+        Object timeline = findTimeLineAction(action, 0);
+        if (timeline == null) {
             return -1;
         }
         try {
-            Object line = comboStateTimeLineField == null ? null : comboStateTimeLineField.get(action);
+            Object line = comboStateTimeLineField == null ? null : comboStateTimeLineField.get(timeline);
             return line instanceof java.util.Map<?, ?> map ? map.size() : -1;
         } catch (Throwable t) {
             return -1;
@@ -1705,19 +1771,33 @@ public final class IntegrationContract {
     }
 
     /** IShootable.getShooter() 反射判空：返回 true 表示无 shooter（孤儿投射物，需补 Boss）。 */
+    /**
+     * 2026-09-14（体检 P0-3）：反射判定一旦抛异常即置位 —— 此后直接降级返回，不再重复反射、
+     * 不再重复记日志。理由见 {@link #hasNullShooter} 的 catch 注释。
+     * <p>{@code volatile}：本方法可能在多个维度/多个线程路径上被读到，置位后要求立即可见。
+     */
+    private static volatile boolean shooterProbeBroken = false;
+
     private static boolean hasNullShooter(Entity e) {
-        if (iShootableGetShooterMethod == null) {
+        if (iShootableGetShooterMethod == null || shooterProbeBroken) {
             return false;
         }
         try {
             return iShootableGetShooterMethod.invoke(e) == null;
         } catch (Exception ex) {
-            // 2026-09-12（审计清理 G19 #5）：原先静默 return false（语义＝「该投射物没有 null shooter」），
-            // 反射失败原因无痕、孤儿投射物会静默漏清理。级别判断依据：本方法被 globalSanitizeBladeDrives 的
-            // 「全维度全实体」循环与 sanitizeBossSummonedSwordShooters 的 16 格实体谓词逐实体调用，
-            // 属每战斗 tick 的高频路径 ⇒ 必须 debug，否则反射一旦失效会每 tick 刷屏。
-            // 上面 iShootableGetShooterMethod == null 的早退是「没装拔刀剑」的正常路径（返回值本就是正确语义），故不记日志。
-            LOG.debug("hasNullShooter 反射判定失败，按「无 null shooter」处理（可能漏清理孤儿投射物）：", ex);
+            // 2026-09-14（体检 P0-3 修复，**保留 G19 #5「不得静默」的意图**）：
+            // G19 #5 当初选 `debug` 而非静默，是为了「反射失效不能无痕」；但本方法被
+            // `globalSanitizeBladeDrives` 的「全维度全实体」循环与 `sanitizeBossSummonedSwordShooters`
+            // 的 16 格实体谓词**逐实体调用** ⇒ 反射一旦失效就是「实体数 × 每 tick」的日志洪水。
+            // 现改为：**首次 `warn`（作者可见，保住可见性）+ 置位禁用探测**（此后直接返回 false，
+            // 明确降级、不再抛异常循环、不再刷屏）。即「可见性」与「不刷屏」两者兼得。
+            // 上面 `iShootableGetShooterMethod == null` 的早退是「没装拔刀剑」的正常路径
+            //（返回值本就是正确语义），故不记日志。
+            if (!shooterProbeBroken) {
+                shooterProbeBroken = true;
+                LOG.warn("hasNullShooter 反射判定失败，已**禁用该探测**（此后一律按「无 null shooter」处理，"
+                    + "可能漏清理孤儿投射物，请检查拔刀剑版本是否匹配）：", ex);
+            }
             return false;
         }
     }

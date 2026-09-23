@@ -108,7 +108,11 @@ public final class BossTargeting {
         }
 
         if (playerOnlyMode()) {
-            return isFriendlyPetOfParticipant(boss, attacker);
+            // 2026-09-18（对齐设计稿 §3.5 L338）：Mode1 下除「参战玩家的有主宠物」外，
+            // 其他非 OwnableEntity 生物也可攻击 Boss。复用 Mode2 的 mob 目标白名单/安全过滤，
+            // 避免被动生物与无主宠物混入。非有主宠物**不受 25 点限伤**，由通用硬上限 200 覆盖
+            // （DamagePipeline 只对 OwnableEntity 套 FRIENDLY_MOB_DAMAGE_CAP）。
+            return isFriendlyPetOfParticipant(boss, attacker) || isMobTargetEligible(attacker);
         }
         return isMobTargetEligible(attacker);
     }

@@ -718,7 +718,7 @@ final class AntiCheatLayer {
      * <p>
      * 默认不对全体参战者施加物品冷却，避免 Boss 机制触发时连坐全队影响战斗体验；
      * 反流放（离场重归）等明确作弊场景通过 {@code applyCooldowns=true} 追加 2s 物品栏
-     * 与 Curios 饰品栏强制冷却。
+     * 与 Curios 饰品栏强制冷却，**并追加断魂数值惩罚**（见下方 2026-09-12 裁决说明）。
      */
     void counterAllCheatAttackers(ServerLevel serverLevel) {
         this.counterAllCheatAttackers(serverLevel, false);
@@ -729,7 +729,7 @@ final class AntiCheatLayer {
         // gatedBy30s=true ⇒ 被全局门压制、实际未警告/未冷却）。
         boolean gated = this.antiCheatPunishGlobalCooldownTicks > 0;
         this.reportAntiCheat("TAMPER_PUNISH", null,
-            gated ? "none" : (applyCooldowns ? "broadcast+全员itemCooldown(40)" : "broadcast"), gated,
+            gated ? "none" : (applyCooldowns ? "broadcast+全员itemCooldown(40)+soulSeverY(1000)" : "broadcast"), gated,
             "全体连坐降级（applyCooldowns=" + applyCooldowns + "）");
         if (this.antiCheatPunishGlobalCooldownTicks > 0) {
             return; // 全局 30s 惩罚门：窗口内不再重复警告
@@ -749,6 +749,16 @@ final class AntiCheatLayer {
                     this.applyInventoryAndCuriosCooldowns(player, cooldownTicks);
                 }
             }
+            // 2026-09-12 作者裁决（补齐设计稿 §3.4 的惩罚**内容**，不只是触发点）：
+            // 设计稿原文要求作弊时「boss 的生命最大值和目前生命值依次翻倍，然后使断魂效果的 x 值 +1000」。
+            // 其中「生命上限翻倍」与反作弊**机制一**（getMaxHealth 篡改检测）自相矛盾——翻倍会被本层自己
+            // 判成属性篡改 ⇒ 作者裁定**不补翻倍，只补断魂**：Boss 的 soulSeverY += 1000。
+            // 量纲对照：骑乘惩罚 `addSoulSeverY(50L)`；溢出警告阈值 SOUL_SEVER_Y_WARNING_THRESHOLD(默认 5000)。
+            // 生效链：`getSoulSeverValue()` = SOUL_SEVER_BASE_X(默认 30) + soulSeverY，该值被
+            // AbsoluteDamageUtil 原样锁定为断魂真伤（9 bypass）⇒ 此后每次挂断魂都多挨 1000 点真伤。
+            // 语义即纲领 §4「作弊只会让 Boss 变强」。作用域：本方法 applyCooldowns=true 的**唯一调用方是
+            // 重建回场**（外部模组/存档编辑清除 Boss 实体），故只在明确作弊场景生效，不污染其余连坐调用点。
+            boss.addSoulSeverY(1000L);
         }
         MutableComponent tip = Component.translatable("message.silent_sun.redios.anticheat.punish").withStyle(ChatFormatting.DARK_RED);
         boss.broadcastToParticipants(boss.rediosSigned(tip));

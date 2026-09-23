@@ -173,13 +173,19 @@ dependencies {
     // 编译期依赖灭却之日（2026-09-01 断魂统一）：断魂效果（ModEffects.SOUL_SEVER 别名）与
     // Boss 账本（SoulSeverMobEffect.recordSoulSeverLedgerBoss）直接引用我们模组类；
     // 仅编译用（compileOnly），运行时仍需前置 jar（mods.toml 已声明 extinction_day required）。
-    compileOnly files("libs/extinction_day_mod_1784441698-1.12.2.jar")
+    // 2026-09-20：前置升级到 1.16.0（断魂判死修复、斩击渲染修复定稿），编译依赖同步。
+    compileOnly files("libs/extinction_day_mod_1784441698-1.16.0.jar")
 
     // 硬依赖（mods.toml 声明 required）以本地 jar 挂开发运行时：
     // runData / runClient / runServer 的 mod 加载器会校验依赖，缺失则启动失败。
     // 不发布到依赖方（localRuntime 不随 publish），仅本地开发运行时生效。
-    localRuntime files("libs/extinction_day_mod_1784441698-1.12.0.jar")
+    localRuntime files("libs/extinction_day_mod_1784441698-1.16.0.jar")
     localRuntime files("libs/SlashBladeResharped-2.0.7-1.21.1.jar")
+
+    // 2026-09-14（传送门刀身残影 · 步骤 2）：Mixin 需要**编译期**看到拔刀剑的类
+    //（@Mixin 目标 LayerMainBlade 及其方法签名）。此前拔刀剑只有 localRuntime ⇒ Mixin 类编译不过。
+    // 仅编译用；运行时由前置 jar 提供（mods.toml 已把 slashblade 声明为 required）。
+    compileOnly files("libs/SlashBladeResharped-2.0.7-1.21.1.jar")
 
     cfr "org.benf:cfr:0.152"
 }

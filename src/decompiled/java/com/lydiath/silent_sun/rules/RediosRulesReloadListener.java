@@ -40,10 +40,10 @@ extends SimpleJsonResourceReloadListener {
      *     ForEach-Object { if ($_.Groups[1].Success) { $_.Groups[1].Value } else { $_.Groups[2].Value } } |
      *     Sort-Object -Unique
      * </pre>
-     * 注：{@code vote_timeout_seconds} 等键在当前 json 中未出现，但代码仍读取以兼容旧配置，故一并列入。
+     * 注：{@code twilight_moment_expel_enabled} 等旧键在当前 json 中未出现，但代码仍读取以兼容旧配置，故一并列入。
      */
     private static final Set<String> KNOWN_KEYS = Set.of(
-        "adaptive_block_cooldown_ticks", "adaptive_block_damage_reduction", "adaptive_block_duration_ticks", "adaptive_block_trigger_hits_per_second",
+        "adaptive_block_cooldown_ticks", "adaptive_block_duration_ticks", "adaptive_block_trigger_hits_per_second",
         "battle_expel_timeout_seconds", "battle_radius_blocks", "black_sun_defeat_ratio", "boss_missing_vision_action",
         "boss_missing_vision_dot_threshold", "boss_missing_vision_enabled", "boss_missing_vision_ticks", "boss_sa_excluded_namespaces",
         "boss_sa_excluded_sa_ids", "boss_sa_whitelist_namespaces", "chaos_ruin_incoming_absolute_enabled", "colorless_reflect_ratio",
@@ -54,15 +54,23 @@ extends SimpleJsonResourceReloadListener {
         "phase2_vote_yes_tokens", "push_away_distance", "push_away_range", "push_away_strength",
         "redios_battle_music_enabled", "redios_battle_music_outro_enabled", "redios_battle_music_phase1_intro_ticks", "redios_battle_music_phase1_loop_ticks",
         "redios_battle_music_phase2_intro_ticks", "redios_battle_music_phase2_loop_ticks", "redios_battle_music_volume", "redios_book_author",
-        "redios_note_phase1_win_phase2_lose", "redios_outcome_text_phase1_win_only_file", "redios_outcome_text_phase1_win_phase2_lose_file",
-        "redios_outcome_text_phase2_win_file", "restore_nbt", "restored_blocks_whitelist",
+        // 2026-09-18（多语言接线）：redios_note_phase1_win_phase2_lose / 三个
+        // redios_outcome_text_*_file 已移出——结局书文案改走 lang 键（book.silent_sun.*）。
+        "restore_nbt", "restored_blocks_whitelist",
         "skip_vote", "twilight_moment_apply_effect", "twilight_moment_debug_messages", "twilight_moment_expel_enabled",
         "twilight_moment_mode", "twilight_moment_notify_cooldown_ticks", "twilight_moment_punishment", "twilight_moment_satisfy_effects",
         "twilight_moment_timed_grace_ticks", "uncontrolled_sprint_aoe_dodge_chance", "uncontrolled_sprint_extra_cooldown_ticks", "uncontrolled_sprint_extra_damage_ratio",
-        "uncontrolled_sprint_extra_hits", "void_all_things_darkness_duration_ticks", "void_all_things_teleport_cooldown_ticks", "vote_tie_as_yes",
-        "vote_timeout_seconds", "wall_attack_notify_cooldown_ticks", "wall_attack_trace_particles", "weapon_weakpoint_armor_pierce",
+        "uncontrolled_sprint_extra_hits", "void_all_things_darkness_duration_ticks", "void_all_things_teleport_cooldown_ticks", "wall_attack_notify_cooldown_ticks",
+        // 2026-09-18：vote_tie_as_yes / vote_timeout_seconds 移出 KNOWN_KEYS——配置键已删除，
+        // 旧 json 残留时按未知键汇总告警。
+        "wall_attack_trace_particles", "weapon_weakpoint_armor_pierce",
         "weapon_weakpoint_cooldown_ticks", "weapon_weakpoint_damage_multiplier", "weapon_weakpoint_enabled", "weapon_weakpoint_fixed_cooldown",
-        "weapon_weakpoint_slow_ticks"
+        "weapon_weakpoint_slow_ticks",
+        // 2026-09-14（步骤 3 配置化）：真伤光环参数 10 键
+        "sorrow_toil_aura_damage", "sorrow_toil_aura_radius", "sorrow_toil_aura_interval_ticks",
+        "sorrow_toil_aura_particle_radius", "sorrow_toil_aura_particle_interval_ticks",
+        "chaos_ruin_aura_damage", "chaos_ruin_aura_radius", "chaos_ruin_aura_interval_ticks",
+        "chaos_ruin_aura_particle_radius", "chaos_ruin_aura_particle_interval_ticks"
     );
 
     /**
@@ -130,10 +138,8 @@ extends SimpleJsonResourceReloadListener {
             RediosRules.setRediosBookAuthor(null);
             // 2026-09-12（审计清理 G17 #5）：原 setRediosDefeatBookTitle(null) / setRediosVictoryBookTitle(null)
             // 两行已删除（配置键 redios_defeat_book_title / redios_victory_book_title 已废弃并移出 KNOWN_KEYS）。
-            RediosRules.setRediosNotePhase1WinPhase2Lose(null);
-            RediosRules.setRediosOutcomeTextPhase1WinOnlyFile(null);
-            RediosRules.setRediosOutcomeTextPhase1WinPhase2LoseFile(null);
-            RediosRules.setRediosOutcomeTextPhase2WinFile(null);
+            // 2026-09-18（多语言接线）：setRediosNotePhase1WinPhase2Lose(null) /
+            // 三个 setRediosOutcomeText*File(null) 已删除（setter 已移除，文案改走 lang 键）。
             RediosRules.setRediosBattleMusicEnabled(true);
             RediosRules.setRediosBattleMusicVolume(1.0f);
             RediosRules.setRediosBattleMusicPhase1IntroTicks(873);
@@ -141,12 +147,10 @@ extends SimpleJsonResourceReloadListener {
             RediosRules.setRediosBattleMusicPhase2IntroTicks(482);
             RediosRules.setRediosBattleMusicPhase2LoopTicks(3171);
             RediosRules.setRediosBattleMusicOutroEnabled(true);
-            RediosRules.setVoteTimeoutSeconds(30);
-            RediosRules.setVoteTieAsYes(false);
+            // 2026-09-18：setVoteTimeoutSeconds(30) / setVoteTieAsYes(false) 已删除（配置键移除）
             // TODO(审计清理 G02 #3)：本套默认值在字段初值 / setter null 回退 / reload 重置块三处各写一遍 —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
             RediosRules.setAdaptiveBlockTriggerHitsPerSecond(6);
             RediosRules.setAdaptiveBlockDurationTicks(20);
-            RediosRules.setAdaptiveBlockDamageReduction(1.0);
             RediosRules.setAdaptiveBlockCooldownTicks(40);
             RediosRules.setBattleRadiusBlocks(72);
             RediosRules.setBattleExpelTimeoutSeconds(60);
@@ -171,11 +175,72 @@ extends SimpleJsonResourceReloadListener {
             RediosRules.setWeaponWeakpointFixedCooldown(20);
             RediosRules.setWeaponWeakpointDamageMultiplier(1.5);
             RediosRules.setWeaponWeakpointArmorPierce(0.5);
+            // 2026-09-14（步骤 3）：真伤光环参数 10 键 —— 默认值与原硬编码逐位相同。
+            RediosRules.setSorrowToilAuraDamage(1.0);
+            RediosRules.setSorrowToilAuraRadius(5.0);
+            RediosRules.setSorrowToilAuraIntervalTicks(4);
+            RediosRules.setSorrowToilAuraParticleRadius(5.0);
+            RediosRules.setSorrowToilAuraParticleIntervalTicks(2);
+            RediosRules.setChaosRuinAuraDamage(3.0);
+            RediosRules.setChaosRuinAuraRadius(5.0);
+            RediosRules.setChaosRuinAuraIntervalTicks(20);
+            RediosRules.setChaosRuinAuraParticleRadius(5.0);
+            RediosRules.setChaosRuinAuraParticleIntervalTicks(5);
             return;
         }
         JsonObject root = element.getAsJsonObject();
+
+        // ================================================================
+        // 真伤光环参数（2026-09-14 · 步骤 3 配置化）：10 键集中在此读取
+        // ================================================================
+        // 每键**独立** try-catch —— 单个键值非法不应让整份 reload 异常逃出 apply()
+        //（G03 教训：原先裸调 getAs*() 遇非法值即异常逃逸，管理员看到的现象是"配置全都没生效"）。
+        if (root.has("sorrow_toil_aura_damage")) {
+            try { RediosRules.setSorrowToilAuraDamage(root.get("sorrow_toil_aura_damage").getAsDouble()); }
+            catch (RuntimeException e) { LOG.warn("Rules 键 {} 值非法，保留默认：{}", "sorrow_toil_aura_damage", e.toString()); }
+        }
+        if (root.has("sorrow_toil_aura_radius")) {
+            try { RediosRules.setSorrowToilAuraRadius(root.get("sorrow_toil_aura_radius").getAsDouble()); }
+            catch (RuntimeException e) { LOG.warn("Rules 键 {} 值非法，保留默认：{}", "sorrow_toil_aura_radius", e.toString()); }
+        }
+        if (root.has("sorrow_toil_aura_interval_ticks")) {
+            try { RediosRules.setSorrowToilAuraIntervalTicks(root.get("sorrow_toil_aura_interval_ticks").getAsInt()); }
+            catch (RuntimeException e) { LOG.warn("Rules 键 {} 值非法，保留默认：{}", "sorrow_toil_aura_interval_ticks", e.toString()); }
+        }
+        if (root.has("sorrow_toil_aura_particle_radius")) {
+            try { RediosRules.setSorrowToilAuraParticleRadius(root.get("sorrow_toil_aura_particle_radius").getAsDouble()); }
+            catch (RuntimeException e) { LOG.warn("Rules 键 {} 值非法，保留默认：{}", "sorrow_toil_aura_particle_radius", e.toString()); }
+        }
+        if (root.has("sorrow_toil_aura_particle_interval_ticks")) {
+            try { RediosRules.setSorrowToilAuraParticleIntervalTicks(root.get("sorrow_toil_aura_particle_interval_ticks").getAsInt()); }
+            catch (RuntimeException e) { LOG.warn("Rules 键 {} 值非法，保留默认：{}", "sorrow_toil_aura_particle_interval_ticks", e.toString()); }
+        }
+        if (root.has("chaos_ruin_aura_damage")) {
+            try { RediosRules.setChaosRuinAuraDamage(root.get("chaos_ruin_aura_damage").getAsDouble()); }
+            catch (RuntimeException e) { LOG.warn("Rules 键 {} 值非法，保留默认：{}", "chaos_ruin_aura_damage", e.toString()); }
+        }
+        if (root.has("chaos_ruin_aura_radius")) {
+            try { RediosRules.setChaosRuinAuraRadius(root.get("chaos_ruin_aura_radius").getAsDouble()); }
+            catch (RuntimeException e) { LOG.warn("Rules 键 {} 值非法，保留默认：{}", "chaos_ruin_aura_radius", e.toString()); }
+        }
+        if (root.has("chaos_ruin_aura_interval_ticks")) {
+            try { RediosRules.setChaosRuinAuraIntervalTicks(root.get("chaos_ruin_aura_interval_ticks").getAsInt()); }
+            catch (RuntimeException e) { LOG.warn("Rules 键 {} 值非法，保留默认：{}", "chaos_ruin_aura_interval_ticks", e.toString()); }
+        }
+        if (root.has("chaos_ruin_aura_particle_radius")) {
+            try { RediosRules.setChaosRuinAuraParticleRadius(root.get("chaos_ruin_aura_particle_radius").getAsDouble()); }
+            catch (RuntimeException e) { LOG.warn("Rules 键 {} 值非法，保留默认：{}", "chaos_ruin_aura_particle_radius", e.toString()); }
+        }
+        if (root.has("chaos_ruin_aura_particle_interval_ticks")) {
+            try { RediosRules.setChaosRuinAuraParticleIntervalTicks(root.get("chaos_ruin_aura_particle_interval_ticks").getAsInt()); }
+            catch (RuntimeException e) { LOG.warn("Rules 键 {} 值非法，保留默认：{}", "chaos_ruin_aura_particle_interval_ticks", e.toString()); }
+        }
+
         // 2026-09-11（G03）：改用 tryParseString —— 原裸调 getAsString()，键值非字符串即异常逃出 apply()
-        // TODO(审计清理 G03 #5)：71 个默认值在三处各抄一遍（注释自证已漂移过一次） —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
+        // 2026-09-14（体检 P1-2 核实，**结论更正**）：71 个默认值在三处各抄一遍属实，但**对账 0 漂移**
+        //（本文件缺失块 62 项 ↔ RediosRules 字段初值，逐项一致；setter 回退 19 项亦一致）。
+        // ⇒ 作者裁决维持现状 + 用脚本兜底：powershell -ExecutionPolicy Bypass -File _规则\rules_defaults_check.ps1
+        // 原 TODO(审计清理 G03 #5) 已闭环 —— 改键后跑脚本即可，不要再手工逐项核对。
         String rawMode = tryParseString(root, "twilight_moment_mode");
         RediosRules.TwilightMomentPunishmentMode punishmentMode = RediosRules.TwilightMomentPunishmentMode.VISUAL;
         if (root.has("twilight_moment_punishment")) {
@@ -524,30 +589,8 @@ extends SimpleJsonResourceReloadListener {
         // 2026-09-12（审计清理 G17 #5）：原解析块 redios_defeat_book_title / redios_victory_book_title 已删除
         //（对应 RediosRules 字段与访问器已移除；两个死方法 createDefeatBookAndQuill / createVictoryBook 是
         //  它们唯一的消费者）。json 里若仍留有这两个键，会被 KNOWN_KEYS 校验判为未知键并汇总告警（不再生效）。
-        String rediosNotePhase1WinPhase2Lose = null;
-        if (root.has("redios_note_phase1_win_phase2_lose")) {
-            try {
-                rediosNotePhase1WinPhase2Lose = root.get("redios_note_phase1_win_phase2_lose").getAsString();
-            }
-            catch (RuntimeException e) {
-                rediosNotePhase1WinPhase2Lose = null;
-            }
-        }
-        ResourceLocation rediosOutcomeTextPhase1WinOnlyFile = null;
-        String outcomePhase1WinOnlyRaw = tryParseString(root, "redios_outcome_text_phase1_win_only_file");
-        if (outcomePhase1WinOnlyRaw != null && (parsed = RediosRulesReloadListener.tryParseId(outcomePhase1WinOnlyRaw)) != null) {
-            rediosOutcomeTextPhase1WinOnlyFile = parsed;
-        }
-        ResourceLocation rediosOutcomeTextPhase1WinPhase2LoseFile = null;
-        String outcomeP1WinP2LoseRaw = tryParseString(root, "redios_outcome_text_phase1_win_phase2_lose_file");
-        if (outcomeP1WinP2LoseRaw != null && (parsed = RediosRulesReloadListener.tryParseId(outcomeP1WinP2LoseRaw)) != null) {
-            rediosOutcomeTextPhase1WinPhase2LoseFile = parsed;
-        }
-        ResourceLocation rediosOutcomeTextPhase2WinFile = null;
-        String outcomePhase2WinRaw = tryParseString(root, "redios_outcome_text_phase2_win_file");
-        if (outcomePhase2WinRaw != null && (parsed = RediosRulesReloadListener.tryParseId(outcomePhase2WinRaw)) != null) {
-            rediosOutcomeTextPhase2WinFile = parsed;
-        }
+        // 2026-09-18（多语言接线）：redios_note_phase1_win_phase2_lose / 三个
+        // redios_outcome_text_*_file 的解析块一并删除——结局书文案改走 lang 键随客户端语言解析。
         boolean rediosBattleMusicEnabled = true;
         if (root.has("redios_battle_music_enabled")) {
             try {
@@ -614,27 +657,8 @@ extends SimpleJsonResourceReloadListener {
                 rediosBattleMusicOutroEnabled = true;
             }
         }
-        // 死配置（M5）：vote_timeout_seconds / vote_tie_as_yes 无任何消费方——
-        // 投票超时/平局已硬编码 30s/否决（设计裁决）。保留解析仅为兼容旧 json 里仍有这两个键，
-        // 值被读入 RediosRules 但无调用点。新 json 已移除这两个键。
-        int voteTimeoutSeconds = 30;
-        if (root.has("vote_timeout_seconds")) {
-            try {
-                voteTimeoutSeconds = root.get("vote_timeout_seconds").getAsInt();
-            }
-            catch (RuntimeException e) {
-                voteTimeoutSeconds = 30;
-            }
-        }
-        boolean voteTieAsYes = false;
-        if (root.has("vote_tie_as_yes")) {
-            try {
-                voteTieAsYes = root.get("vote_tie_as_yes").getAsBoolean();
-            }
-            catch (RuntimeException e) {
-                voteTieAsYes = false;
-            }
-        }
+        // 2026-09-18：vote_timeout_seconds / vote_tie_as_yes 解析块删除——投票超时与平局
+        // 早已硬编码（600t / 否决），配置键零消费，旧 json 残留这两个键时走未知键告警。
         // 2026-09-11（代码审计 G03 #4）：改用 int + getAsInt()。
         // 下游 RediosRules.setAdaptiveBlockTriggerHitsPerSecond(int) 本就是 int 字段，而键名与
         // 随包 JSON 写作 6.0（浮点字面量）暗示可填小数——原 (int) 截断下填 6.5 会静默变成 6，无日志。
@@ -658,15 +682,8 @@ extends SimpleJsonResourceReloadListener {
                 adaptiveBlockDurationTicks = 20;
             }
         }
-        double adaptiveBlockDamageReduction = 1.0;
-        if (root.has("adaptive_block_damage_reduction")) {
-            try {
-                adaptiveBlockDamageReduction = root.get("adaptive_block_damage_reduction").getAsDouble();
-            }
-            catch (RuntimeException e) {
-                adaptiveBlockDamageReduction = 1.0;
-            }
-        }
+        // 2026-09-18：adaptive_block_damage_reduction 解析块删除——格挡改为窗口内全免后
+        // 该键零消费（RediosRules 字段与 setter 已同步移除）。
         int adaptiveBlockCooldownTicks = 40;
         if (root.has("adaptive_block_cooldown_ticks")) {
             try {
@@ -878,10 +895,8 @@ extends SimpleJsonResourceReloadListener {
         RediosRules.setPhase2VoteNoTokens(phase2VoteNoTokens);
         RediosRules.setRediosBookAuthor(rediosBookAuthor);
         // 2026-09-12（审计清理 G17 #5）：原 setRediosDefeatBookTitle(...) / setRediosVictoryBookTitle(...) 已删除。
-        RediosRules.setRediosNotePhase1WinPhase2Lose(rediosNotePhase1WinPhase2Lose);
-        RediosRules.setRediosOutcomeTextPhase1WinOnlyFile(rediosOutcomeTextPhase1WinOnlyFile);
-        RediosRules.setRediosOutcomeTextPhase1WinPhase2LoseFile(rediosOutcomeTextPhase1WinPhase2LoseFile);
-        RediosRules.setRediosOutcomeTextPhase2WinFile(rediosOutcomeTextPhase2WinFile);
+        // 2026-09-18（多语言接线）：setRediosNotePhase1WinPhase2Lose(...) /
+        // 三个 setRediosOutcomeText*File(...) 已删除（文案改走 lang 键，由客户端按语言解析）。
         RediosRules.setRediosBattleMusicEnabled(rediosBattleMusicEnabled);
         RediosRules.setRediosBattleMusicVolume(rediosBattleMusicVolume);
         RediosRules.setRediosBattleMusicPhase1IntroTicks(rediosBattleMusicPhase1IntroTicks);
@@ -889,11 +904,8 @@ extends SimpleJsonResourceReloadListener {
         RediosRules.setRediosBattleMusicPhase2IntroTicks(rediosBattleMusicPhase2IntroTicks);
         RediosRules.setRediosBattleMusicPhase2LoopTicks(rediosBattleMusicPhase2LoopTicks);
         RediosRules.setRediosBattleMusicOutroEnabled(rediosBattleMusicOutroEnabled);
-        RediosRules.setVoteTimeoutSeconds(voteTimeoutSeconds);
-        RediosRules.setVoteTieAsYes(voteTieAsYes);
         RediosRules.setAdaptiveBlockTriggerHitsPerSecond(adaptiveBlockTriggerHitsPerSecond);
         RediosRules.setAdaptiveBlockDurationTicks(adaptiveBlockDurationTicks);
-        RediosRules.setAdaptiveBlockDamageReduction(adaptiveBlockDamageReduction);
         RediosRules.setAdaptiveBlockCooldownTicks(adaptiveBlockCooldownTicks);
         RediosRules.setBattleRadiusBlocks(battleRadiusBlocks);
         RediosRules.setBattleExpelTimeoutSeconds(battleExpelTimeoutSeconds);
@@ -936,7 +948,8 @@ extends SimpleJsonResourceReloadListener {
      * <p>
      * Gson 的 {@code JsonElement.getAsString()} 只被 {@code JsonPrimitive} 覆写——键值写成
      * 数组 / 对象 / null 时会抛 {@code UnsupportedOperationException}。本文件原先有 5 处裸调
-     * （twilight_moment_mode、twilight_moment_apply_effect、三个 redios_outcome_text_*_file），
+     * （twilight_moment_mode、twilight_moment_apply_effect、三个 redios_outcome_text_*_file；
+     * 后者随 2026-09-18 多语言接线整体删除，helper 保留供其余调用点使用），
      * 异常会逃出 {@code apply()} → <b>整次数据包 reload 失败</b>，且文件顶部那条「配置缺失」
      * 告警不会触发，现象是「改了配置完全无效、日志也无提示」。失败时返回 null 并告警，
      * 由调用方回退默认值。

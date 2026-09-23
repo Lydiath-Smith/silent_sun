@@ -10,12 +10,9 @@ import com.lydiath.silent_sun.entity.RediosEntity;
 import com.lydiath.silent_sun.registry.ModEntities;
 import java.util.List;
 import java.util.Locale;
-import java.util.Set;
 import net.minecraft.ChatFormatting;
-import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.MutableComponent;
-import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
@@ -23,7 +20,6 @@ import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResultHolder;
 import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraft.world.effect.MobEffects;
-import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.MobSpawnType;
 import net.minecraft.world.entity.player.Player;
@@ -53,54 +49,15 @@ extends Item {
             return InteractionResultHolder.success(stack);
         }
         ServerLevel serverLevel = (ServerLevel) level;
-        RediosEntity boss = findExistingRedios(serverLevel);
+        RediosEntity boss = RediosEntity.findExisting(serverLevel, null);
         if (boss != null) {
-            teleportPlayerNearBoss(player, boss);
+            // 2026-09-14（体检 P1-1 同源化）：查找与传送均改调 RediosEntity 的**唯一来源**
+            //（本类原有的 findExistingRedios / teleportPlayerNearBoss 两份重复实现已删除）。
+            RediosEntity.teleportPlayerNearBoss(player, boss);
             serverLevel.playSound(null, player.blockPosition(), SoundEvents.ENDERMAN_TELEPORT, SoundSource.PLAYERS, 1.0f, 1.0f);
             return InteractionResultHolder.success(stack);
         }
         return InteractionResultHolder.pass(stack);
-    }
-
-    // TODO(审计清理 G10 #8)：本方法 findExistingRedios 与 block/CleavingPainBlockEntity.java 同名方法各实现一遍 —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
-    /** 查找当前任意维度里存活且未移除的莱德厄斯；找不到返回 null。 */
-    private RediosEntity findExistingRedios(ServerLevel serverLevel) {
-        MinecraftServer server = serverLevel.getServer();
-        if (server == null) {
-            return null;
-        }
-        for (ServerLevel sl : server.getAllLevels()) {
-            for (Entity e : sl.getEntities().getAll()) {
-                if (e instanceof RediosEntity redios && redios.isAlive() && !redios.isRemoved()) {
-                    return redios;
-                }
-            }
-        }
-        return null;
-    }
-
-    // TODO(审计清理 G10 #8)：本方法 teleportPlayerNearBoss 与 block/CleavingPainBlockEntity.java 同名方法各实现一遍 —— 详见 docs\审计剩余交接清单-2026-09-11.md §三
-    /** 把玩家传送到 Boss 附近水平 3~5 格随机落点（2026-08-30：落点高度 = Boss 所在高度，
-     *  Boss 在空中/高处时玩家也传到同高度，不再回落地表）。M22：优先找安全落点。 */
-    private void teleportPlayerNearBoss(Player player, RediosEntity boss) {
-        ServerLevel sl = (ServerLevel) boss.level();
-        for (int i = 0; i < 12; i++) {
-            double angle = sl.getRandom().nextDouble() * Math.PI * 2.0;
-            double dist = 3.0 + sl.getRandom().nextDouble() * 2.0;
-            double x = boss.getX() + Math.cos(angle) * dist;
-            double z = boss.getZ() + Math.sin(angle) * dist;
-            double y = boss.getY() + 0.5;
-            BlockPos feet = BlockPos.containing(x, y, z);
-            if (sl.getBlockState(feet).isAir()
-                && sl.getBlockState(feet.above()).isAir()
-                && !sl.getBlockState(feet.below()).isAir()) {
-                player.teleportTo(sl, x, y, z, Set.of(), player.getYRot(), player.getXRot());
-                return;
-            }
-        }
-        double angle = sl.getRandom().nextDouble() * Math.PI * 2.0;
-        double dist = 3.0 + sl.getRandom().nextDouble() * 2.0;
-        player.teleportTo(sl, boss.getX() + Math.cos(angle) * dist, boss.getY() + 0.5, boss.getZ() + Math.sin(angle) * dist, Set.of(), player.getYRot(), player.getXRot());
     }
 
     @Override

@@ -49,6 +49,7 @@ public final class StarfallSalvoRenderer extends EntityRenderer<StarfallSalvoEnt
         vc.addVertex(pose, -half, -half, 0.0f).setColor(255, 255, 255, 255).setUv(0.0f, 1.0f).setOverlay(overlay).setLight(light).setNormal(pose, 0.0f, 0.0f, 1.0f);
         vc.addVertex(pose, half, -half, 0.0f).setColor(255, 255, 255, 255).setUv(1.0f, 1.0f).setOverlay(overlay).setLight(light).setNormal(pose, 0.0f, 0.0f, 1.0f);
         vc.addVertex(pose, half, half, 0.0f).setColor(255, 255, 255, 255).setUv(1.0f, 0.0f).setOverlay(overlay).setLight(light).setNormal(pose, 0.0f, 0.0f, 1.0f);
+
         poseStack.popPose();
         if (exempt) {
             RenderSystem.setShaderFogStart(savedFogStart);
