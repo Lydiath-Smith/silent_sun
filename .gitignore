@@ -63,6 +63,12 @@ bin/main/*
 !bin/main/data/
 !bin/main/data/**
 !bin/main/pack.mcmeta
+# 2026-09-23 补：mixin 配置也是**构建设施**，必须入库 ——
+# 原先被上面的 `bin/main/*` 一并排除，导致仓库里**没有** silent_sun.mixins.json，
+# 而 neoforge.mods.toml 又用 `[[mixins]] config="silent_sun.mixins.json"` 声明了它
+# ⇒ 干净克隆构建出的 jar 会「声明了 mixin 配置却找不到该文件」。两个 mixin 类一直有入库，
+# 唯独配置文件漏了。（当前该 json 的 client 数组为空 = 传送门残影已停用，见 agent.md。）
+!bin/main/silent_sun.mixins.json
 # 旧编译产物（.class）与嵌套模板仓库显式忽略
 bin/main/com/
 # bin/default 是模板仓库的嵌套拷贝（含 .git），显式忽略
