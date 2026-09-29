@@ -388,6 +388,9 @@ public final class IntegrationContract {
     // 池被滤空是一个**持续状态**，而候选池为空的分支在每次施放尝试时都会走到（约每 80~120 tick），
     // 不节流会一直刷同一条诊断。体检上「池为什么空」不会每 tick 变化，故只报一次。
     private static volatile boolean saPoolEmptyWarned;
+    // 2026-09-29（ALL 黑名单模式）：白名单**内容**的上次播报快照 —— 模式/条目变化时才播一次，
+    // 支持 reload 后「白名单 ⇄ 黑名单」反复翻转。必须用 List.equals 比较（不可 ==）。
+    private static volatile List<String> lastAnnouncedSaWhitelist;
 
     // ── 2026-09-12（tickAction 运行时探针）反射缓存：全部只读，失败只降级该探针 ──
 
@@ -643,13 +646,13 @@ public final class IntegrationContract {
                     saPoolEmptyWarned = true;
                     if (cachedSlashArtsRawCount > 0) {
                         LOG.warn("[SilentSun] SA 候选池被名单滤空：slash_arts 注册表共 {} 条，滤后 0 条。"
-                                + "当前生效规则 —— 白名单 namespace={}，排除 namespace={}，排除 SA id={}；"
+                                + "当前生效规则 —— 模式={}，白名单 namespace={}，排除 namespace={}，排除 SA id={}；"
                                 + "被滤掉的 id 采样（最多 5 个）：{}。"
                                 + "若这不是本意，请检查 silent_sun/redios_rules.json 的 boss_sa_whitelist_namespaces"
-                                + "（写 [] = 显式全禁；namespace 拼错或模组未装都会导致池为空）。"
+                                + "（首位写 \"ALL\" = 黑名单模式；写 [] = 显式全禁；namespace 拼错或模组未装都会导致池为空）。"
                                 + "本告警每次「滤空 → 恢复」只报一次。",
-                            cachedSlashArtsRawCount, saWhitelistNamespaces(), saExcludedNamespaces(),
-                            saExcludedSaIds(), cachedSlashArtsExcludedSample);
+                            cachedSlashArtsRawCount, saWhitelistModeLabel(), saWhitelistNamespaces(),
+                            saExcludedNamespaces(), saExcludedSaIds(), cachedSlashArtsExcludedSample);
                     } else {
                         LOG.warn("slash_arts registry is empty, cannot invoke random SA.");
                     }
@@ -850,6 +853,52 @@ public final class IntegrationContract {
     }
 
     /**
+     * 2026-09-29（ALL 黑名单模式）：判断一个白名单条目是否为 {@code ALL} 哨兵。
+     * 容忍首尾空格与大小写（{@code trim().toUpperCase(ROOT)}）；只在白名单<b>第一个位置</b>调用本方法。
+     */
+    private static boolean isSaAllModeEntry(String s) {
+        return s != null && "ALL".equals(s.trim().toUpperCase(java.util.Locale.ROOT));
+    }
+
+    /** 当前生效白名单的模式标签（滤空诊断日志用）：首位 ALL ⇒ {@code "黑名单(ALL)"}，否则 {@code "白名单"}。 */
+    private static String saWhitelistModeLabel() {
+        List<String> whitelist = saWhitelistNamespaces();
+        return whitelist != null && !whitelist.isEmpty() && isSaAllModeEntry(whitelist.get(0))
+            ? "黑名单(ALL)" : "白名单";
+    }
+
+    /**
+     * 2026-09-29（ALL 黑名单模式）：白名单内容变化时<b>一次性</b>播报当前模式。
+     * <p>
+     * isSaAllowed 在池重建时对每个候选 SA 各调一次，故用上次播报内容（{@link List#equals}）去重；
+     * 热配置 reload 后内容变化（白名单 ⇄ 黑名单、ALL 后增删条目）会再次播报：
+     * <ul>
+     *   <li>进入 ALL：INFO 说明「除两个排除名单外全部放行」并列出当前排除名单；</li>
+     *   <li>ALL 后还有条目：WARN 说明这些条目已被忽略（黑名单模式下不生效）；</li>
+     *   <li>非 ALL（含首次启动）：INFO 说明白名单模式及当前名单。</li>
+     * </ul>
+     */
+    private static void announceSaWhitelistModeOnce(List<String> whitelist) {
+        List<String> last = lastAnnouncedSaWhitelist;
+        if (last != null && last.equals(whitelist)) {
+            return;
+        }
+        lastAnnouncedSaWhitelist = whitelist == null ? null : List.copyOf(whitelist);
+        boolean allMode = whitelist != null && !whitelist.isEmpty() && isSaAllModeEntry(whitelist.get(0));
+        if (allMode) {
+            LOG.info("[SilentSun] SA 池以黑名单模式（白名单首位 ALL）运作：除两个排除名单外全部 SA 放行。"
+                    + "排除 namespace={}，排除 SA id={}",
+                saExcludedNamespaces(), saExcludedSaIds());
+            if (whitelist.size() > 1) {
+                LOG.warn("[SilentSun] ALL 之后的 {} 个条目已被忽略（黑名单模式下它们不生效）：{}",
+                    whitelist.size() - 1, whitelist.subList(1, whitelist.size()));
+            }
+        } else {
+            LOG.info("[SilentSun] SA 池以白名单模式运作，当前白名单 namespace={}", whitelist);
+        }
+    }
+
+    /**
      * SA 随机池过滤（**白名单模式** + 两层二次排除；2026-09-01 引入黑名单，2026-09-12 用户裁决改为白名单）。
      * <p>
      * 2026-09-12（SA 名单热配置化）：下面三个名单键已迁到热配置 {@code silent_sun/redios_rules.json}
@@ -886,30 +935,44 @@ public final class IntegrationContract {
      * {@code Inventory}（玩家物品栏），Mob 无驱动者 ⇒ 只有 {@code clickAction} 生效，
      * 故 {@code void_slash_plus} 当前是空放、{@code sakura_endex} 才是 foxextra 里唯一真有输出的。
      * 「刀光洪峰」的真实驱动源仍未知，已另立运行时排查项，<b>勿再归因到 foxextra 时间线</b>。
+     * <p>
+     * <b>2026-09-29 新增 ALL 黑名单模式</b>：白名单首位（trim + 忽略大小写）为 {@code "ALL"} 时，
+     * 放行公式变为 {@code namespace ∉ 排除namespace ∧ id ∉ 排除id} —— 第①重白名单跳过、
+     * ②③两重排除照常生效；ALL 之后的其余条目忽略并 warn；排除名单读取失败（null）仍拒绝放行。
+     * 模式切换经 announceSaWhitelistModeOnce 在白名单内容变化时一次性播报。
      */
     static boolean isSaAllowed(ResourceLocation rl) {
         try {
             // 2026-09-12（SA 名单热配置化）：三处取值改为调本类取值方法（热配置优先 / 静态兜底）；
-            // 取值失败返回 null ⇒ 拒绝放行（三重判定的顺序与语义不变，仅多了「失败」这一路的显式判据）。
+            // 取值失败返回 null ⇒ 拒绝放行（fail-closed，两种模式一致）。
             List<String> whitelist = saWhitelistNamespaces();
-            // ① 白名单：不在名单里的 namespace 一律不进池（fail-safe —— 新装模组默认不放行）
-            if (whitelist == null || !whitelist.contains(rl.getNamespace())) {
+            if (whitelist == null) {
                 return false;
             }
-            // ② 白名单内部的 namespace 二次排除
+            // 2026-09-29（ALL 黑名单模式）：白名单首位 trim+忽略大小写等于 ALL ⇒ allMode=true，
+            // 跳过第①重 namespace 白名单（全部 namespace 默认放行），仅由②③两重排除决定去留。
+            boolean allMode = !whitelist.isEmpty() && isSaAllModeEntry(whitelist.get(0));
+            announceSaWhitelistModeOnce(whitelist);
+            // ① 白名单：白名单模式下，不在名单里的 namespace 一律不进池（fail-safe）；ALL 模式跳过本重
+            if (!allMode && !whitelist.contains(rl.getNamespace())) {
+                return false;
+            }
+            // ② namespace 二次排除（ALL 模式下与③同为仅有的排除手段）
             List<String> excludedNamespaces = saExcludedNamespaces();
             if (excludedNamespaces == null || excludedNamespaces.contains(rl.getNamespace())) {
                 return false;
             }
-            // ③ 白名单内部的 SA id 二次排除
+            // ③ SA id 二次排除
             List<String> excludedSaIds = saExcludedSaIds();
             return excludedSaIds != null && !excludedSaIds.contains(rl.toString());
         } catch (Exception e) {
             // 2026-09-12（白名单化）：兜底方向**翻转** —— 配置读取失败时**拒绝**放行，而非全放行。
             // 白名单模式里「放行」才是危险方向：若此处仍 return true，配置一损坏就退化成全放行，
             // 恰好把白名单要防的事（未测过的第三方 SA 进池）重新引进来。
+            // 2026-09-29（ALL 模式）：黑名单模式下 fail-closed 同样必要 —— 否则配置一损坏，
+            // ALL 模式就退化成无边界全放行，风险方向与白名单模式一致。
             // 补一条 warn：否则「SA 池莫名变空」将无从定位。
-            LOG.warn("[SilentSun] SA 白名单配置读取失败，本次不放行任何 SA：{}", rl, e);
+            LOG.warn("[SilentSun] SA 名单配置读取失败，本次不放行任何 SA：{}", rl, e);
             return false;
         }
     }

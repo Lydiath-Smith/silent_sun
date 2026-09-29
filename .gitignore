@@ -41,6 +41,8 @@ repo/
 ### Silent Sun 工程（本地工作区，不入库）###
 # 第三方模组 jar / 崩溃报告 / 素材原图等本地工作区，避免仓库膨胀
 libs/
+# 原创性证据包 + FreeTSA 时间戳（本地证据，含大量复制的历史文件，不入库；2026-09-29 补）
+evidence/
 # Electron/Chromium crashpad 日志（桌面壳产生，与工程无关）
 debug.log
 # JVM 崩溃产物（HotSpot hs_err / replay，非工程内容）
