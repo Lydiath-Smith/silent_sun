@@ -37,7 +37,8 @@ public final class RediosRules {
 
     // ========== 环境与辅助 ==========
     private static volatile boolean wallAttackTraceParticles = true;
-    private static volatile int wallAttackNotifyCooldownTicks = 60;
+    // 默认 600 tick（30 秒）：隔墙攻击/投掷约每 3-4 秒命中一次，旧值 60 tick 会导致几乎每次命中都刷同一句台词。
+    private static volatile int wallAttackNotifyCooldownTicks = 600;
     private static volatile boolean locateBossEnabled = true;
     private static volatile int locateBossDistanceBlocks = 35;
     private static volatile int locateBossNotifyIntervalTicks = 200;

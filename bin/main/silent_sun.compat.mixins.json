@@ -1,0 +1,15 @@
+{
+  "__comment": "面向可选依赖的 Mixin 配置：required=false —— 目标模组未安装 / 目标方法因版本漂移缺失时仅告警，不崩游戏。",
+  "package": "com.lydiath.silent_sun.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "required": false,
+  "minVersion": "0.8",
+  "mixins": [
+    "DreamCatCrystalBaubleMixin",
+    "SimplySwordsIncapacitatedMixin"
+  ],
+  "client": [],
+  "injectors": {
+    "defaultRequire": 0
+  }
+}

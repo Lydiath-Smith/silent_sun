@@ -71,6 +71,10 @@ bin/main/*
 # ⇒ 干净克隆构建出的 jar 会「声明了 mixin 配置却找不到该文件」。两个 mixin 类一直有入库，
 # 唯独配置文件漏了。（当前该 json 的 client 数组为空 = 传送门残影已停用，见 agent.md。）
 !bin/main/silent_sun.mixins.json
+# 2026-10-07：改成通配 —— 同年 10/03 新增的 `silent_sun.compat.mixins.json`（面向可选依赖、
+# required=false）**又踩了同一个坑**（toml 已声明、仓库里却没有）。⇒ 凡 bin/main 下的
+# `*.mixins.json` 一律入库，以后新增 mixin 配置不必再改本文件。
+!bin/main/*.mixins.json
 # 旧编译产物（.class）与嵌套模板仓库显式忽略
 bin/main/com/
 # bin/default 是模板仓库的嵌套拷贝（含 .git），显式忽略

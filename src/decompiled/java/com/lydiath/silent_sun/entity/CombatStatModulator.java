@@ -34,6 +34,18 @@ final class CombatStatModulator {
     /** 激怒攻速加成系数：用户裁决「加成只有原来的 20%」（原每级 +0.3 → 现每级 +0.06）。 */
     private static final double ENRAGE_SPEED_BONUS_FACTOR = 0.3 * 0.2;
 
+    /** 激怒等级（层数 = amplifier+1）上限：满激怒 10 层。 */
+    private static final int MAX_ENRAGE_LEVEL = 10;
+    /** 激怒对实体交互距离的总加成上限（格）：满层交互距离 = 初始 5 + 3 = 8 格。 */
+    private static final int ENRAGE_REACH_BONUS_MAX = 3;
+
+    // 2026-09-29（用户裁决）：拔刀剑一路接入实体交互距离加成。
+    // 公式锚点 = 满激怒层数(MAX_ENRAGE_LEVEL=10)、满激怒实体交互距离(8 = 5 + 3)、初始实体交互距离(5)。
+    /** 拔刀剑距离加成的初始实体交互距离（= {@code BASE_ATTACK_REACH} 默认 5）。 */
+    private static final double BLADE_RANGE_INITIAL_REACH = 5.0;
+    /** 拔刀剑距离加成的满激怒实体交互距离（5 + min(3,10) = 8）。 */
+    private static final double BLADE_RANGE_FULL_REACH = 8.0;
+
     private final RediosEntity host;
 
     CombatStatModulator(RediosEntity host) {
@@ -59,7 +71,25 @@ final class CombatStatModulator {
 
     /** 攻击范围（格）：基础值 + 激怒等级加成（上限 +3）。 */
     double attackReach() {
-        return (Double) SilentSunConfig.BASE_ATTACK_REACH.get() + (double) Math.min(3, this.enrageLevel());
+        return (Double) SilentSunConfig.BASE_ATTACK_REACH.get()
+            + (double) Math.min(ENRAGE_REACH_BONUS_MAX, this.enrageLevel());
+    }
+
+    /**
+     * 拔刀剑攻击距离缩放系数：随激怒等级在 <b>1.0~1.6</b> 间线性增长。
+     * <p>
+     * 锚点（2026-09-29 用户裁决）= 满激怒（{@link #MAX_ENRAGE_LEVEL} 层）实体交互距离
+     * {@link #BLADE_RANGE_FULL_REACH}(8) ÷ 初始实体交互距离 {@link #BLADE_RANGE_INITIAL_REACH}(5) = 1.6；
+     * 即 {@code scale = 1 + (8/5 − 1) × level/10 = 1 + 0.06 × level}。
+     * <p>
+     * 供 {@code BladeAttackGoal} 把近身普攻 / SA / 幻影剑三档基准距离统一缩放，
+     * 使拔刀剑一路与实体交互距离的激怒成长同步。
+     *
+     * @return 距离缩放系数，无激怒 1.0，满激怒 1.6
+     */
+    double bladeRangeScaleFactor() {
+        double bonusRatio = BLADE_RANGE_FULL_REACH / BLADE_RANGE_INITIAL_REACH - 1.0;
+        return 1.0 + bonusRatio * (double) this.enrageLevel() / (double) MAX_ENRAGE_LEVEL;
     }
 
     /** 激怒等级：读 ENRAGE 效果放大器，范围 0~10。 */

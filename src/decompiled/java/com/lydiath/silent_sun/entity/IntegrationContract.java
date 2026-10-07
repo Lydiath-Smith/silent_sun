@@ -58,6 +58,21 @@ public final class IntegrationContract {
 
     private static final Logger LOG = LoggerFactory.getLogger("SilentSun:Integration");
 
+    /**
+     * 热路径「熔断式 warn」（2026-10-06 日志刷屏加固）：同一 key 全进程生命周期只输出第一条。
+     * <p>
+     * 适用场景：每 tick / 每次命中 / 每实体循环内的反射调用，在拔刀剑版本漂移导致反射持续失败时，
+     * 普通 warn 会按「实体数 × 每 tick」刷成日志洪水。首个 warn 保证故障可见，后续静默。
+     * 仅抑制日志、不改变任何控制流（既有"失败后继续重试"的行为保持不变）。
+     * 与 {@link #shooterProbeBroken} 的区别：那处连探测一起禁用（失败结果本就无意义），
+     * 本方法用于失败后仍需保留重试的路径。
+     */
+    private static final java.util.Set<String> WARNED_ONCE_KEYS = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    static void warnOnce(String key, String format, Object... args) {
+        if (WARNED_ONCE_KEYS.add(key)) LOG.warn(format, args);
+    }
+
     // ── Mod identity strings (centralized, single source of truth) ──
 
     static final String EXTINCTION_DAY_MOD_CLASS = "cn.autoforged.extinction_day_mod_1784441698.ModMain";
@@ -134,10 +149,6 @@ public final class IntegrationContract {
     static final String ENTITY_ABSTRACT_SUMMONED_SWORD_SET_IS_CRITICAL_METHOD = "setIsCritical";
     /** 手动碰撞已命中目标去重 NBT 键（存 int id 列表，随实体销毁自动清理） */
     static final String BOSS_BLADE_HIT_TARGETS_TAG = "SilentSunForceHitTargets";
-    /** 三连斩（triple_whammy 复刻）每目标每 tick 限频 NBT 键（2026-09-01 修复）：5 剑齐射
-     *  每把剑独立触发一次双斩三连 = 一波 5×2 次全额攻击，按（目标,tick）合并后每目标
-     *  每 tick 至多一次三连（与灭却之日同款「每目标每游戏 tick 至多结算一次」模式）。 */
-    static final String BOSS_TRIPLE_WHAMMY_TICK = "SilentSunLastTripleWhammyTick";
     /** AttackManager.doAttackWith(DamageSource,float,Entity,boolean,boolean)：刀光/次元斩无 doForceHitEntity，
      *  唯一可反射的「对单目标强制结算」入口（内部即 target.hurt(src, amount) + invulnerableTime 处理）。 */
     static final String ATTACK_MANAGER_CLASS = "mods.flammpfeil.slashblade.util.AttackManager";
@@ -687,9 +698,9 @@ public final class IntegrationContract {
             // 一条 warn，于是「该往黑名单里再加什么」无据可依：log 里搜到的全是注册表/mixin 元数据，
             // 没有任何一次实际施放的 SA id。
             // 这里记录**完整 id**（形如 slashblade:judgement_cut），便于按 namespace 归类统计。
-            // 频率 = BladeAttackGoal 的中距离分支 80~120 tick 一次，量级可接受；
-            // 若嫌吵，把下面这行调成 LOG.debug 即可（不影响黑名单逻辑）。
-            LOG.info("[SilentSun] Boss 随机施放 SA：{}（候选池 {} 个）", key, keyList.size());
+            // 频率 = BladeAttackGoal 的中距离分支 80~120 tick 一次（整场战斗数十条）。
+            // 2026-10-03（高频日志检修）：降为 DEBUG——每次施放已由战斗流程报告 JSON 记录，不再刷 INFO。
+            LOG.debug("[SilentSun] Boss 随机施放 SA：{}（候选池 {} 个）", key, keyList.size());
             Object combo = slashArtsDoArtsMethod.invoke(slashArts, artsTypeSuccess, caster);
             if (!(combo instanceof ResourceLocation comboLoc)) {
                 // 2026-09-12（战斗流程报告）：未能施放（doArts 没解析出 combo id）。
@@ -1012,7 +1023,8 @@ public final class IntegrationContract {
                 markSelfComboWrite(caster);
             }
         } catch (Exception e) {
-            LOG.warn("Failed to progress slash blade combo via reflection: {}", e.toString());
+            // 近战中每 3~5 tick 调用：反射持续失败时按熔断式 warn 只记首条（2026-10-06）
+            warnOnce("combo_progress", "Failed to progress slash blade combo via reflection: {}", e.toString());
         }
     }
 
@@ -1069,7 +1081,8 @@ public final class IntegrationContract {
     }
 
     /**
-     * Boss 普攻命中后触发灭却之日 triple_whammy SE（三连击）。
+     * Boss 单次命中后触发灭却之日 triple_whammy SE（三连击）：近战 / 剑气 / 幻影剑每一把
+     * 命中独立触发一次（2026-10-04 用户裁决）。
      * <p>
      * 灭却之日 {@code TripleWhammyEffect.onSlashBladeHit} 监听 SlashBladeEvent.HitEvent
      * 且带 {@code instanceof Player} 检查——Boss（Mob）挥刀命中永远进不来。这里按同款
@@ -1081,16 +1094,11 @@ public final class IntegrationContract {
     public static void tryApplyBossTripleWhammy(LivingEntity boss, LivingEntity target) {
         if (!ensureReflectionReady()) return;
         try {
-            // 每目标每 tick 至多一次三连（2026-09-01 修复）：5 剑齐射每把剑独立触发
-            // 双斩三连 = 一波 5×2 次全额攻击；限频后每目标每 tick 至多一次。
-            // 2026-09-11（代码审计 G18 #4 修复）：写标记从「校验之前」下移到「六道校验全过之后」。
-            // 原顺序下失败的调用同样吃掉本 tick 配额（主手临时非拔刀剑 / 无 triple_whammy SE /
-            // refine<30 / ATTACK_DAMAGE≤0 都会先写标记再 return）⇒ 同 tick 内后续合法调用被静默吞掉。
-            // 现在只在真正产生效果前消费配额；读判据与写入位置无关，故「同 tick 至多一次」的
-            // 防重复语义不变（第一次成功写标记后，其余调用仍被上面的 getInt 判据拦下）。
-            // 口径与本文件 :1120 的「命中落地后才写去重条目」一致。
-            CompoundTag targetData = target.getPersistentData();
-            if (targetData.getInt(BOSS_TRIPLE_WHAMMY_TICK) == target.tickCount) return;
+            // 触发口径（2026-10-04 用户裁决）：每次命中独立判定——剑气 / 幻影剑 / 斩击每一把命中
+            // 都触发一次三连，不做「每目标每 tick 一次」限频（旧限频会把同 tick 内多把剑的触发静默吞掉）。
+            // 「额外斩击类 SE 单次连锁各只能触发一次」由调用结构天然保证：本方法追加的两道刀光
+            // damage=0（被碰撞扫描扫到也在「命中落地」判定前 return，不回流），两次追加伤害直接走
+            // target.hurt，不经过 doHurtTarget / forceHitBladeTarget 这两个唯二触发点。
             Level level = boss.level();
             if (level.isClientSide()) return;
             ItemStack blade = boss.getMainHandItem();
@@ -1103,8 +1111,6 @@ public final class IntegrationContract {
             if (refine < 30) return;
             float damage = (float) boss.getAttributeValue(Attributes.ATTACK_DAMAGE);
             if (damage <= 0.0f) return;
-            // 六道校验全过 —— 此刻才消费本 tick 配额
-            targetData.putInt(BOSS_TRIPLE_WHAMMY_TICK, target.tickCount);
             int color = bladeColorCode(blade);
             Vec3 targetPos = target.position().add(0.0, target.getBbHeight() * 0.5, 0.0);
             for (int i = 0; i < 2; ++i) {
@@ -1117,7 +1123,8 @@ public final class IntegrationContract {
             target.hurt(boss.damageSources().mobAttack(boss), damage);
             target.invulnerableTime = savedInvuln;
         } catch (Exception e) {
-            LOG.warn("Failed to apply boss triple whammy (三连) via reflection: {}", e.toString());
+            // 每把剑/剑气/斩击命中都调用本方法：反射持续失败时按熔断式 warn 只记首条（2026-10-06）
+            warnOnce("boss_triple_whammy", "Failed to apply boss triple whammy (三连) via reflection: {}", e.toString());
         }
     }
 
@@ -1178,7 +1185,8 @@ public final class IntegrationContract {
                 }
             }
         } catch (Exception e) {
-            LOG.warn("Failed to check slash blade combo stuck via reflection: {}", e.toString());
+            // 战斗中每 goal tick 调用：反射持续失败时按熔断式 warn 只记首条（2026-10-06）
+            warnOnce("combo_stuck_check", "Failed to check slash blade combo stuck via reflection: {}", e.toString());
         }
     }
 
@@ -1671,7 +1679,8 @@ public final class IntegrationContract {
                     classifyProbeEntityClass(e.getClass().getSimpleName()), probeOwnerName(e)));
             }
         } catch (Throwable t) {
-            LOG.warn("产出观测扫描失败（不影响战斗）：{}", t.toString());
+            // 按扫描间隔周期调用：扫描持续失败时按熔断式 warn 只记首条（2026-10-06）
+            warnOnce("production_scan", "产出观测扫描失败（不影响战斗）：{}", t.toString());
         }
         return out;
     }
@@ -1792,7 +1801,8 @@ public final class IntegrationContract {
                     }
                 }
             } catch (Exception e) {
-                LOG.warn("Failed to sanitize boss drive critical flag: {}", e.toString());
+                // 每战斗 tick × 64 格内每把剑：反射持续失败时按熔断式 warn 只记首条（2026-10-06）
+                warnOnce("drive_critical_sanitize", "Failed to sanitize boss drive critical flag: {}", e.toString());
             }
         }
     }
@@ -1828,7 +1838,8 @@ public final class IntegrationContract {
             try {
                 iShootableSetShooterMethod.invoke(sword, boss);
             } catch (Exception e) {
-                LOG.warn("Failed to assign boss shooter to slashblade projectile: {}", e.toString());
+                // 每战斗 tick × 每个孤儿投射物：反射持续失败时按熔断式 warn 只记首条（2026-10-06）
+                warnOnce("shooter_assign", "Failed to assign boss shooter to slashblade projectile: {}", e.toString());
             }
         }
     }
@@ -2151,7 +2162,8 @@ public final class IntegrationContract {
                 attackManagerDoAttackWithMethod.invoke(null, src, (float) damage, target, true, true);
             }
         } catch (Exception e) {
-            LOG.warn("Failed to force blade hit on player via reflection: {}", e.toString());
+            // 每把剑每 tick 碰撞判定：反射持续失败（且不写去重⇒同剑每 tick 重试）时按熔断式 warn 只记首条（2026-10-06）
+            warnOnce("force_blade_hit", "Failed to force blade hit on player via reflection: {}", e.toString());
         }
         boolean hit = !target.isDeadOrDying() ? target.getHealth() < hpBefore - 0.001f : !deadBefore;
         if (!hit) {
@@ -2437,11 +2449,10 @@ public final class IntegrationContract {
             }
         } catch (Exception ignored) {
             // 2026-09-12（审计清理 G19 #5）：原先空 catch 静默回退白色，刀色偏差在日志里毫无痕迹。
-            // 级别判断依据：本方法只有两个调用点（tryApplyBossTripleWhammy 的 L710、trySpawnBossPhantomSwords
-            // 的 L1205），都在服务端且被 60~90 tick 的齐射冷却限频（≈每 3~4.5s 至多一次），不在每 tick / 渲染路径上；
-            // 同时无 SlashBlade 时 ensureReflectionReady() 已提前返回 false，根本走不到这里 ⇒ 失败必属
-            // 「已装拔刀剑但反射异常」的真实故障，用 warn 合适（形参仍名 ignored，为控制改动面保留原名）。
-            LOG.warn("bladeColorCode 反射读取刀刃颜色失败，回退白色 0xFFFFFF（幻影剑/三连刀光会偏色）", ignored);
+            // 调用点：tryApplyBossTripleWhammy（10-04 后每次命中）与 trySpawnBossPhantomSwords
+            // （60~90 tick 齐射）。失败必属「已装拔刀剑但反射异常」的真实故障，需要可见；
+            // 但每次命中频率高，2026-10-06 改为熔断式只记首条（形参仍名 ignored，控制改动面）。
+            warnOnce("blade_color", "bladeColorCode 反射读取刀刃颜色失败，回退白色 0xFFFFFF（幻影剑/三连刀光会偏色）", ignored);
         }
         return 0xFFFFFF;
     }
@@ -2470,7 +2481,8 @@ public final class IntegrationContract {
             slashEffectSetKnockBackOrdinalMethod.invoke(slash, 0);
             owner.level().addFreshEntity(entity);
         } catch (Exception e) {
-            LOG.warn("Failed to spawn slash blade effect entity (刀光): {}", e.toString());
+            // 燕返每次命中调 2 次：反射持续失败时按熔断式 warn 只记首条（2026-10-06）
+            warnOnce("spawn_slash_effect", "Failed to spawn slash blade effect entity (刀光): {}", e.toString());
         }
     }
 

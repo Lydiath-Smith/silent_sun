@@ -24,7 +24,7 @@
   "uncontrolled_sprint_aoe_dodge_chance": 0.25,
   "chaos_ruin_incoming_absolute_enabled": true,
   "wall_attack_trace_particles": true,
-  "wall_attack_notify_cooldown_ticks": 60,
+  "wall_attack_notify_cooldown_ticks": 600,
   "locate_boss_enabled": true,
   "locate_boss_distance_blocks": 35,
   "locate_boss_notify_interval_ticks": 200,
@@ -39,16 +39,22 @@
   "boss_sa_whitelist_namespaces": [
     "slashblade",
     "slashblade_addon",
-    "extinction_day_mod_1784441698"
+    "extinction_day_mod_1784441698",
+    "recasting",
+    "heartbladeunoffical"
   ],
   "boss_sa_excluded_namespaces": [
+    "scorchfrost",
     "tianshaxing",
     "tiansha_extinction",
     "annihilationblade",
     "annihilationbladeex"
   ],
   "boss_sa_excluded_sa_ids": [
-    "foxextra:thrust"
+    "foxextra:thrust",
+    "recasting:time_beyond",
+    "heartbladeunoffical:hyper_just_time",
+    "heartbladeunoffical:windy_phantom_sword"
   ],
   "phase2_vote_yes_tokens": [
     "yes",

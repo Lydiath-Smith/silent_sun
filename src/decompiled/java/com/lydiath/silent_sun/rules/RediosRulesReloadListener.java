@@ -427,13 +427,13 @@ extends SimpleJsonResourceReloadListener {
                 wallAttackTraceParticles = true;
             }
         }
-        int wallAttackNotifyCooldownTicks = 60;
+        int wallAttackNotifyCooldownTicks = 600;
         if (root.has("wall_attack_notify_cooldown_ticks")) {
             try {
                 wallAttackNotifyCooldownTicks = root.get("wall_attack_notify_cooldown_ticks").getAsInt();
             }
             catch (RuntimeException e) {
-                wallAttackNotifyCooldownTicks = 60;
+                wallAttackNotifyCooldownTicks = 600;
             }
         }
         boolean locateBossEnabled = true;

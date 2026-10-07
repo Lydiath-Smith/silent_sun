@@ -294,40 +294,16 @@ public final class SilentSunConfig {
      * {@code saCasts}（ok / error / note）决定去留。
      */
     public static final ModConfigSpec.ConfigValue<List<? extends String>> BOSS_SA_WHITELIST_NAMESPACES = BUILDER
-        .comment("Boss 随机施放 SA 的 **namespace 白名单**：不在名单里的 namespace 一律不进池。",
-            "默认 3 个（2026-09-14 作者裁决）：slashblade（拔刀剑·重锋）· slashblade_addon（拔刀剑日系附属包 SJAP）·",
-            "  extinction_day_mod_1784441698（灭却之日）—— 即「基础 + 日系附属 + 必装前置」这一组。",
-            "2026-09-14 设计意图：**SA 池是整合包作者 / 玩家自行决定 Boss 强度的旋钮**，",
-            "  故默认白名单刻意收窄到「必装且已验」的基础件，**其余模组的 SA 一律默认不开**。",
-            "新装模组的 SA 默认**不**进池（fail-safe）；要启用需针对性测试后把其 namespace 加进本列表。",
-            "白名单之下还有两层二次排除：bossSaExcludedNamespaces 与 bossSaExcludedSaIds。",
-            "（2026-09-12 已热配置化：本键是**回退**，生效值优先取 redios_rules.json 的同名键。）",
-            "首位写 \"ALL\" ⇒ **黑名单模式**：全部 namespace 默认放行，仅由下方两个排除键剔除；ALL 之后的条目忽略（会 warn）。",
-            "",
-            "──────── 其他已知模组的 SA（2026-09-14 登记，2026-09-29 更新状态 · 供整合包作者取舍）────────",
-            "【待测 · 2026-09-29 · 无公开源码库，黑盒验证后再开】",
-            "  guitu 及其 15 个附属命名空间                 归途（guitu-neo1.21.1-resharped2.0.7-v3.0.3.jar，内部版 3.0.3）：",
-            "                                             未实测，可能有强度超模的 SA；附属命名空间：arsalmal, arsalmal_zero,",
-            "                                             chitong, dafeiyu, elysia, heiyao, huiliyi, jiuweihu, konghai, qingqiu,",
-            "                                             sakura, xuecun, yinshuang, yumianchihu, zhuxi",
-            "  scorchfrost                                灼霜（SlashBladeHoarfrost-1.21.1-1.0.2.jar，内部版 1.9.2）：",
-            "                                             部分 SA 可能存在 Mob 施放不兼容，须实测",
-            "【可作备选 · 默认关闭，测过再开】",
-            "  recasting                                  仙剑阁 2（85 个 SA）—— 2026-09-12 曾为默认，现降为备选",
-            "  prinegorerouse                             尼格洛兹（6 个 SA）—— 同上",
-            "  foxextra / fox_trot_brew                   狐月刀改·重生 / 狐步酿香",
-            "  slashbladeamazingshine                     荧光惊异",
-            "  more_slashblade_ex_enchantment_effects · slashblade_patchouli   超多附魔增效",
-            "  sbr_core                                   SlashBlade Core（silent_sun 不依赖它，见 mods.toml 注释）",
-            "【危险 · 选了一定会出事，不要加】",
-            "  tianshaxing / tiansha_extinction           天杀星刀 —— 其 SA 以 SE 为硬性前提",
-            "  annihilationblade / annihilationbladeex    湮灭之刃",
-            "  foxextra:thrust（单个 SA，非 namespace）   见下方 bossSaExcludedSaIds",
-            "",
-            "⚠️ 分类依据：「危险」= 已在下述两个排除键中的既有登记；「备选」= 其余已见过的拔刀剑系模组。",
-            "   改动分类时请同步更新本注释 —— 这是给整合包作者看的唯一索引。")
+        .comment("Boss 随机施放 SA 的 namespace 白名单：不在名单里的 namespace 一律不进池",
+            "（fail-safe：新装模组默认不启用，需针对性测试后手动加入）。",
+            "默认：slashblade · slashblade_addon · extinction_day_mod_1784441698 · recasting · heartbladeunoffical。",
+            "首位写 \"ALL\" = 黑名单模式：全部放行，仅由下方两个排除键剔除。",
+            "备选（默认关闭，按需加入）：guitu / prinegorerouse / foxextra / slashbladeamazingshine 等。",
+            "名单之下还有两层排除：bossSaExcludedNamespaces、bossSaExcludedSaIds。",
+            "本键为回退：生效值优先取 redios_rules.json 同名键（热配置，改后重载即生效）。")
         .defineList("redios.bossSaWhitelistNamespaces",
-            List.of("slashblade", "slashblade_addon", "extinction_day_mod_1784441698"),
+            List.of("slashblade", "slashblade_addon", "extinction_day_mod_1784441698",
+                    "recasting", "heartbladeunoffical"),
             o -> o instanceof String);
 
     // 2026-09-12（SA 名单热配置化）：本键已降级为**回退**——优先读热配置 silent_sun/redios_rules.json
@@ -335,8 +311,12 @@ public final class SilentSunConfig {
     /**
      * 白名单**内部**的 namespace 二次排除（2026-09-12 语义变更：原先它是全局黑名单，现在只在白名单内生效）。
      * <p>
-     * 默认四项及理由：
+     * 默认五项及理由：
      * <ul>
+     *   <li>{@code scorchfrost} —— 灼霜（2026-09-29 字节码级判定）：全部 7 个 SA 对 Mob 空放。
+     *       其中 finale_carnival / blackwall_deadlock / kanglan 的 doArts 写死 {@code ServerPlayer}
+     *       且返回 ComboState NONE；triple_summon / zhuoshuang_blossom / wuni_qiyuan / duanfeng_huizui
+     *       的 combo 未设 clickAction，伤害仅挂在 Mob 不驱动的时间线 tickAction 上。</li>
      *   <li>{@code tianshaxing} / {@code tiansha_extinction} —— 天杀星刀：其 SA 以 **SE 为硬性前提**，
      *       Boss 刀无对应 SE，根本放不出来。（{@code tianshaxing} 是 mod id，佐证：实例
      *       {@code config/tianshaxing-common.toml} 存在，NeoForge 配置文件名规则是 {@code <modid>-<type>.toml}；
@@ -349,17 +329,12 @@ public final class SilentSunConfig {
      * </ul>
      */
     public static final ModConfigSpec.ConfigValue<List<? extends String>> BOSS_SA_EXCLUDED_NAMESPACES = BUILDER
-        .comment("白名单内部的 namespace 二次排除（不在白名单里的 namespace 本来就不进池）。",
-            "默认 [tianshaxing, tiansha_extinction, annihilationblade, annihilationbladeex]：",
-            "  tianshaxing / tiansha_extinction —— 天杀星刀（后者是该模组注册的第二个 namespace）：",
-            "      SA 以 SE 为硬性前提，Boss 刀无对应 SE，放不出来；",
-            "  annihilationblade / annihilationbladeex —— 湮灭之刃(含EX)：清除系作弊 SA，",
-            "      其 AbsoluteRemovalService / NuclearRemovalService 会强制移除实体（作者备注：放出来出事我管不了）。",
-            "2026-09-12（SA 名单热配置化）：本键已降级为**回退**，当前生效值优先取热配置",
-            "silent_sun/redios_rules.json 的 boss_sa_excluded_namespaces（改 json + 重载即生效）；",
-            "仅当该热配置键未提供或为空时才使用本值，此时修改 TOML 仍需重启服务器。")
+        .comment("白名单内部的 namespace 二次排除（不在白名单里的本来就不进池）。",
+            "默认 [scorchfrost, tianshaxing, tiansha_extinction, annihilationblade, annihilationbladeex]：",
+            "  scorchfrost 的 SA 对 Mob 全空放；tianshaxing 以 SE 为前提放不出；annihilationblade 是强制移除实体的清除系 SA。",
+            "本键为回退：生效值优先取 redios_rules.json 同名键。")
         .defineList("redios.bossSaExcludedNamespaces",
-            List.of("tianshaxing", "tiansha_extinction", "annihilationblade", "annihilationbladeex"),
+            List.of("scorchfrost", "tianshaxing", "tiansha_extinction", "annihilationblade", "annihilationbladeex"),
             o -> o instanceof String);
 
     // 2026-09-12（SA 名单热配置化）：本键已降级为**回退**——优先读热配置 silent_sun/redios_rules.json
@@ -379,22 +354,21 @@ public final class SilentSunConfig {
      *   <li>施放者是 Boss（Mob）时必抛 {@code ClassCastException}，且抛出点在 {@code Item.inventoryTick}
      *       内，宿主的 {@code try/catch (Exception)} 抓不到，会落到 vanilla {@code guardEntityTick}
      *       → 每 tick 刷栈；</li>
-     *   <li>当前该时间线**因 Mob 无驱动者而不执行**，所以这是「有驱动就炸」的地雷而非在线故障
-     *       —— 但 {@code checkcast} 的确定性存在，故仍排除（一旦将来恢复 combo 驱动，不排就必酿事故）。</li>
+     *   <li>2026-10-03 机制修正：该时间线在 Mob 侧**会执行**（刀在任意主手持有者身上都走
+     *       inventoryTick → combo tickAction；getTimeoutMS 含整段动画帧时长），故 checkcast 是在线必崩而非地雷。</li>
      * </ul>
      * 修改后最迟 60 秒生效（SA 注册表键集有 60s TTL 缓存）。
      */
     public static final ModConfigSpec.ConfigValue<List<? extends String>> BOSS_SA_EXCLUDED_SA_IDS = BUILDER
-        .comment("Boss 随机施放 SA 时排除的**完整 SA id** 列表（形如 foxextra:thrust）。",
-            "与 redios.bossSaExcludedNamespaces 并行生效：namespace 用于整包排除，本列表用于精确排除单个 SA。",
-            "默认 [foxextra:thrust]：其 combo 时间线的第 2 tick 会执行 checkcast Player，Boss 是 Mob，必抛 ClassCastException。",
-            "同一 namespace 内其余 SA（foxextra 的 void_slash_plus / sakura_endex）经字节码复核无 Player/SE 硬性前提，保留在池中。",
-            "提示：Boss(Mob) 上 combo 时间线不执行（ItemStack.inventoryTick 只对玩家物品栏调用），当前只有 clickAction 生效。",
-            "2026-09-12（SA 名单热配置化）：本键已降级为**回退**，当前生效值优先取热配置",
-            "silent_sun/redios_rules.json 的 boss_sa_excluded_sa_ids（改 json + 重载即生效）；",
-            "仅当该热配置键未提供或为空时才使用本值，此时修改 TOML 仍需重启服务器。")
+        .comment("精确排除单个 SA（完整 id，与 bossSaExcludedNamespaces 并行生效）。",
+            "默认 [foxextra:thrust, recasting:time_beyond, heartbladeunoffical:hyper_just_time, heartbladeunoffical:windy_phantom_sword]。",
+            "  foxextra:thrust 与 heartbladeunoffical 两个 SA：时间线 tick 2/3 强转 Player，Boss 是 Mob，必抛 ClassCastException；",
+            "  recasting:time_beyond 不崩，但 Mob 无蓄力过程，恒为最低档。",
+            "本键为回退：生效值优先取 redios_rules.json 同名键。")
         .defineList("redios.bossSaExcludedSaIds",
-            List.of("foxextra:thrust"),
+            List.of("foxextra:thrust", "recasting:time_beyond",
+                    "heartbladeunoffical:hyper_just_time",
+                    "heartbladeunoffical:windy_phantom_sword"),
             o -> o instanceof String);
 
     public static final ModConfigSpec SPEC = BUILDER.build();

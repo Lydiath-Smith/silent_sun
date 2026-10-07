@@ -1,0 +1,7 @@
+{
+  "__comment": "时停免疫：列入此标签的实体不会被第三方时停效果冻结。由各模组自行将实体加入。",
+  "replace": false,
+  "values": [
+    "silent_sun:redios"
+  ]
+}

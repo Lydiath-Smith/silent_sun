@@ -589,7 +589,20 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
     }
 
     public static AttributeSupplier.Builder createAttributes() {
-        return PathfinderMob.createMobAttributes().add(Attributes.MAX_HEALTH, 2000.0).add(Attributes.MOVEMENT_SPEED, 0.3).add(Attributes.ATTACK_DAMAGE, 30.0).add(Attributes.ATTACK_SPEED, 4.0).add(Attributes.ARMOR, 20.0).add(Attributes.KNOCKBACK_RESISTANCE, 1.0).add(Attributes.EXPLOSION_KNOCKBACK_RESISTANCE, 1.0);
+        return PathfinderMob.createMobAttributes()
+            .add(Attributes.MAX_HEALTH, 2000.0)
+            .add(Attributes.MOVEMENT_SPEED, 0.3)
+            .add(Attributes.ATTACK_DAMAGE, 30.0)
+            // 玩家专属的实体交互距离：灭却之日的断魂斩 SA（ModSA$LifeSeveringSlash.doVoidSlash）、
+            // 灾厄模式效果、刀 reach_bonus 均会对持有者 getAttributeValue(ENTITY_INTERACTION_RANGE)，
+            // Mob 未注册该属性 → IllegalArgumentException「Can't find attribute」崩服
+            // （2026-10-02 Ticking entity 崩溃报告实证）。默认 3.0 对齐玩家空手；
+            // 属性注册后，slashblade:mainhand_reach(+2.5) 等主手物品修饰才会正常生效（持刀 = 5.5）。
+            .add(Attributes.ENTITY_INTERACTION_RANGE, 3.0)
+            .add(Attributes.ATTACK_SPEED, 4.0)
+            .add(Attributes.ARMOR, 20.0)
+            .add(Attributes.KNOCKBACK_RESISTANCE, 1.0)
+            .add(Attributes.EXPLOSION_KNOCKBACK_RESISTANCE, 1.0);
     }
 
     public boolean shouldDespawnInPeaceful() {
@@ -1291,9 +1304,33 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             totalHatred += Math.max(0.0, this.hatredOf(t));
         }
         if (totalHatred <= 0.0) {
-            LivingEntity primary = targets.get(0);
-            double r = this.isConcentratedStarfallTarget(primary, highestHatred) ? concentratedRadius : dispersedRadius;
-            this.spawnStarfallStars(serverLevel, primary, count, r, maxDelay);
+            // 2026-10-03 修复（斗蛐蛐模式繁星完全无伤）：模式 2 下全部目标都是非玩家生物，
+            // hatredOf 对非玩家恒返回 0（威胁账本只记玩家净伤害）⇒ totalHatred 恒 0。
+            // 旧逻辑把全部星星以散布半径（默认 20；spawnStarfallStars 内圈 25% 留空 = 5 格
+            // 空心带）砸在 targets.get(0) 一个随机目标周围，而引爆判定半径仅 ±6 —— 5~20 格
+            // 环带内的星星几乎不可能覆盖中心目标（20 格半径下 5~6 格环面积占比仅约 3%），
+            // 12~16 颗星期望命中 ≈ 0.4 ⇒ 合法目标实际 0 受伤（视觉星雨正常）。
+            // 无威胁值信号时，改为在全部合法目标间均分、各自走集中半径（5 < 爆炸 ±6 ⇒ 每星必中）。
+            List<LivingEntity> noHatredTargets = new ArrayList<>(targets);
+            LivingEntity currentTarget = this.getTarget();
+            if (currentTarget != null) {
+                int currentIndex = noHatredTargets.indexOf(currentTarget);
+                if (currentIndex > 0) {
+                    java.util.Collections.swap(noHatredTargets, 0, currentIndex);
+                }
+            }
+            int targetCount = noHatredTargets.size();
+            int assigned = 0;
+            for (int i = 0; i < targetCount; ++i) {
+                int share = i == targetCount - 1 ? count - assigned : count / targetCount;
+                if (share > 0) {
+                    this.spawnStarfallStars(serverLevel, noHatredTargets.get(i), share, concentratedRadius, maxDelay);
+                    assigned += share;
+                }
+            }
+            if (assigned < count) {
+                this.spawnStarfallStars(serverLevel, noHatredTargets.get(0), count - assigned, concentratedRadius, maxDelay);
+            }
             return;
         }
         int assigned = 0;
@@ -4345,7 +4382,8 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
             Component nextTitle = titles.get(this.titleIndex);
             // 2026-09-12（战斗流程报告）：强制推进的 TITLE 事件由 onTitleChanged 统一记录
             //（本方法内只置 flowForcedAdvance 标记，避免同一跳记录两次）。
-            SilentSunMod.LOGGER.info("Redios force-advance to next title phase={} titleIndex={} title={}", new Object[]{Integer.valueOf(this.phase), Integer.valueOf(this.titleIndex), nextTitle.getString()});
+            // 2026-10-03（高频日志检修）：降为 DEBUG（与 onTitleChanged 的头衔推进日志同性质，不重复刷 INFO）。
+            SilentSunMod.LOGGER.debug("Redios force-advance to next title phase={} titleIndex={} title={}", new Object[]{Integer.valueOf(this.phase), Integer.valueOf(this.titleIndex), nextTitle.getString()});
         }
     }
 
@@ -8025,8 +8063,9 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
         }
         // B-7（2026-09-11 依设计 T-v3-9「一阶段仅以 log 记录阶段流程」补齐）：此前 onTitleChanged 内
         // 一条日志都没有，头衔推进出问题时无法回溯；一阶段只记录、不打扰玩家（二阶段有 BossBar/广播）。
+        // 2026-10-03（高频日志检修）：降为 DEBUG——头衔每次推进一条、整场战斗数十条，排查时开 DEBUG 即可。
         if (newPhase == 1) {
-            SilentSunMod.LOGGER.info("[Redios] 头衔推进（一阶段）：phase={} title={} → phase={} title={}",
+            SilentSunMod.LOGGER.debug("[Redios] 头衔推进（一阶段）：phase={} title={} → phase={} title={}",
                 oldPhase, oldTitleIndex, newPhase, newTitleIndex);
         }
         // 2026-09-10（用户裁决 C3 / Q13）：一阶段结束 → 断魂退场标记复位。
@@ -8233,6 +8272,15 @@ implements GeoEntity, ITargetableHost, IAbsoluteDamageImmune {
 
     double getCurrentAttackReach() {
         return this.stats.attackReach();
+    }
+
+    /**
+     * 拔刀剑攻击距离缩放系数（无激怒 1.0 ~ 满激怒 1.6）：薄委托
+     * {@link CombatStatModulator#bladeRangeScaleFactor()}，供跨包的
+     * {@code integration.BladeAttackGoal} 缩放近身/SA/幻影剑三档距离。
+     */
+    public double getBladeRangeScaleFactor() {
+        return this.stats.bladeRangeScaleFactor();
     }
 
     /**

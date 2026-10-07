@@ -43,6 +43,11 @@ Redios（碎镜之影）Boss 战与相关系统。
 [[mixins]]
 config="silent_sun.mixins.json"
 
+# 2026-10-03（时停免疫衔接）：面向可选依赖的 Mixin 配置 ——
+# 目标模组未安装时 required=false 保证仅告警不崩溃。
+[[mixins]]
+config="silent_sun.compat.mixins.json"
+
 # The [[accessTransformers]] block allows you to declare where your AT file is.
 # If this block is omitted, a fallback attempt will be made to load an AT from META-INF/accesstransformer.cfg
 #[[accessTransformers]]

@@ -16,8 +16,10 @@ import java.util.EnumSet;
  * <p>
  * 反射调用通过 {@link IntegrationContract} 统一管理，具备日志输出和缓存刷新能力。
  * <p>
- * 近身（&lt;3 格）像玩家左键一样**按刀攻速**推进普攻连击（progressCombo，伪玩家设计）；
- * 中距离（3~15 格）从 slash_arts 注册表随机施放一个 SA，冷却 80~120 tick。
+ * 近身（3.0~4.8 格）像玩家左键一样**按刀攻速**推进普攻连击（progressCombo，伪玩家设计）；
+ * 中距离（最远 15~24 格）从 slash_arts 注册表随机施放一个 SA，冷却 60~99 tick；
+ * 幻影剑齐射（最远 20~32 格）。三档距离随激怒等级线性缩放（系数 1.0~1.6，
+ * 锚定实体交互距离 5→8，见 {@code CombatStatModulator.bladeRangeScaleFactor}）。
  * 与 Boss 自身技能不冲突：仅当距离合适且冷却归零时释放，
  * 其余时间交给 Boss 自己的 Goal 处理。
  */
@@ -35,6 +37,14 @@ public class BladeAttackGoal extends Goal {
     private int pathRefreshCooldown;
     private double lastPathX;
     private double lastPathZ;
+
+    // 三档基准距离（格，无激怒）：实际触发距离 = 基准 × getBladeRangeScaleFactor()（1.0~1.6）。
+    /** 近身普攻基准距离：dist &lt; 3 时像玩家左键推进普攻连击。 */
+    private static final double BASE_MELEE_RANGE = 3.0;
+    /** SA 基准距离：3~15 格从 slash_arts 随机施放一个 SA。 */
+    private static final double BASE_SA_RANGE = 15.0;
+    /** 幻影剑基准距离：≤20 格齐射。 */
+    private static final double BASE_PHANTOM_RANGE = 20.0;
 
     // 2026-09-11（代码审计 G09 #5 修复）：原 isAvailable() 全库零调用 ——
     // 可用性判断统一走 IntegrationContract.isSlashBladeIntegrationAvailable()（见下方构造器）—— 已删除。
@@ -148,8 +158,14 @@ public class BladeAttackGoal extends Goal {
         }
 
         double dist = boss.distanceTo(target);
-        // 近身（<3 格）：像玩家左键一样按攻速推进普攻连击（progressCombo）
-        if (dist < 3.0) {
+        // 三档距离随激怒线性缩放：scale 1.0(无激怒)~1.6(满10层)，
+        // 锚定实体交互距离 5→8（公式见 CombatStatModulator.bladeRangeScaleFactor）。
+        double rangeScale = this.redios != null ? this.redios.getBladeRangeScaleFactor() : 1.0;
+        double meleeRange = BASE_MELEE_RANGE * rangeScale;
+        double saRange = BASE_SA_RANGE * rangeScale;
+        double phantomRange = BASE_PHANTOM_RANGE * rangeScale;
+        // 近身（< meleeRange，3.0~4.8 格）：像玩家左键一样按攻速推进普攻连击（progressCombo）
+        if (dist < meleeRange) {
             if (comboCooldown <= 0) {
                 // D-断魂：拔刀剑攻击发起时统一补挂断魂（海天解锁时；低频率，防 amplifier 秒满）
                 if (this.redios != null) this.redios.markSoulSeverIfUnlocked(target);
@@ -169,8 +185,8 @@ public class BladeAttackGoal extends Goal {
                     burstDriveCooldown = 25;
                 }
             }
-        } else if (dist <= 15.0 && cooldown <= 0) {
-            // 中距离（3~15 格）：从 slash_arts 注册表随机施放一个 SA
+        } else if (dist <= saRange && cooldown <= 0) {
+            // 中距离（meleeRange~saRange，满激怒最远 24 格）：从 slash_arts 注册表随机施放一个 SA
             if (this.redios != null) this.redios.markSoulSeverIfUnlocked(target);
             IntegrationContract.tryInvokeRandomSA(boss);
             // 2026-09-10 用户裁决：SA 间隔 3~5 秒（60~99 tick）
@@ -180,7 +196,7 @@ public class BladeAttackGoal extends Goal {
         // 幻影剑齐射：Boss 进不了 SummonedSwordArts（perform* 均要求 ServerPlayer），
         // 这里由 silent_sun 代打生成幻影剑直射目标；命中由 RediosEntity.tick 的
         // tryTickBossBladePlayerHits 用 doForceHitEntity 绕过 pvp_enable=false 强制结算。
-        if (phantomSwordCooldown <= 0 && dist <= 20.0) {
+        if (phantomSwordCooldown <= 0 && dist <= phantomRange) {
             if (this.redios != null) this.redios.markSoulSeverIfUnlocked(target);
             IntegrationContract.trySpawnBossPhantomSwords(boss, target);
             phantomSwordCooldown = 60 + boss.getRandom().nextInt(30);
