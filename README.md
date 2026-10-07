@@ -3,7 +3,8 @@
 NeoForge **1.21.1** 的 Boss 战模组，围绕「碎镜之影 · 莱德厄斯（Redios）」的一场长线战斗与其周边系统。
 
 > **状态：alpha（未正式发布）**。当前版本号见 `gradle.properties` 的 `mod_version`。
-> 仓库：<https://gitee.com/lydiath/silent_sun>
+> 仓库：Gitee <https://gitee.com/lydiath/silent_sun> ｜ GitHub <https://github.com/Lydiath-Smith/silent_sun>
+> （两边内容一致，任选其一）
 
 ## 这是什么
 
