@@ -10,18 +10,12 @@ NeoForge **1.21.1** 的 Boss 战模组，围绕「碎镜之影 · 莱德厄斯�
 
 - **两阶段 Boss 战，共 20 段「头衔」**（每阶段 10 段）：血量按头衔分段、段内锁血，打穿段底才推进下一段。
 - **阶段衔接**：一阶段收尾有**投票**（可通过配置跳过）、濒死锁血与转场演出。
-- **拔刀剑（SlashBlade）联动**：Boss 会切换刀并释放 SA；**SA 池由命名空间白名单控制**（默认只开 3 个，其余交给整合包作者按强度取舍）。
+- **拔刀剑（SlashBlade）联动**：Boss 会切换刀并释放 SA。**SA 池由白名单控制**——默认放行 5 个命名空间，其余交由整合包作者按强度取舍；白名单**首位填 `ALL`** 可切换为**黑名单模式**（默认全放行，仅两层排除名单生效）。
 - **边界收口**：反作弊（创造模式 / 篡改血量 / 死亡作弊）、脱战与出圈逐出、区块卸载与跨维度离场、极限模式保命。
 - **产出**：分阶段奖励与**结局书**（多语言）、战斗音乐、成就。
 
-设计与实现的权威文档：
-
-| 文档 | 内容 |
-|---|---|
-| `docs/设计文稿-重制版.md` | 设计稿（**与代码冲突时以代码为准**） |
-| `_知识文库/施工台账.md` | 逐条施工记录与作者裁决留痕（**动手前先读，避免重做已裁决的事**） |
-| `_知识文库/危险面与共享判据.md` | 已知的六类事故面与共享判据 |
-| `docs/实现计划-*.md` | 各轮改动的计划书 |
+> 设计与施工文档（设计稿、施工台账、实现计划、验收清单）由作者**本地维护、不在本仓库公开**。
+> 公开部分的口径来源 = 本 README + 代码注释；**与代码冲突时以代码为准**。
 
 ## 构建
 
@@ -29,7 +23,7 @@ NeoForge **1.21.1** 的 Boss 战模组，围绕「碎镜之影 · 莱德厄斯�
 
 1. 把两个前置模组的 jar 放进 `libs/`（**仓库不包含它们**，原因见下）：
    - `libs/SlashBladeResharped-2.0.7-1.21.1.jar` —— 拔刀剑：重锋
-   - `libs/extinction_day_mod_1784441698-1.16.0.jar` —— 灭却之日
+   - `libs/extinction_day_mod_1784441698-*.jar` —— 灭却之日
 2. 出包：
 
    ```bat
@@ -47,12 +41,11 @@ NeoForge **1.21.1** 的 Boss 战模组，围绕「碎镜之影 · 莱德厄斯�
 | 路径 | 用途 |
 |---|---|
 | `src/decompiled/java` | **主源码**（反编译产物 + 持续手改） |
-| `bin/main/assets` · `bin/main/data` · `bin/main/pack.mcmeta` · `bin/main/silent_sun.mixins.json` | **手写资源真源**：`build.gradle` 用 `srcDir('bin/main')` 打进 jar，改 lang / 配置 JSON 请改这里 |
+| `bin/main/assets` · `bin/main/data` · `bin/main/pack.mcmeta` · `bin/main/*.mixins.json` | **手写资源真源**：`build.gradle` 用 `srcDir('bin/main')` 打进 jar —— 改语言文件 / 配置 JSON / mixin 配置请改这里 |
 | `src/generated/resources` | 数据生成产物（`runData`） |
 | `src/main/templates/META-INF/neoforge.mods.toml` | 模组元数据模板（`${...}` 由 `gradle.properties` 展开） |
 | `src/main/resources/META-INF/LICENSE.txt` | 随包协议全文（与根 `LICENSE.txt` 同步） |
-| `docs/` · `_知识文库/` | 设计稿、计划书、验收清单 / 台账、经验记录 |
-| `_规则/rules_defaults_check.ps1` | 热配置默认值「三处同源」对账脚本（只读；改配置键后跑一次） |
+| `silent_sun_datapack/` · `soul_sever_export/` | 随附的子工程（数据包 / 独立小模组） |
 
 ## 版本号（两条线）
 

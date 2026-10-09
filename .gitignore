@@ -79,3 +79,24 @@ bin/main/*
 bin/main/com/
 # bin/default 是模板仓库的嵌套拷贝（含 .git），显式忽略
 bin/default/
+
+### 非源码部分：不入库、不上传（2026-10-07 作者裁决）###
+# 仓库只保留「源码 + 资源真源 + 构建脚本 + README/CHANGELOG/INTRO/LICENSE + 子工程」。
+# 下列内容属**作者内部工作资料**，且含**本机绝对路径 / 系统用户名**等隐私信息 ⇒ 本地保留、不公开：
+#   · docs/            设计与施工文档（设计稿、实现计划、审计报告、验收清单）
+#   · _知识文库/        施工台账、危险面与共享判据、经验沉淀
+#   · _经验记录/        调研记录
+#   · _规则/            本地辅助脚本（含 rules_defaults_check.ps1）
+#   · agent.md          AI 协作代理的工作说明（含项目外路径）
+#   · *.ps1             一切本地脚本
+#   · build_export.log  构建日志（含本机路径）
+#   · _backup_assets/   资产备份
+# ⚠️ 这些路径**已从全部 git 历史中抹除**（filter-branch），见台账对应条目；勿再 `git add -f`。
+docs/
+_知识文库/
+_经验记录/
+_规则/
+agent.md
+build_export.log
+_backup_assets/
+*.ps1
