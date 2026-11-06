@@ -36,27 +36,6 @@ NeoForge **1.21.1** 的 Boss 战模组，围绕「碎镜之影 · 莱德厄斯�
 
 > **为什么前置 jar 不入库**：它们是第三方模组的二进制，本仓库不代为分发。二者在 `build.gradle` 里是 `compileOnly` + `localRuntime`，**只影响编译与本地调试**；运行时由玩家的 `mods/` 目录提供（`neoforge.mods.toml` 已把前置声明为 `required`）。
 
-## 目录说明
-
-| 路径 | 用途 |
-|---|---|
-| `src/decompiled/java` | **主源码**（反编译产物 + 持续手改） |
-| `bin/main/assets` · `bin/main/data` · `bin/main/pack.mcmeta` · `bin/main/*.mixins.json` | **手写资源真源**：`build.gradle` 用 `srcDir('bin/main')` 打进 jar —— 改语言文件 / 配置 JSON / mixin 配置请改这里 |
-| `src/generated/resources` | 数据生成产物（`runData`） |
-| `src/main/templates/META-INF/neoforge.mods.toml` | 模组元数据模板（`${...}` 由 `gradle.properties` 展开） |
-| `src/main/resources/META-INF/LICENSE.txt` | 随包协议全文（与根 `LICENSE.txt` 同步） |
-| `silent_sun_datapack/` · `soul_sever_export/` | 随附的子工程（数据包 / 独立小模组） |
-
-## 版本号（两条线）
-
-| 线 | 形式 | 用途 |
-|---|---|---|
-| **发布线** | `0.0.1-alphaN` | 只在对外上传 / 发布时使用 |
-| **修改线** | `0.0.1-mod.<yyyyMMdd>` | 本地改动构建 |
-
-两条线**错开、互不占用**，看包名即可分辨「正式发布版 / 本地修改版」。
-⚠️ 历史上的 `0.0.17` / `0.0.24` **从未对外发布**，勿按"需要接续历史号"处理。
-
 ## 协议
 
 采用**分区授权** —— 代码与美术 / 音频资源适用不同协议。全文见 [`LICENSE.txt`](LICENSE.txt)（同一份随包于 `META-INF/LICENSE.txt`）：
@@ -65,10 +44,6 @@ NeoForge **1.21.1** 的 Boss 战模组，围绕「碎镜之影 · 莱德厄斯�
 - **美术 / 音频资源 → CC BY-NC-SA 4.0**
 - **整合包与服务器明确许可**：可随任意整合包分发、可在任意服务器使用，**含获赞助或捐赠的整合包与服务器**；单独提取或转售美术资源不在许可范围。
 - 早期版本（`0.0.1-alpha2` 之前）适用其发布时的旧自定义协议（保留所有权利）——**新旧版本各自适用其发布时的协议**。
-
-## 当前停用的功能
-
-- **「传送门刀身残影」的客户端 mixin 未注册**（作者裁决：刀身与残影不做）。代码与 shader 资源保留在仓库中，`bin/main/silent_sun.mixins.json` 的 `client` 数组为空即可复现「停用」状态；恢复方式见该文件与两个 mixin 类的注释。
 
 ## 说明
 
